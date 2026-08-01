@@ -1,0 +1,60 @@
+{
+  "name": "personal-agent",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24.15.0 <25"
+  },
+  "scripts": {
+    "postinstall": "node scripts/patch-pi-dependencies.mjs",
+    "dev": "tsx watch src/server/index.ts",
+    "dev:web": "vite --host 127.0.0.1",
+    "build": "vite build",
+    "start": "tsx src/server/index.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:e2e": "playwright test"
+  },
+  "dependencies": {
+    "@earendil-works/pi-agent-core": "1.0.0",
+    "@earendil-works/pi-ai": "1.0.0",
+    "@earendil-works/pi-coding-agent": "1.0.0",
+    "@earendil-works/pi-mcp": "1.0.0",
+    "@fastify/cookie": "11.1.2",
+    "@fastify/static": "10.1.5",
+    "@fastify/websocket": "11.3.1",
+    "@sinclair/typebox": "0.34.52",
+    "@types/qrcode": "1.5.5",
+    "brace-expansion": "5.0.12",
+    "devtools-protocol": "0.0.1692173",
+    "esbuild": "0.28.1",
+    "fastify": "5.12.5",
+    "lucide-react": "0.577.0",
+    "lunar-typescript": "1.8.6",
+    "qrcode": "1.5.4",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "react-markdown": "10.1.0",
+    "remark-gfm": "4.0.1",
+    "tsx": "4.23.15",
+    "ws": "8.22.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.63.0",
+    "@types/node": "24.10.1",
+    "@types/react": "19.2.14",
+    "@types/react-dom": "19.2.3",
+    "@types/ws": "8.18.1",
+    "@vitejs/plugin-react": "6.1.1",
+    "typescript": "5.9.3",
+    "vite": "8.3.2",
+    "vitest": "5.0.3"
+  },
+  "overrides": {
+    "brace-expansion": "5.0.12",
+    "tsx": {
+      "esbuild": "0.28.1"
+    }
+  }
+}
