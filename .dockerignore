@@ -1,0 +1,14 @@
+node_modules
+dist
+data
+state
+.runtime
+.git
+.env
+.env.*
+resources
+test-results
+playwright-report
+*.log
+deployment.env
+deployment.tar.gz

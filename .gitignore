@@ -1,0 +1,34 @@
+# Local environment and credentials
+.env
+.env.*
+!.env.example
+!.env.*.example
+*.pem
+*.key
+
+# Per-machine editor settings in archived projects
+**/.claude/settings.local.json
+**/.codebuddy/settings.local.json
+resources/ecosystem/upstream/cloudbase-toolkit/**/config/source/editor-config/claude/settings.local.json
+
+# macOS
+.DS_Store
+
+# Local logs
+*.log
+
+# Re-downloadable upstream bundles and temporary extraction files
+resources/ecosystem/downloads/
+resources/ecosystem/.staging/
+__pycache__/
+
+# Application runtime and build output
+node_modules/
+dist/
+data/
+state/
+.runtime/
+test-results/
+playwright-report/
+deployment.env
+deployment.tar.gz
