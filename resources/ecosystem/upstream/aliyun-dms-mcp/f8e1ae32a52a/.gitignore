@@ -1,0 +1,20 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+.idea
+/.idea
+.DS_Store
+*.iml
+/*.iml
+.idea/
+
+# Virtual environments
+.venv
+.qoder
+# Skills output (generated artifacts, large JSON)
+skills/**/output/
