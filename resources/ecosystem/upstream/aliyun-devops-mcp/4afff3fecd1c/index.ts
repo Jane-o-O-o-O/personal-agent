@@ -1,0 +1,697 @@
+#!/usr/bin/env node
+import { randomUUID } from "node:crypto";
+import { Server } from "@modelcontextprotocol/sdk/server/index.js";
+import { createMcpExpressApp } from "@modelcontextprotocol/sdk/server/express.js";
+import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import {
+    CallToolRequestSchema,
+    isInitializeRequest,
+    ListToolsRequestSchema,
+} from "@modelcontextprotocol/sdk/types.js";
+import { z } from 'zod';
+
+import * as branches from './operations/codeup/branches.js';
+import * as files from './operations/codeup/files.js';
+import * as repositories from './operations/codeup/repositories.js';
+import * as changeRequests from './operations/codeup/changeRequests.js';
+import * as changeRequestComments from './operations/codeup/changeRequestComments.js';
+import * as organization from './operations/organization/organization.js';
+import * as members from './operations/organization/members.js';
+import * as project from './operations/projex/project.js';
+import * as workitem from './operations/projex/workitem.js';
+import * as sprint from './operations/projex/sprint.js';
+import * as compare from './operations/codeup/compare.js'
+import * as pipeline from './operations/flow/pipeline.js'
+import * as pipelineJob from './operations/flow/pipelineJob.js'
+import * as serviceConnection from './operations/flow/serviceConnection.js'
+import * as packageRepositories from './operations/packages/repositories.js'
+import * as artifacts from './operations/packages/artifacts.js'
+import {
+    isYunxiaoError,
+    YunxiaoError,
+    YunxiaoValidationError
+} from "./common/errors.js";
+import { VERSION } from "./common/version.js";
+import {config} from "dotenv";
+import * as types from "./common/types.js";
+import { getAllTools, getEnabledTools } from "./tool-registry/index.js";
+import { handleToolRequest, handleEnabledToolRequest } from "./tool-handlers/index.js";
+import { Toolset } from "./common/toolsets.js";
+import { loadConfig, type ServerConfig } from "./common/config.js";
+import { runWithCluster, setupWorkerGuards } from "./common/process-manager.js";
+import { logger } from "./common/logger.js";
+import { getCurrentToolsets, setNetworkTransport } from "./common/utils.js";
+
+/**
+ * Create a new MCP Server instance with all request handlers configured.
+ * Each SSE session needs its own Server instance since server.connect()
+ * can only be called once per Server.
+ */
+function createMcpServer(): Server {
+    const mcpServer = new Server(
+        {
+            name: "alibabacloud-devops-mcp-server",
+            version: VERSION,
+        },
+        {
+            capabilities: {
+                tools: {},
+            },
+        }
+    );
+
+    mcpServer.setRequestHandler(ListToolsRequestSchema, async () => {
+        let tools: any[];
+
+        // 优先使用本次请求指定的工具集（缓解工具过多导致的 context 膨胀），
+        // 未指定时回退到进程级默认 enabledToolsets。
+        const effective = effectiveToolsets();
+        if (effective.length > 0) {
+            const baseTools = getEnabledTools([Toolset.BASE]);
+            const enabledTools = getEnabledTools(effective);
+            tools = [...baseTools, ...enabledTools];
+        } else {
+            tools = getAllTools();
+        }
+
+        return {
+            tools,
+        };
+    });
+
+    mcpServer.setRequestHandler(CallToolRequestSchema, async (request) => {
+        const toolName = request.params.name;
+        const startedAt = Date.now();
+        try {
+            if (!request.params.arguments) {
+                throw new Error("Arguments are required");
+            }
+
+            const effective = effectiveToolsets();
+            const result = effective.length > 0
+                ? await handleEnabledToolRequest(request, effective)
+                : await handleToolRequest(request);
+
+            logger.info({ tool: toolName, ok: true, durationMs: Date.now() - startedAt }, "tool call");
+            return result;
+        } catch (error) {
+            const durationMs = Date.now() - startedAt;
+            // schema 校验失败:入参(handler 解析 arguments)或响应 DTO(operation 解析云效返回)与
+            // schema 定义不符时抛 ZodError。单独结构化记录(kind=schema_validation + 逐条 issue 的
+            // path/expected/received),便于线上按 kind 聚合、快速定位字段类型缺陷:
+            //   path 顶层是入参名 => 调用方传参问题;path 是响应字段 => 响应 schema 与云效实际返回不符(缺陷)。
+            if (error instanceof z.ZodError) {
+                logger.warn({
+                    tool: toolName,
+                    durationMs,
+                    kind: "schema_validation",
+                    issues: error.issues.map((i) => ({
+                        path: i.path.join("."),
+                        code: i.code,
+                        message: i.message,
+                        ...(i.code === "invalid_type"
+                            ? { expected: (i as any).expected, received: (i as any).received }
+                            : {}),
+                    })),
+                }, "schema validation failed");
+                throw new Error(`Invalid input: ${JSON.stringify(error.errors)}`);
+            }
+            // 其它失败(云效 4xx/5xx 等,多为可容忍),用 warn;只记错误摘要,不带 requestHeaders(含 token)。
+            const errInfo = isYunxiaoError(error)
+                ? { status: error.status, err: error.message }
+                : { err: error instanceof Error ? error.message : String(error) };
+            logger.warn({ tool: toolName, ok: false, durationMs, ...errInfo }, "tool call failed");
+            if (isYunxiaoError(error)) {
+                throw new Error(formatYunxiaoError(error));
+            }
+            throw error;
+        }
+    });
+
+    return mcpServer;
+}
+
+function formatYunxiaoError(error: YunxiaoError): string {
+    // 安全:面向调用方的错误只暴露状态码与云效返回的业务错误信息，绝不回显 error.url(内部网关
+    // 地址)/ requestHeaders(含 x-yunxiao-token)/ requestBody。详细排障信息见服务端日志。
+    let message = `Yunxiao API Error: ${error.message}`;
+
+    if (error instanceof YunxiaoValidationError) {
+        message = `Parameter validation failed: ${error.message}`;
+        if (error.response) {
+            message += `\n Response: ${JSON.stringify(error.response, null, 2)}`;
+        }
+        // 添加常见参数错误的提示
+        if (error.message.includes('name')) {
+            message += `\n Suggestion: Please check whether the pipeline name meets the requirements.`;
+        }
+        if (error.message.includes('content') || error.message.includes('yaml')) {
+            message += `\n Suggestion: Please check whether the generated YAML format is correct.`;
+        }
+    } else {
+        // 处理通用的Yunxiao错误
+        message = `Yunxiao API error (${error.status}): ${error.message}`;
+        if (error.response) {
+            const response = error.response as any;
+            if (response.errorCode) {
+                message += `\n errorCode: ${response.errorCode}`;
+            }
+            if (response.errorMessage && response.errorMessage !== error.message) {
+                message += `\n errorMessage: ${response.errorMessage}`;
+            }
+            if (response.data && typeof response.data === 'object') {
+                message += `\n data: ${JSON.stringify(response.data, null, 2)}`;
+            }
+            
+            // 安全:不再回显完整下游响应体(Full Response)，仅保留上面提取的 errorCode/errorMessage/data
+        }
+        
+        // 根据状态码提供通用建议
+        switch (error.status) {
+            case 400:
+                message += `\n Suggestion: Please check whether the request parameters are correct, especially whether all required parameters have been provided.`;
+                break;
+            case 500:
+                message += `\n Suggestion: Internal server error. Please try again later or contact technical support.`;
+                break;
+            case 502:
+            case 503:
+            case 504:
+                message += `\n Suggestion: The service is temporarily unavailable. Please try again later.`;
+                break;
+        }
+    }
+
+    return message;
+}
+
+config({ quiet: true });
+
+const serverConfig = loadConfig();
+const enabledToolsets = serverConfig.toolsets;
+const useHttpRemote = serverConfig.transport.sse || serverConfig.transport.streamableHttp;
+
+// 网络(HTTP)传输下，来自远程调用方的本地路径不可信 —— 安全敏感操作(如按 filePath
+// 读取服务器文件)据此收紧。stdio(同机)模式保持 false。
+setNetworkTransport(useHttpRemote);
+
+type StreamableSessionEntry = {
+    transport: StreamableHTTPServerTransport;
+    server: Server;
+    yunxiao_access_token?: string;
+    yunxiao_api_base_url?: string;
+    toolsets?: string[];
+};
+
+function getMcpSessionIdHeader(req: { headers: Record<string, string | string[] | undefined> }): string | undefined {
+    const raw = req.headers['mcp-session-id'];
+    return typeof raw === 'string' ? raw : undefined;
+}
+
+function parseBearerToken(authHeader: string | string[] | undefined): string | undefined {
+    if (typeof authHeader !== 'string') return undefined;
+    const match = authHeader.match(/^Bearer\s+(.+)$/i);
+    return match ? match[1] : undefined;
+}
+
+// 请求方通过 query(yunxiao_api_base_url)/ header(x-yunxiao-api-base-url)提供出站 API 地址时的处理。
+// 威胁模型:只有「公共多租户」部署下、不可信请求方覆盖 apiBaseUrl 才会造成 SSRF —— 且 server 会把
+// x-yunxiao-token 发往该地址(诱导受害者使用带恶意 apiBaseUrl 的连接即可窃取其 token)。
+// 策略:
+//   - 公共多租户部署显式设 YUNXIAO_ALLOW_REQUEST_API_BASE_URL=false 彻底禁用请求覆盖，强制走部署方
+//     env YUNXIAO_API_BASE_URL 固定的后端网关(见 helm chart devops-mcp 各环境配置)。
+//   - 默认允许(未设或非 "false"):自建/单租户场景请求方即部署方本人，可信，且其云效实例可能就在
+//     内网(10.x / 内网域名 / localhost)，故不做私网拦截以免误伤，按请求提供的地址透传。
+function sanitizeRequestedApiBaseUrl(requested?: string): string | undefined {
+    if (!requested) return undefined;
+    const disabled = (process.env.YUNXIAO_ALLOW_REQUEST_API_BASE_URL ?? 'true').trim().toLowerCase() === 'false';
+    if (disabled) {
+        logger.warn('ignoring request-provided apiBaseUrl (disabled via YUNXIAO_ALLOW_REQUEST_API_BASE_URL=false)');
+        return undefined;
+    }
+    return requested;
+}
+
+function resolveYunxiaoAuth(
+    req: { query: Record<string, unknown>; headers: Record<string, string | string[] | undefined> },
+    sessionAuth?: { yunxiao_access_token?: string; yunxiao_api_base_url?: string },
+): { token?: string; apiBaseUrl?: string; forwardHost?: string } {
+    const qTok = req.query['yunxiao_access_token'];
+    const qBase = req.query['yunxiao_api_base_url'];
+    const tokenFromQuery = typeof qTok === 'string' ? qTok : undefined;
+    const baseFromQuery = typeof qBase === 'string' ? qBase : undefined;
+    const hdrTok = req.headers['x-yunxiao-token'];
+    const hdrBase = req.headers['x-yunxiao-api-base-url'];
+    const tokenFromHeader = typeof hdrTok === 'string' ? hdrTok : undefined;
+    const baseFromHeader = typeof hdrBase === 'string' ? hdrBase : undefined;
+    const tokenFromBearer = parseBearerToken(req.headers['authorization']);
+
+    // region 多租户：提取进入本服务的原始 Host，后续透传给 openapi（devops-traefik-openapi 按子域名分租户）。
+    // 经 nginx ingress 后原始租户域名一般同时在 X-Forwarded-Host 与 Host；优先 X-Forwarded-Host
+    // （更抗中间代理改写），回退 Host，取第一跳（逗号分隔时的首个）。
+    // 必须剥掉尾部端口：部分客户端/代理会带上显式端口（如 xxx.devops.aliyuncs.com:443），
+    // 而 openapi 网关按 Host 反查 IAM domain 时是全串精确匹配，带端口会命中不到，
+    // 直接以 "iamv1: domain not found" 返回 404（且不转发后端），表现为所有工具调用均 404。
+    // IPv6 字面量在 Host 头中必须加方括号（[::1] / [::1]:443），故仅剥离结尾的 :数字 是安全的。
+    const xfh = req.headers['x-forwarded-host'];
+    const hostHdr = req.headers['host'];
+    const rawHost = (typeof xfh === 'string' ? xfh : undefined) ?? (typeof hostHdr === 'string' ? hostHdr : undefined);
+    const forwardHost = rawHost?.split(',')[0].trim().replace(/:\d+$/, '') || undefined;
+
+    return {
+        token: tokenFromQuery || tokenFromHeader || tokenFromBearer || sessionAuth?.yunxiao_access_token || process.env.YUNXIAO_ACCESS_TOKEN,
+        apiBaseUrl: sanitizeRequestedApiBaseUrl(baseFromQuery || baseFromHeader || sessionAuth?.yunxiao_api_base_url || undefined),
+        forwardHost,
+    };
+}
+
+/**
+ * 从请求中解析本次希望启用的工具集：
+ * - query: ?toolsets=code-management,project-management
+ * - header: X-Devops-Toolsets: code-management,project-management
+ * 返回原始字符串数组（未做合法性校验），未指定则返回 undefined。
+ */
+function resolveToolsets(
+    req: { query: Record<string, unknown>; headers: Record<string, string | string[] | undefined> },
+): string[] | undefined {
+    const q = req.query['toolsets'];
+    const h = req.headers['x-devops-toolsets'];
+    const raw = (typeof q === 'string' ? q : undefined) ?? (typeof h === 'string' ? h : undefined);
+    if (!raw) return undefined;
+    const parts = raw.split(',').map((s) => s.trim()).filter((s) => s.length > 0);
+    return parts.length > 0 ? parts : undefined;
+}
+
+/** 将原始工具集字符串校验并转换为 Toolset 枚举，非法项忽略并告警。 */
+function toValidToolsets(raw: string[] | undefined): Toolset[] {
+    if (!raw || raw.length === 0) return [];
+    const valid = Object.values(Toolset) as string[];
+    const out: Toolset[] = [];
+    for (const t of raw) {
+        if (valid.includes(t)) {
+            out.push(t as Toolset);
+        } else {
+            logger.warn({ toolset: t }, "ignoring unknown toolset from request");
+        }
+    }
+    return out;
+}
+
+/**
+ * 计算本次请求的有效工具集：优先用请求指定的（校验后），
+ * 否则回退到进程级默认 enabledToolsets。返回空数组表示“全部工具”。
+ */
+function effectiveToolsets(): Toolset[] {
+    const perReq = toValidToolsets(getCurrentToolsets());
+    return perReq.length > 0 ? perReq : enabledToolsets;
+}
+
+function bodyLooksLikeInitialize(body: unknown): boolean {
+    const messages = Array.isArray(body) ? body : [body];
+    return messages.some((m) => typeof m === 'object' && m !== null && isInitializeRequest(m));
+}
+
+/**
+ * 需要鉴权的 JSON-RPC 方法集合。
+ * 覆盖 initialize / tools/list / tools/call：QoderWork 在连接探测阶段执行
+ * initialize + listTools，靠其中的 401 触发 OAuth 发现，故这三者都需鉴权。
+ * notifications/* 与 ping 等无需身份，不在内。
+ */
+const AUTH_REQUIRED_METHODS = new Set(['initialize', 'tools/list', 'tools/call']);
+
+/** 本次 JSON-RPC 请求体是否包含需要鉴权的方法。 */
+function bodyNeedsAuth(body: unknown): boolean {
+    const messages = Array.isArray(body) ? body : [body];
+    return messages.some(
+        (m) => typeof m === 'object' && m !== null && AUTH_REQUIRED_METHODS.has((m as any).method),
+    );
+}
+
+/** 取请求体里第一个可用的 JSON-RPC id，用于回填 401 错误响应。 */
+function firstRequestId(body: unknown): string | number | null {
+    const messages = Array.isArray(body) ? body : [body];
+    for (const m of messages) {
+        if (typeof m === 'object' && m !== null && 'id' in (m as any)) {
+            const id = (m as any).id;
+            if (typeof id === 'string' || typeof id === 'number') return id;
+        }
+    }
+    return null;
+}
+
+/**
+ * 返回标准 HTTP 401 + 基础 WWW-Authenticate。
+ * 注意：这里不带 resource_metadata，因此不会触发 MCP 的 OAuth 自动发现——
+ * OAuth 由上游应用负责，本服务只如实把鉴权失败暴露为 HTTP 401。
+ */
+function sendUnauthorized(res: any, body: unknown, message: string): void {
+    res.status(401)
+        .set('WWW-Authenticate', 'Bearer error="invalid_token"')
+        .set('Access-Control-Expose-Headers', 'WWW-Authenticate')
+        .json({
+            jsonrpc: '2.0',
+            error: { code: -32001, message },
+            id: firstRequestId(body),
+        });
+}
+
+/**
+ * HTTP 层鉴权 gate：对 initialize / tools/list / tools/call 校验云效 token。
+ * - 无 token → 401
+ * - token 明确无效（云效 401）→ 401
+ * - token 有效 / 无法判定 → 放行
+ * 返回 true 表示已发送 401 响应，调用方应立即 return。
+ */
+async function enforceAuthGate(
+    req: any,
+    res: any,
+    sessionAuth?: { yunxiao_access_token?: string; yunxiao_api_base_url?: string },
+): Promise<boolean> {
+    // 鉴权 gate 未开启时直接放行（默认关闭；自建 + env token 场景无需验证）。
+    if (!serverConfig.authCheck) return false;
+    if (req.method !== 'POST' || !bodyNeedsAuth(req.body)) return false;
+
+    const { token, apiBaseUrl, forwardHost } = resolveYunxiaoAuth(req, sessionAuth);
+    if (!token) {
+        sendUnauthorized(res, req.body, 'Unauthorized: missing Yunxiao access token');
+        return true;
+    }
+
+    const utils = await import('./common/utils.js');
+    const valid = await utils.verifyToken(token, apiBaseUrl, forwardHost);
+    if (valid === false) {
+        sendUnauthorized(res, req.body, 'Unauthorized: invalid or expired Yunxiao access token');
+        return true;
+    }
+    return false;
+}
+
+type SseSessionEntry = {
+    transport: SSEServerTransport;
+    server: Server;
+    yunxiao_access_token?: string;
+    yunxiao_api_base_url?: string;
+    toolsets?: string[];
+};
+
+async function registerSseRoutes(
+    app: any,
+    sessions: Record<string, SseSessionEntry>,
+    cfg: ServerConfig,
+    options: { installJsonParser: boolean },
+): Promise<void> {
+    app.get(cfg.paths.sse, async (req: any, res: any) => {
+        logger.info({ ip: req.ip }, "new SSE connection");
+
+        const { token: yunxiao_access_token, apiBaseUrl: yunxiao_api_base_url } = resolveYunxiaoAuth(req);
+
+        // 只记录是否携带 token，绝不打印 token 本身
+        logger.debug({ hasToken: !!yunxiao_access_token, apiBaseUrl: yunxiao_api_base_url || null }, "SSE resolved auth");
+
+        const sessionServer = createMcpServer();
+        const sseTransport = new SSEServerTransport(cfg.paths.sseMessages, res);
+        const sessionId = sseTransport.sessionId;
+
+        if (sessionId) {
+            sessions[sessionId] = {
+                transport: sseTransport,
+                server: sessionServer,
+                yunxiao_access_token,
+                yunxiao_api_base_url,
+                toolsets: resolveToolsets(req),
+            };
+        }
+
+        try {
+            await sessionServer.connect(sseTransport);
+            logger.info(
+                { sessionId, auth: yunxiao_access_token ? "custom" : "env-default" },
+                "MCP server connected via SSE",
+            );
+        } catch (error) {
+            logger.error({ err: error }, "failed to start SSE server");
+            res.status(500).send('Server error');
+        }
+    });
+
+    if (options.installJsonParser) {
+        const { default: express } = await import('express');
+        // 附件上传走 base64 内联（create_workitem_attachment 的 fileContent），10MB 文件
+        // base64 编码后约 13.5MB，整个 JSON-RPC body 需能容纳；放宽到 20mb（可用
+        // MCP_JSON_BODY_LIMIT 覆盖）。
+        app.use(express.json({ limit: process.env.MCP_JSON_BODY_LIMIT || '20mb' }));
+    }
+
+    app.post(cfg.paths.sseMessages, async (req: any, res: any) => {
+        const sessionId = req.query.sessionId as string;
+        const session = sessions[sessionId];
+
+        if (!session) {
+            res.status(404).send('Session not found');
+            return;
+        }
+
+        try {
+            const { runWithAuth } = await import('./common/utils.js');
+            const auth = resolveYunxiaoAuth(req, session);
+            if (await enforceAuthGate(req, res, session)) return;
+            const toolsets = resolveToolsets(req) ?? session.toolsets;
+            logger.debug(
+                { sessionId, hasToken: !!auth.token, apiBaseUrl: auth.apiBaseUrl || null },
+                "SSE POST message",
+            );
+
+            await runWithAuth({ ...auth, toolsets }, () => session.transport.handlePostMessage(req, res, req.body));
+        } catch (error) {
+            logger.error({ err: error }, "error handling SSE POST message");
+            if (!res.headersSent) {
+                res.status(500).send('Server error');
+            }
+        }
+    });
+}
+
+function registerStreamableRoutes(
+    app: any,
+    utils: typeof import('./common/utils.js'),
+    streamSessions: Map<string, StreamableSessionEntry>,
+    mcpPath: string,
+): void {
+    app.use(mcpPath, (req: any, res: any, next: any) => {
+        res.setHeader('Access-Control-Allow-Origin', '*');
+        res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
+        res.setHeader(
+            'Access-Control-Allow-Headers',
+            'Content-Type, Accept, Mcp-Session-Id, Mcp-Protocol-Version, Authorization, X-Yunxiao-Token, X-Yunxiao-Api-Base-Url, X-Devops-Toolsets',
+        );
+        if (req.method === 'OPTIONS') {
+            res.status(204).end();
+            return;
+        }
+        next();
+    });
+
+    app.all(mcpPath, async (req: any, res: any) => {
+        const sessionIdHeader = getMcpSessionIdHeader(req);
+
+        if (sessionIdHeader) {
+            const entry = streamSessions.get(sessionIdHeader);
+            if (!entry) {
+                res.status(404).json({
+                    jsonrpc: '2.0',
+                    error: { code: -32001, message: 'Session not found' },
+                    id: null,
+                });
+                return;
+            }
+            const auth = resolveYunxiaoAuth(req, entry);
+            if (await enforceAuthGate(req, res, entry)) return;
+            const toolsets = resolveToolsets(req) ?? entry.toolsets;
+            const parsedBody = req.method === 'POST' ? req.body : undefined;
+            await utils.runWithAuth({ ...auth, toolsets }, () => entry.transport.handleRequest(req, res, parsedBody));
+            return;
+        }
+
+        if (req.method !== 'POST') {
+            res.status(400).json({
+                jsonrpc: '2.0',
+                error: {
+                    code: -32600,
+                    message: 'Bad Request: Mcp-Session-Id header is required except for POST initialize',
+                },
+                id: null,
+            });
+            return;
+        }
+
+        if (!bodyLooksLikeInitialize(req.body)) {
+            res.status(400).json({
+                jsonrpc: '2.0',
+                error: {
+                    code: -32600,
+                    message: 'Bad Request: first request must be initialize without Mcp-Session-Id',
+                },
+                id: null,
+            });
+            return;
+        }
+
+        // initialize 也纳入鉴权 gate：无 token / token 无效时 401，供上游在连接探测阶段发现 OAuth。
+        if (await enforceAuthGate(req, res)) return;
+
+        const { token: yunxiao_access_token, apiBaseUrl: yunxiao_api_base_url, forwardHost } = resolveYunxiaoAuth(req);
+        const toolsets = resolveToolsets(req);
+        const sessionServer = createMcpServer();
+
+        let transport!: StreamableHTTPServerTransport;
+        transport = new StreamableHTTPServerTransport({
+            sessionIdGenerator: () => randomUUID(),
+            onsessioninitialized: async (sid) => {
+                streamSessions.set(sid, {
+                    transport,
+                    server: sessionServer,
+                    yunxiao_access_token,
+                    yunxiao_api_base_url,
+                    toolsets,
+                });
+                logger.info({ sessionId: sid }, "Streamable HTTP MCP session initialized");
+            },
+            onsessionclosed: async (sid) => {
+                streamSessions.delete(sid);
+                logger.info({ sessionId: sid }, "Streamable HTTP MCP session closed");
+            },
+        });
+
+        await sessionServer.connect(transport);
+
+        logger.info(
+            { ip: req.ip, auth: yunxiao_access_token ? "custom" : "env-default" },
+            "new Streamable HTTP connection",
+        );
+
+        await utils.runWithAuth({ token: yunxiao_access_token, apiBaseUrl: yunxiao_api_base_url, forwardHost, toolsets }, () =>
+            transport.handleRequest(req, res, req.body),
+        );
+    });
+}
+
+function registerStatelessStreamableRoutes(
+    app: any,
+    utils: typeof import('./common/utils.js'),
+    mcpPath: string,
+): void {
+    app.use(mcpPath, (req: any, res: any, next: any) => {
+        res.setHeader('Access-Control-Allow-Origin', '*');
+        res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
+        res.setHeader(
+            'Access-Control-Allow-Headers',
+            'Content-Type, Accept, Mcp-Session-Id, Mcp-Protocol-Version, Authorization, X-Yunxiao-Token, X-Yunxiao-Api-Base-Url, X-Devops-Toolsets',
+        );
+        if (req.method === 'OPTIONS') {
+            res.status(204).end();
+            return;
+        }
+        next();
+    });
+
+    app.all(mcpPath, async (req: any, res: any) => {
+        if (req.method !== 'POST') {
+            res.status(405).json({
+                jsonrpc: '2.0',
+                error: { code: -32600, message: 'Method Not Allowed: stateless mode only accepts POST' },
+                id: null,
+            });
+            return;
+        }
+
+        // 鉴权 gate：initialize/tools/list/tools/call 无 token / token 无效时直接 HTTP 401，
+        // 不进入 MCP，避免被 stateless 的 enableJsonResponse 封成 200。
+        if (await enforceAuthGate(req, res)) return;
+
+        const auth = resolveYunxiaoAuth(req);
+        const toolsets = resolveToolsets(req);
+        const server = createMcpServer();
+        const transport = new StreamableHTTPServerTransport({
+            sessionIdGenerator: undefined,
+            enableJsonResponse: true,
+        });
+
+        await server.connect(transport);
+
+        try {
+            await utils.runWithAuth({ ...auth, toolsets }, () => transport.handleRequest(req, res, req.body));
+        } finally {
+            await transport.close();
+            await server.close();
+        }
+    });
+}
+
+async function runServer() {
+    if (useHttpRemote) {
+        const utils = await import('./common/utils.js');
+        const { port, host, allowedHosts, transport, paths } = serverConfig;
+
+        let app: any;
+        if (transport.streamableHttp) {
+            app =
+                allowedHosts.length > 0
+                    ? createMcpExpressApp({ host, allowedHosts })
+                    : createMcpExpressApp({ host });
+        } else {
+            const { default: express } = await import('express');
+            app = express();
+        }
+
+        // 轻量健康检查端点（供 ALB 后端健康检查 / K8s 存活就绪探针使用）。
+        // 挂在根路径，不依赖任何 transport 或鉴权，始终返回 200。
+        app.get('/healthz', (_req: any, res: any) => {
+            res.status(200).json({ status: 'ok' });
+        });
+
+        const sseSessions: Record<string, SseSessionEntry> = {};
+        const streamSessions = new Map<string, StreamableSessionEntry>();
+
+        if (transport.sse) {
+            await registerSseRoutes(app, sseSessions, serverConfig, { installJsonParser: !transport.streamableHttp });
+        }
+
+        if (transport.streamableHttp) {
+            if (serverConfig.stateless) {
+                registerStatelessStreamableRoutes(app, utils, paths.streamableHttp);
+            } else {
+                registerStreamableRoutes(app, utils, streamSessions, paths.streamableHttp);
+            }
+        }
+
+        const serverInstance: any = app.listen(port, () => {
+            const modes: string[] = [];
+            if (transport.sse) modes.push(`SSE (${paths.sse}, ${paths.sseMessages})`);
+            if (transport.streamableHttp) modes.push(`Streamable HTTP${serverConfig.stateless ? ' (stateless)' : ''} (${paths.streamableHttp})`);
+            logger.info({ port, modes }, "Yunxiao MCP Server running");
+        });
+
+        process.on('SIGINT', () => {
+            logger.info("shutting down HTTP server...");
+            serverInstance.close(() => {
+                logger.info("server closed");
+                process.exit(0);
+            });
+        });
+    } else {
+        const server = createMcpServer();
+        const transport = new StdioServerTransport();
+        await server.connect(transport);
+    }
+}
+
+if (useHttpRemote) {
+    runWithCluster(serverConfig.cluster, runServer);
+} else {
+    setupWorkerGuards();
+    runServer().catch((error) => {
+        process.exit(1);
+    });
+}

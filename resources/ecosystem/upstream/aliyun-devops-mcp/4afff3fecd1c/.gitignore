@@ -1,0 +1,14 @@
+node_modules
+dist
+dist-test
+*.log
+.env
+.idea
+.vscode
+.env_region
+.qoder/
+.DS_Store
+.agents/
+.codex/
+AGENTS.md
+work/

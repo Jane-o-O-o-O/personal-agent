@@ -1,0 +1,87 @@
+{
+  "openapi": "3.0.1",
+  "info": {
+    "title": "API文档",
+    "description": "这是描述信息",
+    "version": "1.0"
+  },
+  "servers": [],
+  "tags": [
+    {
+      "name": "测试结果",
+      "description": "测试结果相关接口"
+    }
+  ],
+  "paths": {
+    "/testhub/organizations/{organizationId}/testPlans/{testplanId}/testcases/{id}": {
+      "put": {
+        "tags": [
+          "测试结果"
+        ],
+        "summary": "更新测试结果",
+        "operationId": "UpdateTestResult",
+        "parameters": [
+          {
+            "name": "testplanId",
+            "in": "path",
+            "description": "测试计划唯一标识",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "description": "测试用例唯一标识",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "organizationId",
+            "in": "path",
+            "description": "organizationId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateTestResultRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "UpdateTestResultRequest": {
+        "type": "object",
+        "properties": {
+          "executor": {
+            "type": "string",
+            "description": "执行人userId"
+          },
+          "status": {
+            "type": "string",
+            "description": "状态，可选值为TODO， PASS，FAILURE， POSTPONE，分别对应待测试，以通过，未通过，暂缓"
+          }
+        }
+      }
+    }
+  }
+}

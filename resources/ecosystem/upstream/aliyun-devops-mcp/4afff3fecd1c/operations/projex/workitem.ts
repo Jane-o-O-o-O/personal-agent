@@ -1,0 +1,1159 @@
+import {RecordType, string, TypeOf, z, ZodString} from "zod";
+import {
+  buildUrl,
+  yunxiaoRequest,
+  yunxiaoRequestRaw,
+  isRegionEdition
+} from "../../common/utils.js";
+import {
+  WorkItemSchema,
+  FilterConditionSchema,
+  ConditionsSchema, 
+  WorkItemType,
+  WorkItemTypeDetail,
+  WorkItemTypeFieldConfig,
+  WorkItemWorkflow,
+  UpdateWorkItemField,
+  ActivityDTOSchema,
+  IdentifierDTOSchema,
+  ListWorkitemRelationRecordsResponseSchema,
+} from "./types.js";
+import { ProjectInfoSchema } from "./types.js";
+import { ListWorkItemCommentsParams } from "./types.js";
+import { getCurrentUserFunc, resolveOrganizationId } from "../organization/organization.js";
+
+export async function deleteWorkItemFunc(
+  organizationId: string | undefined,
+  workItemId: string
+): Promise<void> {
+  const finalOrgId = await resolveOrganizationId(organizationId);
+  const url = isRegionEdition()
+    ? `/oapi/v1/projex/workitems/${workItemId}`
+    : `/oapi/v1/projex/organizations/${finalOrgId}/workitems/${workItemId}`;
+
+  await yunxiaoRequest(url, {
+    method: "DELETE",
+  });
+}
+
+export async function getWorkItemFunc(
+  organizationId: string | undefined,
+  workItemId: string
+): Promise<z.infer<typeof WorkItemSchema>> {
+  const finalOrgId = await resolveOrganizationId(organizationId);
+  const url = isRegionEdition()
+    ? `/oapi/v1/projex/workitems/${workItemId}`
+    : `/oapi/v1/projex/organizations/${finalOrgId}/workitems/${workItemId}`;
+
+  const response = await yunxiaoRequest(url, {
+    method: "GET",
+  });
+
+  return WorkItemSchema.parse(response);
+}
+
+// 定义分页信息类型
+export interface PaginationInfo {
+  page: number;
+  perPage: number;
+  totalPages: number;
+  total: number;
+  nextPage: number | null;
+  prevPage: number | null;
+}
+
+export interface SearchWorkitemsResult {
+  items: z.infer<typeof WorkItemSchema>[];
+  pagination?: PaginationInfo;
+}
+
+export async function searchWorkitemsFunc(
+  organizationId: string | undefined,
+  category: string,
+  spaceId: string,
+  spaceType?: string,
+  subject?: string,
+  status?: string,
+  createdAfter?: string,
+  createdBefore?: string,
+  updatedAfter?: string,
+  updatedBefore?: string,
+  creator?: string,
+  assignedTo?: string,
+  sprint?: string,
+  workitemType?: string,
+  statusStage?: string,
+  tag?: string,
+  priority?: string,
+  subjectDescription?: string,
+  finishTimeAfter?: string,
+  finishTimeBefore?: string,
+  updateStatusAtAfter?: string,
+  updateStatusAtBefore?: string,
+  advancedConditions?: string,
+  orderBy: string = "gmtCreate",
+  sort: string = "desc",
+  page?: number,
+  perPage?: number,
+  includeDetails: boolean = false // 新增参数：是否自动补充缺失的description等详细信息
+): Promise<SearchWorkitemsResult> {
+  // 处理assignedTo为"self"的情况，自动获取当前用户ID
+  let finalAssignedTo = assignedTo;
+  let finalCreator = creator;
+  
+  if (assignedTo === "self" || creator === "self") {
+    try {
+      const currentUser = await getCurrentUserFunc();
+      if (currentUser.id) {
+        if (assignedTo === "self") {
+          finalAssignedTo = currentUser.id;
+        }
+        if (creator === "self") {
+          finalCreator = currentUser.id;
+        }
+      } else {
+        finalAssignedTo = assignedTo;
+        finalCreator = creator;
+      }
+    } catch (error) {
+      finalAssignedTo = assignedTo;
+      finalCreator = creator;
+    }
+  }
+
+  const finalOrgId = await resolveOrganizationId(organizationId);
+  const url = isRegionEdition()
+    ? `/oapi/v1/projex/workitems:search`
+    : `/oapi/v1/projex/organizations/${finalOrgId}/workitems:search`;
+
+  const payload: Record<string, any> = {
+    category: category,
+    spaceId: spaceId,
+  };
+
+  // 添加 spaceType 参数，用于区分项目和项目集
+  if (spaceType) {
+    payload.spaceType = spaceType;
+  }
+
+  const conditions = buildWorkitemConditions({
+    subject,
+    status,
+    createdAfter,
+    createdBefore,
+    updatedAfter,
+    updatedBefore,
+    creator: finalCreator,
+    assignedTo: finalAssignedTo,
+    sprint,
+    workitemType,
+    statusStage,
+    tag,
+    priority,
+    subjectDescription,
+    finishTimeAfter,
+    finishTimeBefore,
+    updateStatusAtAfter,
+    updateStatusAtBefore,
+    advancedConditions
+  });
+  
+  if (conditions) {
+    payload.conditions = conditions;
+  }
+
+  payload.orderBy = orderBy;
+  
+  // 添加分页和排序参数
+  if (sort) {
+    payload.sort = sort;
+  }
+  if (page !== undefined) {
+    payload.page = page;
+  }
+  if (perPage !== undefined) {
+    payload.perPage = perPage;
+  }
+
+  // 走 yunxiaoRequestRaw 读取响应头中的分页信息：它统一处理了 token 注入与
+  // region 多租户的 Host 透传（自己直发 fetch 会丢失 Host，导致 region 站无法定位租户）。
+  const { body: responseBody, headers } = await yunxiaoRequestRaw(url, {
+    method: "POST",
+    body: payload,
+  });
+
+  // 从响应头中提取分页信息
+  const pagination: PaginationInfo | undefined = (() => {
+    const xPage = headers.get("x-page");
+    const xPerPage = headers.get("x-per-page");
+    const xTotalPages = headers.get("x-total-pages");
+    const xTotal = headers.get("x-total");
+    const xNextPage = headers.get("x-next-page");
+    const xPrevPage = headers.get("x-prev-page");
+
+    if (xPage && xPerPage && xTotalPages && xTotal) {
+      return {
+        page: parseInt(xPage, 10),
+        perPage: parseInt(xPerPage, 10),
+        totalPages: parseInt(xTotalPages, 10),
+        total: parseInt(xTotal, 10),
+        nextPage: xNextPage ? parseInt(xNextPage, 10) : null,
+        prevPage: xPrevPage ? parseInt(xPrevPage, 10) : null,
+      };
+    }
+    return undefined;
+  })();
+
+  if (!Array.isArray(responseBody)) {
+    return {
+      items: [],
+      pagination,
+    };
+  }
+
+  const workItems = responseBody.map(workitem => WorkItemSchema.parse(workitem));
+
+  // 如果需要补充详细信息，使用分批并发方式获取
+  if (includeDetails) {
+    const itemsNeedingDetails = workItems.filter(item => 
+      item.id.length > 0 &&
+      (item.description === null || item.description === undefined || item.description === "")
+    );
+
+    if (itemsNeedingDetails.length > 0) {
+      // 分批并发获取详情
+      const descriptionMap = await batchGetWorkItemDetails(finalOrgId, itemsNeedingDetails);
+
+      // 更新workItems中的description
+      const updatedItems = workItems.map(item => {
+        if (descriptionMap.has(item.id)) {
+          return {
+            ...item,
+            description: descriptionMap.get(item.id) || item.description
+          };
+        }
+        return item;
+      });
+
+      return {
+        items: updatedItems,
+        pagination,
+      };
+    }
+  }
+
+  return {
+    items: workItems,
+    pagination,
+  };
+}
+
+// 分批并发获取工作项详情
+async function batchGetWorkItemDetails(
+  organizationId: string, 
+  workItems: z.infer<typeof WorkItemSchema>[],
+  batchSize: number = 10,  // 每批处理10个
+  maxItems: number = 100   // 最多处理100个
+): Promise<Map<string, string | null>> {
+  const descriptionMap = new Map<string, string | null>();
+  
+  // 限制处理数量
+  const limitedItems = workItems.slice(0, maxItems);
+
+  // 分批处理
+  for (let i = 0; i < limitedItems.length; i += batchSize) {
+    const batch = limitedItems.slice(i, i + batchSize);
+    
+    // 批次内并发执行
+    const batchResults = await Promise.allSettled(
+      batch.map(async (item) => {
+        // 再次检查item.id是否为有效字符串
+        if (typeof item.id !== 'string' || item.id.length === 0) {
+          return { 
+            id: item.id || 'unknown', 
+            description: null,
+            success: false 
+          };
+        }
+        
+        const itemId: string = item.id;
+        
+        try {
+          const detailedItem = await getWorkItemFunc(organizationId, itemId);
+          return { 
+            id: itemId, 
+            description: detailedItem.description,
+            success: true 
+          };
+        } catch (error) {
+          return { 
+            id: itemId, 
+            description: null,
+            success: false 
+          };
+        }
+      })
+    );
+
+    // 处理批次结果
+    batchResults.forEach((result) => {
+      if (result.status === 'fulfilled') {
+        // 确保description类型正确，将undefined转换为null
+        const description = result.value.description === undefined ? null : result.value.description;
+        descriptionMap.set(result.value.id, description);
+      }
+    });
+  }
+  return descriptionMap;
+}
+
+function buildWorkitemConditions(args: {
+  subject?: string;
+  status?: string;
+  createdAfter?: string;
+  createdBefore?: string;
+  updatedAfter?: string;
+  updatedBefore?: string;
+  creator?: string;
+  assignedTo?: string;
+  sprint?: string;
+  workitemType?: string;
+  statusStage?: string;
+  tag?: string;
+  priority?: string;
+  subjectDescription?: string;
+  finishTimeAfter?: string;
+  finishTimeBefore?: string;
+  updateStatusAtAfter?: string;
+  updateStatusAtBefore?: string;
+  advancedConditions?: string;
+}): string | undefined {
+
+  if (args.advancedConditions) {
+    return args.advancedConditions;
+  }
+
+  const filterConditions: z.infer<typeof FilterConditionSchema>[] = [];
+
+  if (args.subject) {
+    filterConditions.push({
+      className: "string",
+      fieldIdentifier: "subject",
+      format: "input",
+      operator: "CONTAINS",
+      toValue: null,
+      value: [args.subject],
+    });
+  }
+
+  if (args.status) {
+    const statusValues = args.status.split(",");
+    const values = statusValues.map(v => v.trim());
+
+    filterConditions.push({
+      className: "status",
+      fieldIdentifier: "status",
+      format: "list",
+      operator: "CONTAINS",
+      toValue: null,
+      value: values,
+    });
+  }
+
+  if (args.createdAfter) {
+    const createdBefore = args.createdBefore ? `${args.createdBefore} 23:59:59` : null;
+
+    filterConditions.push({
+      className: "dateTime",
+      fieldIdentifier: "gmtCreate",
+      format: "input",
+      operator: "BETWEEN",
+      toValue: createdBefore,
+      value: [`${args.createdAfter} 00:00:00`],
+    });
+  }
+
+  if (args.updatedAfter) {
+    const updatedBefore = args.updatedBefore ? `${args.updatedBefore} 23:59:59` : null;
+
+    filterConditions.push({
+      className: "dateTime",
+      fieldIdentifier: "gmtModified",
+      format: "input",
+      operator: "BETWEEN",
+      toValue: updatedBefore,
+      value: [`${args.updatedAfter} 00:00:00`],
+    })
+  }
+
+  if (args.creator) {
+    const creatorValues = args.creator.split(",");
+    const values = creatorValues.map(v => v.trim());
+
+    filterConditions.push({
+      className: "user",
+      fieldIdentifier: "creator",
+      format: "list",
+      operator: "CONTAINS",
+      toValue: null,
+      value: values,
+    });
+  }
+
+  if (args.assignedTo) {
+    const assignedToValues = args.assignedTo.split(",");
+    const values = assignedToValues.map(v => v.trim());
+
+    filterConditions.push({
+      className: "user",
+      fieldIdentifier: "assignedTo",
+      format: "list",
+      operator: "CONTAINS",
+      toValue: null,
+      value: values,
+    });
+  }
+
+  if (args.sprint) {
+    const sprintValues = args.sprint.split(",");
+    const values = sprintValues.map(v => v.trim());
+
+    filterConditions.push({
+      className: "sprint",
+      fieldIdentifier: "sprint",
+      format: "list",
+      operator: "CONTAINS",
+      toValue: null,
+      value: values,
+    });
+  }
+
+  if (args.workitemType) {
+    const workitemTypeValues = args.workitemType.split(",");
+    const values = workitemTypeValues.map(v => v.trim());
+
+    filterConditions.push({
+      className: "workitemType",
+      fieldIdentifier: "workitemType",
+      format: "list",
+      operator: "CONTAINS",
+      toValue: null,
+      value: values,
+    });
+  }
+
+  if (args.statusStage) {
+    const statusStageValues = args.statusStage.split(",");
+    const values = statusStageValues.map(v => v.trim());
+
+    filterConditions.push({
+      className: "statusStage",
+      fieldIdentifier: "statusStage",
+      format: "list",
+      operator: "CONTAINS",
+      toValue: null,
+      value: values,
+    });
+  }
+
+  if (args.tag) {
+    const tagValues = args.tag.split(",");
+    const values = tagValues.map(v => v.trim());
+
+    filterConditions.push({
+      className: "tag",
+      fieldIdentifier: "tag",
+      format: "multiList",
+      operator: "CONTAINS",
+      toValue: null,
+      value: values,
+    });
+  }
+
+  if (args.priority) {
+    const priorityValues = args.priority.split(",");
+    const values = priorityValues.map(v => v.trim());
+
+    filterConditions.push({
+      className: "option",
+      fieldIdentifier: "priority",
+      format: "list",
+      operator: "CONTAINS",
+      toValue: null,
+      value: values,
+    });
+  }
+
+  if (args.subjectDescription) {
+    filterConditions.push({
+      className: "string",
+      fieldIdentifier: "subject-description",
+      format: "input",
+      operator: "CONTAINS",
+      toValue: null,
+      value: [args.subjectDescription],
+    });
+  }
+
+  if (args.finishTimeAfter) {
+    const finishTimeBefore = args.finishTimeBefore ? `${args.finishTimeBefore} 23:59:59` : null;
+
+    filterConditions.push({
+      className: "date",
+      fieldIdentifier: "finishTime",
+      format: "input",
+      operator: "BETWEEN",
+      toValue: finishTimeBefore,
+      value: [`${args.finishTimeAfter} 00:00:00`],
+    });
+  }
+
+  if (args.updateStatusAtAfter) {
+    const updateStatusAtBefore = args.updateStatusAtBefore ? `${args.updateStatusAtBefore} 23:59:59` : null;
+
+    filterConditions.push({
+      className: "date",
+      fieldIdentifier: "updateStatusAt",
+      format: "input",
+      operator: "BETWEEN",
+      toValue: updateStatusAtBefore,
+      value: [`${args.updateStatusAtAfter} 00:00:00`],
+    });
+  }
+
+  if (filterConditions.length === 0) {
+    return undefined;
+  }
+
+  const conditions: z.infer<typeof ConditionsSchema> = {
+    conditionGroups: [filterConditions],
+  };
+
+  return JSON.stringify(conditions);
+} 
+
+export async function createWorkItemFunc(
+    organizationId: string | undefined,
+    assignedTo: string,
+    spaceId: string,
+    subject: string,
+    workitemTypeId: string,
+    customFieldValues?: RecordType<string, string> | undefined,
+    description?: string | undefined,
+    formatType?: string | undefined,
+    labels?: string[],
+    parentId?: string | undefined,
+    participants?: string[] | undefined,
+    sprint?: string | undefined,
+    trackers?: string[] | undefined,
+    verifier?: string | undefined,
+    versions?: string[] | undefined
+): Promise<z.infer<typeof WorkItemSchema>> {
+  const finalOrgId = await resolveOrganizationId(organizationId);
+  const url = isRegionEdition()
+    ? `/oapi/v1/projex/workitems`
+    : `/oapi/v1/projex/organizations/${finalOrgId}/workitems`;
+
+  const payload: Record<string, any> = {
+    assignedTo,
+    spaceId,
+    subject,
+    workitemTypeId
+  };
+
+  if (customFieldValues) {
+    payload.customFieldValues = customFieldValues;
+  }
+
+  if (description !== undefined) {
+    payload.description = description;
+  }
+
+  if (formatType !== undefined) {
+    payload.formatType = formatType;
+  }
+
+  if (labels && labels.length > 0) {
+    payload.labels = labels;
+  }
+
+  if (parentId !== undefined) {
+    payload.parentId = parentId;
+  }
+
+  if (participants && participants.length > 0) {
+    payload.participants = participants;
+  }
+
+  if (sprint !== undefined) {
+    payload.sprint = sprint;
+  }
+
+  if (trackers && trackers.length > 0) {
+    payload.trackers = trackers;
+  }
+
+  if (verifier !== undefined) {
+    payload.verifier = verifier;
+  }
+
+  if (versions && versions.length > 0) {
+    payload.versions = versions;
+  }
+
+  const response = await yunxiaoRequest(url, {
+    method: "POST",
+    body: payload,
+  });
+
+  return WorkItemSchema.parse(response);
+}
+
+export async function updateWorkItemFunc(
+    organizationId: string | undefined,
+    workItemId: string,
+    updateWorkItemFields: UpdateWorkItemField
+): Promise<void> {
+  const finalOrgId = await resolveOrganizationId(organizationId);
+  const url = isRegionEdition()
+    ? `/oapi/v1/projex/workitems/${workItemId}`
+    : `/oapi/v1/projex/organizations/${finalOrgId}/workitems/${workItemId}`;
+
+  // 构建请求体，将自定义字段合并到主对象中
+  const requestBody: Record<string, any> = {};
+
+  // 复制所有标准字段
+  if (updateWorkItemFields.subject !== undefined) {
+    requestBody.subject = updateWorkItemFields.subject;
+  }
+  if (updateWorkItemFields.description !== undefined) {
+    requestBody.description = updateWorkItemFields.description;
+  }
+  if (updateWorkItemFields.formatType !== undefined) {
+    requestBody.formatType = updateWorkItemFields.formatType;
+  }
+  if (updateWorkItemFields.status !== undefined) {
+    requestBody.status = updateWorkItemFields.status;
+  }
+  if (updateWorkItemFields.assignedTo !== undefined) {
+    requestBody.assignedTo = updateWorkItemFields.assignedTo;
+  }
+  if (updateWorkItemFields.priority !== undefined) {
+    requestBody.priority = updateWorkItemFields.priority;
+  }
+  if (updateWorkItemFields.labels !== undefined) {
+    requestBody.labels = updateWorkItemFields.labels;
+  }
+  if (updateWorkItemFields.sprint !== undefined) {
+    requestBody.sprint = updateWorkItemFields.sprint;
+  }
+  if (updateWorkItemFields.trackers !== undefined) {
+    requestBody.trackers = updateWorkItemFields.trackers;
+  }
+  if (updateWorkItemFields.verifier !== undefined) {
+    requestBody.verifier = updateWorkItemFields.verifier;
+  }
+  if (updateWorkItemFields.participants !== undefined) {
+    requestBody.participants = updateWorkItemFields.participants;
+  }
+  if (updateWorkItemFields.versions !== undefined) {
+    requestBody.versions = updateWorkItemFields.versions;
+  }
+
+  // 处理自定义字段
+  if (updateWorkItemFields.customFieldValues !== undefined) {
+    // 将自定义字段合并到请求体中
+    Object.entries(updateWorkItemFields.customFieldValues).forEach(([fieldId, value]) => {
+      requestBody[fieldId] = value;
+    });
+  }
+
+  const response = await yunxiaoRequest(url, {
+    method: "PUT",
+    body: requestBody,
+  });
+}
+
+export async function getWorkItemTypesFunc(
+  organizationId: string | undefined,
+  id: string, // 项目唯一标识
+  category: string // 工作项类型，可选值为 Req，Bug，Task 等。
+): Promise<WorkItemType[]> {
+  const finalOrgId = await resolveOrganizationId(organizationId);
+  const url = isRegionEdition()
+    ? `/oapi/v1/projex/projects/${id}/workitemTypes?category=${encodeURIComponent(category)}`
+    : `/oapi/v1/projex/organizations/${finalOrgId}/projects/${id}/workitemTypes?category=${encodeURIComponent(category)}`;
+
+  const response = await yunxiaoRequest(url, {
+    method: "GET",
+  });
+
+  return response as WorkItemType[];
+}
+
+/**
+ * 列出所有工作项类型
+ * @param organizationId 企业ID
+ * @returns 工作项类型列表
+ */
+export async function listAllWorkItemTypesFunc(
+  organizationId: string | undefined
+): Promise<WorkItemTypeDetail[]> {
+  const finalOrgId = await resolveOrganizationId(organizationId);
+  const url = isRegionEdition()
+    ? `/oapi/v1/projex/workitemTypes`
+    : `/oapi/v1/projex/organizations/${finalOrgId}/workitemTypes`;
+
+  const response = await yunxiaoRequest(url, {
+    method: "GET",
+  });
+
+  // 确保返回的是数组格式
+  if (Array.isArray(response)) {
+    return response as WorkItemTypeDetail[];
+  }
+  
+  // 如果响应中包含result字段，则返回result中的数据
+  if (response && typeof response === 'object' && 'result' in response && Array.isArray(response.result)) {
+    return response.result as WorkItemTypeDetail[];
+  }
+  
+  // 其他情况返回空数组
+  return [];
+}
+
+/**
+ * 列出工作项类型
+ * @param organizationId 企业ID
+ * @param spaceIdentifier 项目唯一标识
+ * @param category 工作项类型分类（可选）
+ * @returns 工作项类型列表
+ */
+export async function listWorkItemTypesFunc(
+  organizationId: string | undefined,
+  spaceIdentifier: string,
+  category?: string
+): Promise<WorkItemTypeDetail[]> {
+  const finalOrgId = await resolveOrganizationId(organizationId);
+  let url = isRegionEdition()
+    ? `/oapi/v1/projex/projects/${spaceIdentifier}/workitemTypes`
+    : `/oapi/v1/projex/organizations/${finalOrgId}/projects/${spaceIdentifier}/workitemTypes`;
+  
+  // 如果提供了category参数，则添加到URL中
+  if (category) {
+    url += `?category=${encodeURIComponent(category)}`;
+  }
+
+  const response = await yunxiaoRequest(url, {
+    method: "GET",
+  });
+
+  // 确保返回的是数组格式
+  if (Array.isArray(response)) {
+    return response as WorkItemTypeDetail[];
+  }
+  
+  // 如果响应中包含result字段，则返回result中的数据
+  if (response && typeof response === 'object' && 'result' in response && Array.isArray(response.result)) {
+    return response.result as WorkItemTypeDetail[];
+  }
+  
+  // 其他情况返回空数组
+  return [];
+}
+
+/**
+ * 获取工作项类型详情
+ * @param organizationId 企业ID
+ * @param spaceIdentifier 项目唯一标识
+ * @param id 工作项类型ID
+ * @returns 工作项类型详情
+ */
+export async function getWorkItemTypeFunc(
+  organizationId: string | undefined,
+  id: string
+): Promise<WorkItemTypeDetail> {
+  const finalOrgId = await resolveOrganizationId(organizationId);
+  const url = isRegionEdition()
+    ? `/oapi/v1/projex/workitemTypes/${id}`
+    : `/oapi/v1/projex/organizations/${finalOrgId}/workitemTypes/${id}`;
+
+  const response = await yunxiaoRequest(url, {
+    method: "GET",
+  });
+
+  // 如果响应中包含result字段，则返回result中的数据
+  if (response && typeof response === 'object' && 'result' in response) {
+    return response.result as WorkItemTypeDetail;
+  }
+  
+  // 否则直接返回响应
+  return response as WorkItemTypeDetail;
+}
+
+/**
+ * 列出工作项关联的工作项类型
+ * @param organizationId 企业ID
+ * @param spaceIdentifier 项目唯一标识
+ * @param workItemTypeId 工作项ID
+ * @param relationType 关联类型 (BLOCK, RELATE, DUPLICATE, CHILD)
+ * @returns 关联的工作项类型列表
+ */
+export async function listWorkItemRelationWorkItemTypesFunc(
+  organizationId: string | undefined,
+  workItemTypeId: string,
+  relationType?: string
+): Promise<WorkItemTypeDetail[]> {
+  const finalOrgId = await resolveOrganizationId(organizationId);
+  const url = isRegionEdition()
+    ? `/oapi/v1/projex/workitemTypes/${workItemTypeId}/relationWorkitemTypes`
+    : `/oapi/v1/projex/organizations/${finalOrgId}/workitemTypes/${workItemTypeId}/relationWorkitemTypes`;
+
+  const queryParams: Record<string, string | number | undefined> = {};
+  if (relationType != null) {
+    queryParams.relationType = relationType;
+  }
+
+  let finalUrl = buildUrl(url, queryParams);
+  const response = await yunxiaoRequest(finalUrl, {
+    method: "GET",
+  });
+
+  // 确保返回的是数组格式
+  if (Array.isArray(response)) {
+    return response as WorkItemTypeDetail[];
+  }
+  
+  // 如果响应中包含result字段，则返回result中的数据
+  if (response && typeof response === 'object' && 'result' in response && Array.isArray(response.result)) {
+    return response.result as WorkItemTypeDetail[];
+  }
+  
+  // 其他情况返回空数组
+  return [];
+}
+
+/**
+ * 查询工作项的指定类型关联记录。
+ */
+export async function listWorkitemRelationRecordsFunc(
+  organizationId: string | undefined,
+  workItemId: string,
+  relationType: string
+): Promise<z.infer<typeof ListWorkitemRelationRecordsResponseSchema>> {
+  const finalOrgId = await resolveOrganizationId(organizationId);
+  const url = isRegionEdition()
+    ? `/oapi/v1/projex/workitems/${workItemId}/relationRecords`
+    : `/oapi/v1/projex/organizations/${finalOrgId}/workitems/${workItemId}/relationRecords`;
+
+  const response = await yunxiaoRequest(buildUrl(url, { relationType }), { method: "GET" });
+  const data = response && typeof response === "object" && "result" in response
+    ? response.result
+    : response;
+
+  return ListWorkitemRelationRecordsResponseSchema.parse(data);
+}
+
+/**
+ * 创建两个工作项之间的关联。
+ */
+export async function createWorkitemRelationRecordFunc(
+  organizationId: string | undefined,
+  workItemId: string,
+  relatedWorkItemId: string,
+  relationType: string,
+  operatorId?: string
+): Promise<z.infer<typeof IdentifierDTOSchema>> {
+  const finalOrgId = await resolveOrganizationId(organizationId);
+  const url = isRegionEdition()
+    ? `/oapi/v1/projex/workitems/${workItemId}/relationRecords`
+    : `/oapi/v1/projex/organizations/${finalOrgId}/workitems/${workItemId}/relationRecords`;
+  const body: Record<string, string> = {
+    relationType,
+    workitemId: relatedWorkItemId,
+  };
+  if (operatorId !== undefined) {
+    body.operatorId = operatorId;
+  }
+
+  const response = await yunxiaoRequest(url, { method: "POST", body });
+  const data = response && typeof response === "object" && "result" in response
+    ? response.result
+    : response;
+
+  return IdentifierDTOSchema.parse(data);
+}
+
+/**
+ * 删除两个工作项之间的指定类型关联；不会删除工作项本身。
+ */
+export async function deleteWorkitemRelationRecordFunc(
+  organizationId: string | undefined,
+  workItemId: string,
+  relatedWorkItemId: string,
+  relationType: string,
+  operatorId?: string
+): Promise<void> {
+  const finalOrgId = await resolveOrganizationId(organizationId);
+  const url = isRegionEdition()
+    ? `/oapi/v1/projex/workitems/${workItemId}/relationRecords`
+    : `/oapi/v1/projex/organizations/${finalOrgId}/workitems/${workItemId}/relationRecords`;
+  const body: Record<string, string> = {
+    relationType,
+    workitemId: relatedWorkItemId,
+  };
+  if (operatorId !== undefined) {
+    body.operatorId = operatorId;
+  }
+
+  await yunxiaoRequest(url, { method: "DELETE", body });
+}
+
+/**
+ * 获取工作项类型字段配置
+ * @param organizationId 企业ID
+ * @param projectId 项目唯一标识
+ * @param workItemTypeId 工作项类型ID
+ * @returns 工作项类型字段配置
+ */
+export async function getWorkItemTypeFieldConfigFunc(
+  organizationId: string | undefined,
+  projectId: string,
+  workItemTypeId: string
+): Promise<WorkItemTypeFieldConfig> {
+  const finalOrgId = await resolveOrganizationId(organizationId);
+  const url = isRegionEdition()
+    ? `/oapi/v1/projex/projects/${projectId}/workitemTypes/${workItemTypeId}/fields`
+    : `/oapi/v1/projex/organizations/${finalOrgId}/projects/${projectId}/workitemTypes/${workItemTypeId}/fields`;
+
+  const response = await yunxiaoRequest(url, {
+    method: "GET",
+  });
+
+  // 如果响应中包含result字段，则返回result中的数据
+  if (response && typeof response === 'object' && 'result' in response) {
+    return response.result as WorkItemTypeFieldConfig;
+  }
+  
+  // 否则直接返回响应
+  return response as WorkItemTypeFieldConfig;
+}
+
+/**
+ * 获取工作项工作流
+ * @param organizationId 企业ID
+ * @param projectId 项目唯一标识
+ * @param workItemTypeId 工作项类型ID
+ * @returns 工作项工作流信息
+ */
+export async function getWorkItemWorkflowFunc(
+  organizationId: string | undefined,
+  projectId: string,
+  workItemTypeId: string
+): Promise<WorkItemWorkflow> {
+  const finalOrgId = await resolveOrganizationId(organizationId);
+  const url = isRegionEdition()
+    ? `/oapi/v1/projex/projects/${projectId}/workitemTypes/${workItemTypeId}/workflows`
+    : `/oapi/v1/projex/organizations/${finalOrgId}/projects/${projectId}/workitemTypes/${workItemTypeId}/workflows`;
+
+  const response = await yunxiaoRequest(url, {
+    method: "GET",
+  });
+
+  // 如果响应中包含result字段，则返回result中的数据
+  if (response && typeof response === 'object' && 'result' in response) {
+    return response.result as WorkItemWorkflow;
+  }
+  
+  // 否则直接返回响应
+  return response as WorkItemWorkflow;
+}
+
+/**
+ * 列出工作项评论
+ * @param organizationId 企业ID
+ * @param workItemId 工作项ID
+ * @param page 页码
+ * @param perPage 每页条数
+ * @returns 工作项评论列表
+ */
+export async function listWorkItemCommentsFunc(
+  organizationId: string | undefined,
+  workItemId: string,
+  page: number = 1,
+  perPage: number = 20
+): Promise<any[]> {
+  const finalOrgId = await resolveOrganizationId(organizationId);
+  const url = isRegionEdition()
+    ? `/oapi/v1/projex/workitems/${workItemId}/comments?page=${page}&perPage=${perPage}`
+    : `/oapi/v1/projex/organizations/${finalOrgId}/workitems/${workItemId}/comments?page=${page}&perPage=${perPage}`;
+
+  const response = await yunxiaoRequest(url, {
+    method: "GET",
+  });
+
+  // 确保返回的是数组格式
+  if (Array.isArray(response)) {
+    return response;
+  }
+
+  // 如果响应中包含result字段，则返回result中的数据
+  if (response && typeof response === 'object' && 'result' in response && Array.isArray(response.result)) {
+    return response.result;
+  }
+
+  // 其他情况返回空数组
+  return [];
+}
+
+/**
+ * 创建工作项评论
+ * @param organizationId 企业ID
+ * @param workItemId 工作项ID
+ * @param content 评论内容
+ * @returns 创建的评论信息
+ */
+export async function createWorkItemCommentFunc(
+  organizationId: string | undefined,
+  workItemId: string,
+  content: string
+): Promise<any> {
+  const finalOrgId = await resolveOrganizationId(organizationId);
+  const url = isRegionEdition()
+    ? `/oapi/v1/projex/workitems/${workItemId}/comments`
+    : `/oapi/v1/projex/organizations/${finalOrgId}/workitems/${workItemId}/comments`;
+
+  const payload = {
+    content: content
+  };
+
+  const response = await yunxiaoRequest(url, {
+    method: "POST",
+    body: payload,
+  });
+
+  // 如果响应中包含result字段，则返回result中的数据
+  if (response && typeof response === 'object' && 'result' in response) {
+    return response.result;
+  }
+  
+  // 否则直接返回响应
+  return response;
+}
+
+/**
+ * 获取工作项动态
+ * @param organizationId 组织ID
+ * @param workItemId 工作项唯一标识
+ * @returns 动态列表
+ */
+export async function listWorkitemActivitiesFunc(
+  organizationId: string | undefined,
+  workItemId: string
+): Promise<z.infer<typeof ActivityDTOSchema>[]> {
+  const finalOrgId = await resolveOrganizationId(organizationId);
+  const url = isRegionEdition()
+    ? `/oapi/v1/projex/workitems/${workItemId}/activities`
+    : `/oapi/v1/projex/organizations/${finalOrgId}/workitems/${workItemId}/activities`;
+
+  const response = await yunxiaoRequest(url, {
+    method: "GET",
+  });
+
+  if (Array.isArray(response)) {
+    return response.map(item => ActivityDTOSchema.parse(item));
+  }
+
+  if (response && typeof response === 'object' && 'result' in response && Array.isArray(response.result)) {
+    return response.result.map((item: any) => ActivityDTOSchema.parse(item));
+  }
+
+  return [];
+}
+
+/**
+ * 查询工作项关联测试用例列表
+ * @param organizationId 企业ID
+ * @param workItemId 工作项唯一标识
+ * @returns 关联记录列表
+ */
+export async function listWorkitemTestcaseRelationsFunc(
+  organizationId: string | undefined,
+  workItemId: string
+): Promise<any[]> {
+  const finalOrgId = await resolveOrganizationId(organizationId);
+  const url = isRegionEdition()
+    ? `/oapi/v1/projex/workitems/${workItemId}/testcaseRelationRecords`
+    : `/oapi/v1/projex/organizations/${finalOrgId}/workitems/${workItemId}/testcaseRelationRecords`;
+
+  const response = await yunxiaoRequest(url, {
+    method: "GET",
+  });
+
+  if (Array.isArray(response)) {
+    return response;
+  }
+
+  if (response && typeof response === 'object' && 'result' in response && Array.isArray(response.result)) {
+    return response.result;
+  }
+
+  return [];
+}
+
+/**
+ * 新建工作项关联测试用例
+ * @param organizationId 企业ID
+ * @param workItemId 工作项唯一标识
+ * @param testcaseId 要关联的测试用例唯一标识
+ * @returns 创建的关联记录（含关联记录 id）
+ */
+export async function createWorkitemTestcaseRelationFunc(
+  organizationId: string | undefined,
+  workItemId: string,
+  testcaseId: string
+): Promise<any> {
+  const finalOrgId = await resolveOrganizationId(organizationId);
+  const url = isRegionEdition()
+    ? `/oapi/v1/projex/workitems/${workItemId}/testcaseRelationRecords`
+    : `/oapi/v1/projex/organizations/${finalOrgId}/workitems/${workItemId}/testcaseRelationRecords`;
+
+  const response = await yunxiaoRequest(url, {
+    method: "POST",
+    body: { testcaseId },
+  });
+
+  if (response && typeof response === 'object' && 'result' in response) {
+    return response.result;
+  }
+
+  return response;
+}
+
+/**
+ * 删除工作项关联测试用例
+ * @param organizationId 企业ID
+ * @param workItemId 工作项唯一标识
+ * @param relationRecordId 关联记录ID
+ * @returns 删除结果（布尔值）
+ */
+export async function deleteWorkitemTestcaseRelationFunc(
+  organizationId: string | undefined,
+  workItemId: string,
+  relationRecordId: string
+): Promise<any> {
+  const finalOrgId = await resolveOrganizationId(organizationId);
+  const url = isRegionEdition()
+    ? `/oapi/v1/projex/workitems/${workItemId}/testcaseRelationRecords/${relationRecordId}`
+    : `/oapi/v1/projex/organizations/${finalOrgId}/workitems/${workItemId}/testcaseRelationRecords/${relationRecordId}`;
+
+  const response = await yunxiaoRequest(url, {
+    method: "DELETE",
+  });
+
+  if (response && typeof response === 'object' && 'result' in response) {
+    return response.result;
+  }
+
+  return response;
+}

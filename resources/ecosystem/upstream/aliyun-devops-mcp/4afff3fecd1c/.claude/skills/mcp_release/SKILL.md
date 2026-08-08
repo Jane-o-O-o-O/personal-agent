@@ -1,0 +1,174 @@
+---
+name: mcp_release
+description: 发布新版本的完整流程。自动升级 package.json 版本号、构建项目、提交推送代码、创建 git tag、构建 Docker 镜像、创建 GitHub Release。当用户要求发布新版本、发版、release 时使用此 skill。
+---
+
+# 发布新版本
+
+执行完整的版本发布流程，包括版本号升级、构建、提交、打标签、Docker 构建和 GitHub Release 创建。
+
+## 前置条件
+
+- 工作区干净或所有变更已暂存
+- 已安装 `gh` CLI 并已登录
+- 有远程仓库的推送权限
+
+## 发布流程
+
+按以下步骤顺序执行，每步完成后确认成功再继续：
+
+### Step 1: 读取当前版本号
+
+```bash
+node -p "require('./package.json').version"
+```
+
+记录当前版本号，计算新版本号（patch 位 +1）。
+例如：`0.3.17` → `0.3.18`
+
+如果用户指定了版本号，使用用户指定的版本号。
+
+### Step 2: 升级版本号
+
+```bash
+npm version patch --no-git-tag-version
+```
+
+如果用户指定了具体版本号，使用：
+```bash
+npm version <指定版本号> --no-git-tag-version
+```
+
+验证版本号已更新：
+```bash
+node -p "require('./package.json').version"
+```
+
+同步更新 `common/version.ts` 中的版本号（与 package.json 保持一致）：
+
+使用 search_replace 工具将 `common/version.ts` 中的 `VERSION` 值替换为新版本号。
+文件内容格式为：`export const VERSION = "<旧版本号>";`，替换为 `export const VERSION = "<新版本号>";`。
+
+验证：
+```bash
+node -e "console.log(require('./common/version.ts'.replace('.ts','')))|| console.log('check common/version.ts manually')"
+```
+或直接读取 `common/version.ts` 确认版本号已更新。
+
+### Step 3: 运行测试
+
+```bash
+npm test
+```
+
+确认所有测试通过（退出码为 0）。如果测试失败，停止发布流程，先修复问题。
+
+### Step 4: 构建项目
+
+```bash
+npm run build
+```
+
+确认构建成功（退出码为 0）。
+
+### Step 5: 提交代码并推送（**所有远端都要推**）
+
+本仓库配置了多个远端，用途不同：`origin` 承载 GitHub Release 与 npm 发布，另一个远端是部署链路的取码来源。`git push` 只会推当前分支的 upstream（一般是 `origin`），git hook 也**不会**自动推其余远端，因此必须逐个显式推送，否则会出现「npm 上有新版本、但部署环境仍是旧代码」。
+
+```bash
+git add -A
+git commit -m "chore: release v<新版本号>"
+for r in $(git remote); do
+  echo "--- push -> $r"
+  git push "$r" master
+done
+```
+
+推完验证每个远端都已包含本次提交：
+
+```bash
+git fetch --all --quiet
+for r in $(git remote); do
+  git merge-base --is-ancestor HEAD "$r/master" 2>/dev/null \
+    && echo "$r/master ✓" || echo "$r/master ✗ 未包含本次提交"
+done
+```
+
+全部为 `✓` 才继续下一步。
+
+### Step 6: 创建 Git Tag 并推送（**所有远端都要推**）
+
+同 Step 5，tag 也要逐个远端推，不能只推 `origin`：
+
+```bash
+git tag v<新版本号>
+for r in $(git remote); do
+  echo "--- push tag -> $r"
+  git push "$r" v<新版本号>
+done
+```
+
+验证每个远端都有该 tag：
+
+```bash
+for r in $(git remote); do
+  git ls-remote --tags "$r" "refs/tags/v<新版本号>" | grep -q . \
+    && echo "$r ✓ 有 v<新版本号>" || echo "$r ✗ 缺 tag"
+done
+```
+
+### Step 7: 构建 Docker 镜像
+
+```bash
+bash build_docker.sh
+```
+
+确认脚本执行成功。
+
+### Step 8: 创建 GitHub Release
+
+```bash
+gh release create v<新版本号> --title "v<新版本号>" --latest --generate-notes
+```
+
+使用 `--generate-notes` 自动生成 release notes，`--latest` 标记为最新 release。
+
+### Step 9: 验证 npm 发布
+
+npm 发布由 GitHub Actions 自动触发（创建 Release 后），需要等待 Action 完成后再验证。
+
+1. 等待 GitHub Actions 的 publish workflow 完成：
+```bash
+gh run list --workflow=publish --limit=1
+```
+
+2. 如果 workflow 仍在运行，等待其完成：
+```bash
+gh run watch $(gh run list --workflow=publish --limit=1 --json databaseId --jq '.[0].databaseId')
+```
+
+3. 验证 npm 上的版本：
+```bash
+npm view alibabacloud-devops-mcp-server version
+```
+
+确认输出的版本号与本次发布的版本号一致。如果不一致，检查 GitHub Actions 日志排查原因。
+
+## 完成确认
+
+所有步骤完成后，输出发布摘要：
+
+```
+发布完成 ✅
+- 版本: v<新版本号>
+- Tag: v<新版本号>
+- Docker: 构建完成
+- Release: https://github.com/<owner>/<repo>/releases/tag/v<新版本号>
+```
+
+## 异常处理
+
+- 构建失败：检查错误日志，修复后重新执行 Step 3
+- 推送失败：检查远程仓库权限和网络连接
+- Docker 构建失败：检查 Docker 是否运行、Dockerfile 配置
+- gh 命令失败：检查 `gh auth status`，确保已登录

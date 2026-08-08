@@ -1,0 +1,284 @@
+import { z } from 'zod';
+import { yunxiaoRequest, buildUrl, isRegionEdition } from '../../common/utils.js';
+import { resolveOrganizationId } from '../organization/organization.js';
+import { YunxiaoError } from '../../common/errors.js';
+
+// Schema for the ListApplications API
+export const ListApplicationsRequestSchema = z.object({
+  organizationId: z.string().describe("组织id"),
+  pagination: z.enum(['keyset']).default('keyset').describe("分页模式参数，目前只支持键集分页 keyset 模式"),
+  perPage: z.number().optional().describe("分页尺寸参数，决定一页最多返回多少对象"),
+  orderBy: z.string().optional().default("id").describe("分页排序属性，决定根据何种属性进行记录排序；推荐在实现严格遍历时，使用 id 属性"),
+  sort: z.enum(['asc', 'desc']).optional().default('asc').describe("分页排序为升降序，asc 为升序，desc 为降序；推荐在实现严格遍历时，使用升序"),
+  nextToken: z.string().optional().describe("分页 token，获取第一页数据时无需传入，否则需要传入前一页查询结果中的 nextToken 字段"),
+  tags: z
+    .union([z.array(z.string()), z.string()])
+    .optional()
+    .describe(
+      "按应用标签筛选；可传多个标签用逗号分隔的字符串（与 OpenAPI tags 参数一致，含已 urlencode 的标签名），或传标签名数组（将用逗号连接并由请求层完成编码）"
+    ),
+});
+
+/**
+ * 应用对象。List / Get / Create / Update 四个接口返回的结构一致,共用此定义。
+ *
+ * 云效对这些字段会返回 null,原先只有 appTemplate* 两个字段带 .nullable(),
+ * 其余没带 —— 线上 list_applications 的 data.N.description 7 天报错 30 次、
+ * get_application.description 1 次(expected string, received null)。
+ * 统一加 nullable,并用 passthrough 兜住后续新增字段。
+ */
+const ApplicationVOSchema = z.object({
+  appTemplateDisplayName: z.string().nullable().optional().describe("应用模版展示名称"),
+  appTemplateName: z.string().nullable().optional().describe("应用模版名称"),
+  creatorId: z.string().nullable().optional().describe("应用创建者id"),
+  description: z.string().nullable().optional().describe("应用描述"),
+  gmtCreate: z.string().nullable().optional().describe("创建时间"),
+  name: z.string().nullable().optional().describe("应用名"),
+}).passthrough();
+
+export const ListApplicationsResponseSchema = z.object({
+  data: z.array(ApplicationVOSchema),
+  nextToken: z.string().nullable().optional(),
+});
+
+// Schema for the GetApplication API
+export const GetApplicationRequestSchema = z.object({
+  organizationId: z.string().describe("组织id"),
+  appName: z.string().describe("应用名"),
+});
+
+export const GetApplicationResponseSchema = ApplicationVOSchema;
+
+// Schema for the CreateApplication API
+export const CreateApplicationRequestSchema = z.object({
+  organizationId: z.string().describe("组织id"),
+  name: z.string().describe("应用名"),
+  appTemplateName: z.string().optional().describe("应用模板唯一名"),
+  description: z.string().optional().describe("应用描述"),
+  ownerId: z.string().optional().describe("应用 owner ID"),
+  tags: z.array(z.string()).optional().describe("应用标签"),
+});
+
+export const CreateApplicationResponseSchema = ApplicationVOSchema;
+
+// Schema for the UpdateApplication API
+export const UpdateApplicationRequestSchema = z.object({
+  organizationId: z.string().describe("组织id"),
+  appName: z.string().describe("应用名"),
+  ownerId: z.string().optional().describe("应用 owner ID"),
+});
+
+export const UpdateApplicationResponseSchema = ApplicationVOSchema;
+
+export type ListApplicationsRequest = z.infer<typeof ListApplicationsRequestSchema>;
+export type ListApplicationsResponse = z.infer<typeof ListApplicationsResponseSchema>;
+export type GetApplicationRequest = z.infer<typeof GetApplicationRequestSchema>;
+export type GetApplicationResponse = z.infer<typeof GetApplicationResponseSchema>;
+export type CreateApplicationRequest = z.infer<typeof CreateApplicationRequestSchema>;
+export type CreateApplicationResponse = z.infer<typeof CreateApplicationResponseSchema>;
+export type UpdateApplicationRequest = z.infer<typeof UpdateApplicationRequestSchema>;
+export type UpdateApplicationResponse = z.infer<typeof UpdateApplicationResponseSchema>;
+
+// Schema for the ListApplicationSources API
+export const ListApplicationSourcesRequestSchema = z.object({
+  organizationId: z.string().describe("组织id"),
+  appName: z.string().describe("应用名"),
+  pagination: z.enum(['keyset', '']).optional().describe("分页模式参数：keyset表示键集分页，不传表示页码分页"),
+  perPage: z.number().min(1).max(100).optional().describe("分页尺寸参数，决定一页最多返回多少对象"),
+  orderBy: z.enum(['id', 'gmtCreate']).optional().describe("分页排序属性，决定根据何种属性进行记录排序；推荐在实现严格遍历时，使用 id 属性"),
+  sort: z.enum(['asc', 'desc']).optional().describe("分页排序升降序，asc 为升序，desc 为降序；推荐在实现严格遍历时，使用升序"),
+  nextToken: z.string().optional().describe("键集分页 token，获取第一页数据时无需传入，否则需要传入前一页查询结果中的 nextToken 字段"),
+  page: z.number().optional().describe("页码分页时使用，用于获取下一页内容"),
+});
+
+// CodeRepoSource schema for response
+const CodeRepoSourceSchema = z.object({
+  type: z.string().describe("源类型"),
+  appName: z.string().optional().describe("代码仓库源所隶属的应用唯一名"),
+  connectionConfig: z.object({
+    connectionId: z.string().optional().describe("连接ID"),
+    connectionType: z.string().optional().describe("连接类型"),
+  }).optional().describe("连接配置"),
+  identifier: z.string().optional().describe("代码服务提供方所使用的代码仓库唯一标识"),
+  name: z.string().optional().describe("代码仓库源名称"),
+  repoContext: z.object({
+    defaultBranch: z.string().optional().describe("默认分支"),
+    projectId: z.string().optional().describe("项目ID"),
+    repoType: z.string().optional().describe("仓库类型"),
+    repoUrl: z.string().optional().describe("仓库地址"),
+  }).optional().describe("仓库上下文"),
+  repoUrl: z.string().optional().describe("代码仓库 URL"),
+  sn: z.string().optional().describe("代码仓库源唯一序列号"),
+});
+
+export const ListApplicationSourcesResponseSchema = z.object({
+  current: z.number().nullable().optional().describe("页码分页时存在该字段，表示当前页"),
+  data: z.array(CodeRepoSourceSchema).optional().describe("分页结果数据"),
+  nextToken: z.string().nullable().optional().describe("采用键值分页时存在该字段，用于传给分页接口，迭代获取下一页数据"),
+  pages: z.number().nullable().optional().describe("页码分页时存在该字段，表示总页数"),
+  perPage: z.number().nullable().optional().describe("页码分页时存在该字段，表示每页大小"),
+  total: z.number().nullable().optional().describe("页码分页时存在该字段，表示结果总数"),
+});
+
+export type ListApplicationSourcesRequest = z.infer<typeof ListApplicationSourcesRequestSchema>;
+export type ListApplicationSourcesResponse = z.infer<typeof ListApplicationSourcesResponseSchema>;
+
+/**
+ * List applications in an organization with pagination
+ * 
+ * @param params - The request parameters
+ * @returns The list of applications
+ */
+export async function listApplications(params: ListApplicationsRequest): Promise<ListApplicationsResponse> {
+  const { organizationId, ...queryParams } = params;
+  const finalOrgId = await resolveOrganizationId(organizationId);
+  
+  // Build query string properly
+  const query: Record<string, string | number> = {};
+  if (queryParams.pagination) query.pagination = queryParams.pagination;
+  if (queryParams.perPage) query.perPage = queryParams.perPage;
+  if (queryParams.orderBy) query.orderBy = queryParams.orderBy;
+  if (queryParams.sort) query.sort = queryParams.sort;
+  if (queryParams.nextToken) query.nextToken = queryParams.nextToken;
+  if (queryParams.tags !== undefined) {
+    query.tags = Array.isArray(queryParams.tags)
+      ? queryParams.tags.join(",")
+      : queryParams.tags;
+  }
+
+  try {
+    // Build the full URL with query parameters
+    const baseUrl = isRegionEdition()
+      ? `/oapi/v1/appstack/apps:search`
+      : `/oapi/v1/appstack/organizations/${finalOrgId}/apps:search`;
+    const url = buildUrl(baseUrl, query);
+    
+    const response = await yunxiaoRequest(
+      url,
+      {
+        method: 'GET',
+      }
+    );
+    return ListApplicationsResponseSchema.parse(response);
+  } catch (error) {
+    throw error;
+  }
+}
+
+/**
+ * Get application details by name
+ * 
+ * @param params - The request parameters
+ * @returns The application details
+ */
+export async function getApplication(params: GetApplicationRequest): Promise<GetApplicationResponse> {
+  const { organizationId, appName } = params;
+  const finalOrgId = await resolveOrganizationId(organizationId);
+  
+  try {
+    const url = isRegionEdition()
+      ? `/oapi/v1/appstack/apps/${appName}`
+      : `/oapi/v1/appstack/organizations/${finalOrgId}/apps/${appName}`;
+    const response = await yunxiaoRequest(
+      url,
+      {
+        method: 'GET',
+      }
+    );
+    return GetApplicationResponseSchema.parse(response);
+  } catch (error) {
+    throw error;
+  }
+}
+
+/**
+ * Create a new application
+ * 
+ * @param params - The request parameters
+ * @returns The created application details
+ */
+export async function createApplication(params: CreateApplicationRequest): Promise<CreateApplicationResponse> {
+  const { organizationId, ...body } = params;
+  const finalOrgId = await resolveOrganizationId(organizationId);
+  
+  try {
+    const url = isRegionEdition()
+      ? `/oapi/v1/appstack/apps`
+      : `/oapi/v1/appstack/organizations/${finalOrgId}/apps`;
+    const response = await yunxiaoRequest(
+      url,
+      {
+        method: 'POST',
+        body: body,
+      }
+    );
+    return CreateApplicationResponseSchema.parse(response);
+  } catch (error) {
+    throw error;
+  }
+}
+
+/**
+ * Update an existing application
+ * 
+ * @param params - The request parameters
+ * @returns The updated application details
+ */
+export async function updateApplication(params: UpdateApplicationRequest): Promise<UpdateApplicationResponse> {
+  const { organizationId, appName, ...body } = params;
+  const finalOrgId = await resolveOrganizationId(organizationId);
+  
+  try {
+    const url = isRegionEdition()
+      ? `/oapi/v1/appstack/apps/${appName}`
+      : `/oapi/v1/appstack/organizations/${finalOrgId}/apps/${appName}`;
+    const response = await yunxiaoRequest(
+      url,
+      {
+        method: 'PUT',
+        body: body,
+      }
+    );
+    return UpdateApplicationResponseSchema.parse(response);
+  } catch (error) {
+    throw error;
+  }
+}
+
+/**
+ * List application sources
+ * 
+ * @param params - The request parameters
+ * @returns The list of application sources
+ */
+export async function listApplicationSources(params: ListApplicationSourcesRequest): Promise<ListApplicationSourcesResponse> {
+  const { organizationId, appName, ...queryParams } = params;
+  const finalOrgId = await resolveOrganizationId(organizationId);
+  
+  // Build query string properly
+  const query: Record<string, string | number> = {};
+  if (queryParams.pagination) query.pagination = queryParams.pagination;
+  if (queryParams.perPage !== undefined) query.perPage = queryParams.perPage;
+  if (queryParams.orderBy) query.orderBy = queryParams.orderBy;
+  if (queryParams.sort) query.sort = queryParams.sort;
+  if (queryParams.nextToken) query.nextToken = queryParams.nextToken;
+  if (queryParams.page !== undefined) query.page = queryParams.page;
+  
+  try {
+    // Build the full URL with query parameters
+    const baseUrl = isRegionEdition()
+      ? `/oapi/v1/appstack/apps/${appName}/sources`
+      : `/oapi/v1/appstack/organizations/${finalOrgId}/apps/${appName}/sources`;
+    const url = buildUrl(baseUrl, query);
+    
+    const response = await yunxiaoRequest(
+      url,
+      {
+        method: 'GET',
+      }
+    );
+    return ListApplicationSourcesResponseSchema.parse(response);
+  } catch (error) {
+    throw error;
+  }
+}

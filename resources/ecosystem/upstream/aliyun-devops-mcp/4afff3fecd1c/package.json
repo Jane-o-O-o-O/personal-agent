@@ -1,0 +1,60 @@
+{
+  "name": "alibabacloud-devops-mcp-server",
+  "version": "0.3.64",
+  "description": "MCP Server for using the alibabacloud-devops API: allows AI assistants to directly participate in development collaboration, helping teams optimize development processes and improve efficiency.",
+  "type": "module",
+  "license": "Apache-2.0",
+  "author": {
+    "name": "Yunxiao",
+    "email": "liyebin.lyb@alibaba-inc.com",
+    "url": "https://github.com/aliyun/alibabacloud-devops-mcp-server"
+  },
+  "homepage": "https://github.com/aliyun/alibabacloud-devops-mcp-server.git",
+  "bin": {
+    "alibabacloud-devops-mcp-server": "dist/index.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+ssh://git@github.com/aliyun/alibabacloud-devops-mcp-server.git"
+  },
+  "keywords": [
+    "alibaba-cloud",
+    "aliyun",
+    "devops",
+    "mcp",
+    "ai",
+    "open api",
+    "devops-mcp"
+  ],
+  "scripts": {
+    "build": "rm -rf dist && tsc && chmod +x dist/*.js",
+    "watch": "tsc --watch",
+    "test": "tsc -p tsconfig.test.json && node --test dist-test/tests/*.test.js",
+    "start": "node dist/index.js",
+    "start:sse": "node dist/index.js --sse",
+    "start:streamable": "node dist/index.js --streamable-http",
+    "start:both": "node dist/index.js --sse --streamable-http"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "dotenv": "^17.3.1",
+    "express": "^5.2.1",
+    "pino": "^9.14.0",
+    "universal-user-agent": "^7.0.0",
+    "zod": "^3.25.76",
+    "zod-to-json-schema": "^3.22.3"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.3",
+    "@types/node": "^22.13.10",
+    "typescript": "^5.9.3"
+  },
+  "overrides": {
+    "fast-uri": "^3.1.7",
+    "body-parser": "^2.3.0",
+    "@hono/node-server": "^2.0.11"
+  }
+}

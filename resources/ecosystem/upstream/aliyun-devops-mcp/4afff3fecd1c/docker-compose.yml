@@ -1,0 +1,10 @@
+services:
+  app:
+    container_name: alibabacloud-devops-mcp-server
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "${PORT}:${PORT}"
+    env_file:
+      - .env

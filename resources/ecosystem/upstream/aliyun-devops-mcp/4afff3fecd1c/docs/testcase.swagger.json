@@ -1,0 +1,1044 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "API文档",
+    "description": "这是描述信息",
+    "version": "1.0"
+  },
+  "servers": [],
+  "tags": [
+    {
+      "name": "测试用例",
+      "description": "测试用例相关接口"
+    },
+    {
+      "name": "测试用例字段配置",
+      "description": "测试用例相关接口"
+    },
+    {
+      "name": "测试用例目录",
+      "description": "测试用例目录相关接口"
+    }
+  ],
+  "paths": {
+    "/testhub/organizations/{organizationId}/testRepos/{id}/directories": {
+      "get": {
+        "tags": [
+          "测试用例目录"
+        ],
+        "summary": "获取测试用例目录列表",
+        "operationId": "ListDirectories",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "用例库唯一标识",
+            "required": true,
+            "style": "simple",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "organizationId",
+            "in": "path",
+            "description": "organizationId",
+            "required": true,
+            "style": "simple",
+            "allowReserved": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/TestcaseDirectoryDTO"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "404": {
+            "description": "Not Found"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "测试用例目录"
+        ],
+        "summary": "创建测试用例目录",
+        "operationId": "CreateDirectory",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "用例库唯一标识",
+            "required": true,
+            "style": "simple",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "organizationId",
+            "in": "path",
+            "description": "organizationId",
+            "required": true,
+            "style": "simple",
+            "allowReserved": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateTestcaseDirectoryRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/TestcaseDirectoryDTO"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Created"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "404": {
+            "description": "Not Found"
+          }
+        }
+      }
+    },
+    "/testhub/organizations/{organizationId}/testRepos/{id}/testcases/fields": {
+      "get": {
+        "tags": [
+          "测试用例字段配置"
+        ],
+        "summary": "获取测试用例字段配置",
+        "operationId": "GetTestcaseFieldConfig",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "用例库唯一标识",
+            "required": true,
+            "style": "simple",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "organizationId",
+            "in": "path",
+            "description": "organizationId",
+            "required": true,
+            "style": "simple",
+            "allowReserved": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/WorkitemSimpleFiled"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "404": {
+            "description": "Not Found"
+          }
+        }
+      }
+    },
+    "/testhub/organizations/{organizationId}/testRepos/{id}/testcases": {
+      "post": {
+        "tags": [
+          "测试用例"
+        ],
+        "summary": "创建测试用例",
+        "operationId": "CreateTestcase",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "用例库唯一标识",
+            "required": true,
+            "style": "simple",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "organizationId",
+            "in": "path",
+            "description": "organizationId",
+            "required": true,
+            "style": "simple",
+            "allowReserved": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateTestcaseRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/IdentifierDTO"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Created"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "404": {
+            "description": "Not Found"
+          }
+        }
+      }
+    },
+    "/testhub/organizations/{organizationId}/testRepos/{id}/testcases:search": {
+      "post": {
+        "tags": [
+          "测试用例"
+        ],
+        "summary": "搜索测试用例",
+        "operationId": "SearchTestcases",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "用例库唯一标识",
+            "required": true,
+            "style": "simple",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "organizationId",
+            "in": "path",
+            "description": "organizationId",
+            "required": true,
+            "style": "simple",
+            "allowReserved": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SearchTestcasesRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "A successful response",
+            "headers": {
+              "x-per-page": {
+                "description": "每页数据条数",
+                "required": true,
+                "schema": {
+                  "type": "integer",
+                  "format": "int32"
+                }
+              },
+              "x-page": {
+                "description": "当前页",
+                "required": true,
+                "schema": {
+                  "type": "integer",
+                  "format": "int32"
+                }
+              },
+              "x-total-pages": {
+                "description": "总分页数",
+                "required": true,
+                "schema": {
+                  "type": "integer",
+                  "format": "int32"
+                }
+              },
+              "x-total": {
+                "description": "总数据量",
+                "required": true,
+                "schema": {
+                  "type": "integer",
+                  "format": "int32"
+                }
+              },
+              "x-next-page": {
+                "description": "下一页",
+                "required": true,
+                "schema": {
+                  "type": "integer",
+                  "format": "int32"
+                }
+              },
+              "x-prev-page": {
+                "description": "上一页",
+                "required": true,
+                "schema": {
+                  "type": "integer",
+                  "format": "int32"
+                }
+              }
+            },
+            "content": {
+              "*/*": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/TestcaseDTO"
+                  }
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Created"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "404": {
+            "description": "Not Found"
+          }
+        }
+      }
+    },
+    "/testhub/organizations/{organizationId}/testRepos/{testRepoId}/testcases/{id}": {
+      "get": {
+        "tags": [
+          "测试用例"
+        ],
+        "summary": "获取测试用例信息",
+        "operationId": "GetTestcase",
+        "parameters": [
+          {
+            "name": "organizationId",
+            "in": "path",
+            "description": "organizationId",
+            "required": true,
+            "style": "simple",
+            "allowReserved": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "testRepoId",
+            "in": "path",
+            "description": "用例库唯一标识",
+            "required": true,
+            "style": "simple",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "description": "用例唯一标识",
+            "required": true,
+            "style": "simple",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/TestcaseDTO"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "404": {
+            "description": "Not Found"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "测试用例"
+        ],
+        "summary": "更新测试用例信息",
+        "operationId": "UpdateTestcase",
+        "parameters": [
+          {
+            "name": "organizationId",
+            "in": "path",
+            "description": "organizationId",
+            "required": true,
+            "style": "simple",
+            "allowReserved": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "testRepoId",
+            "in": "path",
+            "description": "用例库唯一标识",
+            "required": true,
+            "style": "simple",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "description": "用例唯一标识",
+            "required": true,
+            "style": "simple",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "201": {
+            "description": "Created"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "404": {
+            "description": "Not Found"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "测试用例"
+        ],
+        "summary": "删除测试用例",
+        "operationId": "DeleteTestcase",
+        "parameters": [
+          {
+            "name": "organizationId",
+            "in": "path",
+            "description": "organizationId",
+            "required": true,
+            "style": "simple",
+            "allowReserved": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "testRepoId",
+            "in": "path",
+            "description": "用例库唯一标识",
+            "required": true,
+            "style": "simple",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "description": "用例唯一标识",
+            "required": true,
+            "style": "simple",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "204": {
+            "description": "No Content"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "CascadingOption": {
+        "title": "CascadingOption",
+        "type": "object",
+        "properties": {
+          "mustSelectLeaf": {
+            "type": "boolean",
+            "description": "是否必须选择叶子节点",
+            "example": true
+          },
+          "optionsList": {
+            "type": "array",
+            "description": "选项列表",
+            "example": "[]",
+            "items": {
+              "$ref": "#/components/schemas/FieldMiniCascadingOption"
+            }
+          }
+        }
+      },
+      "CreateTestcaseDirectoryRequest": {
+        "title": "CreateTestcaseDirectoryRequest",
+        "required": [
+          "name"
+        ],
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "parentIdentifier": {
+            "type": "string"
+          }
+        }
+      },
+      "CreateTestcaseRequest": {
+        "title": "CreateTestcaseRequest",
+        "type": "object",
+        "properties": {
+          "assignedTo": {
+            "type": "string",
+            "description": "负责人"
+          },
+          "customFieldValues": {
+            "type": "object",
+            "description": "自定义字段值，字段key可通过\"获取获取测试用例字段配置接口\"获得"
+          },
+          "directoryId": {
+            "type": "string",
+            "description": "目录id"
+          },
+          "labels": {
+            "type": "array",
+            "description": "标签ids",
+            "items": {
+              "type": "string"
+            }
+          },
+          "preCondition": {
+            "type": "string",
+            "description": "前置条件"
+          },
+          "subject": {
+            "maxLength": 256,
+            "minLength": 0,
+            "type": "string",
+            "description": "标题"
+          },
+          "testSteps": {
+            "description": "测试步骤",
+            "$ref": "#/components/schemas/TestStepsDTO"
+          }
+        }
+      },
+      "FieldDisplayValue": {
+        "title": "FieldDisplayValue",
+        "type": "object",
+        "properties": {
+          "displayValue": {
+            "type": "string",
+            "description": "显示的名称"
+          },
+          "identifier": {
+            "type": "string",
+            "description": "值的唯一标识"
+          }
+        }
+      },
+      "FieldMiniCascadingOption": {
+        "title": "FieldMiniCascadingOption",
+        "type": "object",
+        "properties": {
+          "children": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FieldMiniCascadingOption"
+            }
+          },
+          "value": {
+            "type": "string"
+          }
+        }
+      },
+      "FieldMiniOptionDTO": {
+        "title": "FieldMiniOptionDTO",
+        "type": "object",
+        "properties": {
+          "displayValue": {
+            "type": "string",
+            "description": "可选值值显示值",
+            "example": "111"
+          },
+          "id": {
+            "type": "string",
+            "description": "字段id",
+            "example": "field-id-xxx"
+          },
+          "value": {
+            "type": "string",
+            "description": "可选值值",
+            "example": "111"
+          },
+          "valueEn": {
+            "type": "string",
+            "description": "可选值值英文",
+            "example": "111"
+          }
+        }
+      },
+      "FieldValue": {
+        "title": "FieldValue",
+        "type": "object",
+        "properties": {
+          "fieldFormat": {
+            "type": "string",
+            "description": "字段类型",
+            "example": "User"
+          },
+          "fieldId": {
+            "type": "string",
+            "description": "字段id",
+            "example": "field-id-xxx"
+          },
+          "fieldName": {
+            "type": "string",
+            "description": "字段名称",
+            "example": "field-name-xxx"
+          },
+          "values": {
+            "type": "array",
+            "description": "字段值",
+            "items": {
+              "$ref": "#/components/schemas/FieldDisplayValue"
+            }
+          }
+        }
+      },
+      "IdentifierDTO": {
+        "title": "IdentifierDTO",
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "id",
+            "example": "id-xxx"
+          }
+        }
+      },
+      "MiniItemDTO": {
+        "title": "MiniItemDTO",
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "id",
+            "example": "id-xxx"
+          },
+          "name": {
+            "type": "string",
+            "description": "名称",
+            "example": "test"
+          }
+        }
+      },
+      "MiniLabel": {
+        "title": "MiniLabel",
+        "type": "object",
+        "properties": {
+          "color": {
+            "type": "string",
+            "description": "颜色",
+            "example": "test"
+          },
+          "id": {
+            "type": "string",
+            "description": "id",
+            "example": "id-xxx"
+          },
+          "name": {
+            "type": "string",
+            "description": "名称",
+            "example": "test"
+          }
+        }
+      },
+      "MiniSpace": {
+        "title": "MiniSpace",
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "id",
+            "example": "id-xxx"
+          },
+          "name": {
+            "type": "string",
+            "description": "名称",
+            "example": "test"
+          }
+        }
+      },
+      "MiniUser": {
+        "title": "MiniUser",
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "用户id",
+            "example": "user-id-xxx"
+          },
+          "name": {
+            "type": "string",
+            "description": "名称",
+            "example": "name-xxx"
+          }
+        }
+      },
+      "SearchTestcasesRequest": {
+        "title": "SearchTestcasesRequest",
+        "type": "object",
+        "properties": {
+          "conditions": {
+            "type": "string",
+            "description": "过滤条件， 是一个json串，格式为{\"conditionGroups\":[[filterObject,filterObject,...]]}， 每个字段如何拼接可参考测试用例列表页面过滤时请求的/testCase/listByDirectory接口，以下为一个完整的搜索条件(真实场景中可以按需选取对应的值){\"conditionGroups\":[[{\"fieldIdentifier\":\"subject\",\"operator\":\"CONTAINS\",\"value\":[\"ceshi\"],\"toValue\":null,\"className\":\"string\",\"format\":\"input\"}]]}",
+            "example": "{\"conditionGroups\":[[{\"fieldIdentifier\":\"subject\",\"operator\":\"CONTAINS\",\"value\":[\"ceshi\"],\"toValue\":null,\"className\":\"string\",\"format\":\"input\"}]]}"
+          },
+          "directoryId": {
+            "type": "string",
+            "description": "目录id"
+          },
+          "orderBy": {
+            "type": "string",
+            "description": "排序字段，默认为gmtCreate\ngmtCreate：创建时间\nname：名称",
+            "example": "gmtCreate"
+          },
+          "page": {
+            "type": "integer",
+            "description": "分页参数，第几页",
+            "format": "int32",
+            "example": 1
+          },
+          "perPage": {
+            "type": "integer",
+            "description": "分页参数，每页大小，0-200，默认值20",
+            "format": "int32",
+            "example": 20
+          },
+          "sort": {
+            "type": "string",
+            "description": "排序方式，默认为desc\ndesc：降序\nasc：升序",
+            "example": "desc"
+          }
+        }
+      },
+      "TestStep": {
+        "title": "TestStep",
+        "type": "object",
+        "properties": {
+          "expected": {
+            "type": "string",
+            "description": "期望结果",
+            "example": "期望结果1"
+          },
+          "step": {
+            "type": "string",
+            "description": "测试步骤",
+            "example": "测试步骤1"
+          }
+        }
+      },
+      "TestStepsDTO": {
+        "title": "TestStepsDTO",
+        "type": "object",
+        "properties": {
+          "content": {
+            "type": "array",
+            "description": "当contentType为TABLE时，该字段描述了测试步骤的内容",
+            "items": {
+              "$ref": "#/components/schemas/TestStep"
+            }
+          },
+          "contentType": {
+            "type": "string",
+            "description": "内容格式，可选值为TABLE和TEXT",
+            "example": "TEXT"
+          },
+          "expectedResult": {
+            "type": "string",
+            "description": "当contentType为TEXT时，该字段描述了期望结果的内容",
+            "example": "期望结果1"
+          },
+          "stepContent": {
+            "type": "string",
+            "description": "当contentType为TEXT时，该字段描述了测试步骤的内容",
+            "example": "测试步骤1"
+          }
+        }
+      },
+      "TestcaseDTO": {
+        "title": "TestcaseDTO",
+        "type": "object",
+        "properties": {
+          "assignedTo": {
+            "description": "负责人",
+            "$ref": "#/components/schemas/MiniUser"
+          },
+          "creator": {
+            "description": "创建人",
+            "$ref": "#/components/schemas/MiniUser"
+          },
+          "customCode": {
+            "type": "string",
+            "description": "编号",
+            "example": "DDDD-112"
+          },
+          "customFieldValues": {
+            "type": "array",
+            "description": "自定义字段值",
+            "items": {
+              "$ref": "#/components/schemas/FieldValue"
+            }
+          },
+          "directory": {
+            "description": "目录",
+            "$ref": "#/components/schemas/MiniItemDTO"
+          },
+          "gmtCreate": {
+            "type": "string",
+            "description": "创建时间",
+            "format": "date-time"
+          },
+          "gmtModified": {
+            "type": "string",
+            "description": "修改时间",
+            "format": "date-time"
+          },
+          "id": {
+            "type": "string",
+            "description": "id",
+            "example": "id-xxx"
+          },
+          "labels": {
+            "type": "array",
+            "description": "标签",
+            "items": {
+              "$ref": "#/components/schemas/MiniLabel"
+            }
+          },
+          "modifier": {
+            "description": "修改人",
+            "$ref": "#/components/schemas/MiniUser"
+          },
+          "preCondition": {
+            "type": "string",
+            "description": "前置条件内容",
+            "example": "test"
+          },
+          "preConditionFormat": {
+            "type": "string",
+            "description": "前置条件内容格式，可选值为RICHTEXT和TEXT",
+            "example": "RICHTEXT"
+          },
+          "subject": {
+            "type": "string",
+            "description": "标题",
+            "example": "test"
+          },
+          "testRepo": {
+            "description": "测试用例库",
+            "$ref": "#/components/schemas/MiniSpace"
+          },
+          "testSteps": {
+            "description": "测试步骤",
+            "$ref": "#/components/schemas/TestStepsDTO"
+          }
+        }
+      },
+      "TestcaseDirectoryDTO": {
+        "title": "TestcaseDirectoryDTO",
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "目录id",
+            "example": "testcase-directory-id-xxx"
+          },
+          "name": {
+            "type": "string",
+            "description": "目录名称",
+            "example": "testcase-directory-name-xxx"
+          },
+          "parentId": {
+            "type": "string",
+            "description": "父目录id",
+            "example": "testcase-directory-parent-id-xxx"
+          }
+        }
+      },
+      "WorkitemSimpleFiled": {
+        "title": "WorkitemSimpleFiled",
+        "type": "object",
+        "properties": {
+          "cascadingOptions": {
+            "description": "层级字段的待选择，即format为cascading时的可选值",
+            "$ref": "#/components/schemas/CascadingOption"
+          },
+          "defaultValue": {
+            "type": "string",
+            "description": "默认值",
+            "example": "12233"
+          },
+          "description": {
+            "type": "string",
+            "description": "描述",
+            "example": "描述"
+          },
+          "format": {
+            "type": "string",
+            "description": "字段格式，目前支持的有list、multiList、date、dateTime、int、float、string、text、user、multiUser、cascading、file、 tag、sprint、version 分别对应 单选、多选、日期、时间、整型、浮点、单行文本、多行文本、用户、多选用户、层级字段、文件、标签、迭代、版本",
+            "example": "list"
+          },
+          "id": {
+            "type": "string",
+            "description": "字段id",
+            "example": "field-id-xxx"
+          },
+          "name": {
+            "type": "string",
+            "description": "名称",
+            "example": "名称"
+          },
+          "options": {
+            "type": "array",
+            "description": "可选值",
+            "items": {
+              "$ref": "#/components/schemas/FieldMiniOptionDTO"
+            }
+          },
+          "required": {
+            "type": "boolean",
+            "description": "是否必填",
+            "example": true
+          },
+          "showWhenCreate": {
+            "type": "boolean",
+            "description": "创建时是否展示",
+            "example": true
+          },
+          "type": {
+            "type": "string",
+            "description": "字段类型,区分不同的类型，如系统字段：NativeField，用户自定义字段：CustomField",
+            "example": "NativeField"
+          }
+        }
+      }
+    }
+  }
+}
