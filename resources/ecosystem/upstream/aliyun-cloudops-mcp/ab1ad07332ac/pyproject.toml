@@ -1,0 +1,42 @@
+[project]
+name = "alibaba-cloud-ops-mcp-server"
+version = "0.9.27"
+description = "A MCP server for Alibaba Cloud"
+readme = "README.md"
+authors = [
+    { name = "Zheng Dayu", email = "dayu.zdy@alibaba-inc.com" },
+    { name = "Zhao Shuaibo", email = "zhaoshuaibo.zsb@alibaba-inc.com" },
+]
+requires-python = ">=3.10"
+dependencies = [
+    "alibabacloud-cms20190101>=3.1.4",
+    "alibabacloud-ecs20140526>=6.1.0",
+    "alibabacloud-oos20190601>=3.5.0",
+    "alibabacloud_oss_v2>=1.2.0",
+    "alibabacloud-credentials>=1.0.3",
+    "alibabacloud-openapi-util>=0.2.0",
+    "alibabacloud-tea-openapi>=0.3.0",
+    "alibabacloud-tea-util>=0.3.0",
+    "click>=8.1.8",
+    "fastmcp==2.8.0",
+    "pydantic==2.11.3"
+]
+
+[build-system]
+requires = [ "hatchling",]
+build-backend = "hatchling.build"
+dependencies = [
+    "hatchling>=1.27.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/alibaba_cloud_ops_mcp_server"]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.4.0",
+    "pytest-cov>=6.1.1",
+]
+
+[project.scripts]
+alibaba-cloud-ops-mcp-server = "alibaba_cloud_ops_mcp_server:main"
