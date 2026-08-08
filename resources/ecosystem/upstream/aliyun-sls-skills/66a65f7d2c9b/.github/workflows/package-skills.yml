@@ -1,0 +1,40 @@
+name: Package Skills
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Copy README into skill directory
+        run: |
+          cp README.md README_CN.md skills/alibabacloud-sls-cli-guidance/
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: alibabacloud-sls-cli-guidance
+          path: skills/
+          if-no-files-found: error
+
+      - name: Attach to release
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd skills
+          zip -r "$GITHUB_WORKSPACE/alibabacloud-sls-cli-guidance.zip" alibabacloud-sls-cli-guidance/
+          cd "$GITHUB_WORKSPACE"
+          gh release upload "${{ github.event.release.tag_name }}" \
+            alibabacloud-sls-cli-guidance.zip --clobber

@@ -1,0 +1,13 @@
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# CI agents (local-only verification skills)
+.ci/.agents
+
+# OS
+.DS_Store
+Thumbs.db
