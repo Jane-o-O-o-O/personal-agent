@@ -1,0 +1,46 @@
+{
+  "name": "@amap-lbs/amap-gui",
+  "version": "1.0.3",
+  "description": "AI-driven AMap (Gaode) visualization CLI — drives an Electron map container with route planning, POI search and map-state control",
+  "keywords": [
+    "amap",
+    "gaode",
+    "map",
+    "electron",
+    "cli",
+    "ai-agent",
+    "visualization"
+  ],
+  "author": "amap",
+  "license": "MIT",
+  "main": "dist/main.js",
+  "bin": {
+    "amap-gui": "./dist/cli/index.js"
+  },
+  "files": [
+    "dist/",
+    "SKILL.md",
+    "README.md"
+  ],
+  "scripts": {
+    "start": "AMAP_KEY=${AMAP_KEY} electron .",
+    "dev": "electron .",
+    "build": "node scripts/build.js",
+    "prepublishOnly": "npm run build",
+    "cli": "node cli/index.js"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "electron": "^28.0.0"
+  },
+  "devDependencies": {
+    "javascript-obfuscator": "^4.2.2"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  }
+}
+  

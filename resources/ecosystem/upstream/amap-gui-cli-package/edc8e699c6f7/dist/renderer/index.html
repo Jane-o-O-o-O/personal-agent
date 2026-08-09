@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AMapGUI</title>
+  <link rel="stylesheet" href="./style.css">
+</head>
+<body>
+
+  <!-- ── Top Search Bar (always visible) ─────────────────── -->
+  <div id="top-search-bar" class="top-search-bar">
+    <div class="top-search-logo" title="AMapGUI">
+      <svg width="28" height="28" viewBox="0 0 40 40" fill="none">
+        <rect width="40" height="40" rx="10" fill="#e8f4ff"/>
+        <path d="M20 8 L12 28 L20 24 L28 28 Z" fill="#4096ff" stroke="#1677ff" stroke-width="1.5" stroke-linejoin="round"/>
+        <path d="M20 8 L20 24" stroke="#1677ff" stroke-width="1.5"/>
+      </svg>
+    </div>
+    <div class="top-search-input-wrap">
+      <input id="search-input" class="top-search-input" type="text" placeholder="搜索地点、美食、酒店…" autocomplete="off">
+      <div id="search-suggest" class="suggest-dropdown hidden"></div>
+    </div>
+    <button id="search-btn" class="top-search-icon-btn" title="搜索">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+      </svg>
+    </button>
+    <button id="top-share-btn" class="top-search-icon-btn" title="分享">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="18" cy="5" r="3"/>
+        <circle cx="6" cy="12" r="3"/>
+        <circle cx="18" cy="19" r="3"/>
+        <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/>
+        <line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>
+      </svg>
+    </button>
+    <button id="nav-btn" class="top-search-icon-btn nav-btn" title="导航">
+      <img id="nav-btn-icon-route" src="./assets/images/navi.png" width="18" height="18" alt="导航"/>
+      <svg id="nav-btn-icon-close" class="hidden" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+        <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+      </svg>
+    </button>
+  </div>
+
+  <!-- ── Left Panel ────────────────────────────────────────── -->
+  <div id="left-panel" class="left-panel hidden">
+
+    <!-- Search Results Panel -->
+    <div id="search-panel" class="panel-section">
+      <div id="poi-list" class="poi-list"></div>
+    </div>
+
+    <!-- Route Panel -->
+    <div id="route-panel" class="panel-section hidden">
+      <!-- Input View (shown when no route result) -->
+      <div id="route-input-view">
+        <div class="route-input-header">
+          <div class="route-input-tabs" id="route-input-tabs">
+            <div class="route-input-tab active" data-mode="driving" title="驾车">
+              <img src="./assets/images/car.png" width="20" height="20" alt="驾车"/>
+            </div>
+            <div class="route-input-tab" data-mode="transit" title="公交">
+              <img src="./assets/images/bus.png" width="20" height="20" alt="公交"/>
+            </div>
+            <div class="route-input-tab" data-mode="riding" title="骑行">
+              <img src="./assets/images/ride.png" width="20" height="20" alt="骑行"/>
+            </div>
+            <div class="route-input-tab" data-mode="walking" title="步行">
+              <img src="./assets/images/walk.png" width="20" height="20" alt="步行"/>
+            </div>
+          </div>
+          
+          <button id="route-share-btn" class="route-action-btn" title="分享路线">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="18" cy="5" r="3"/>
+              <circle cx="6" cy="12" r="3"/>
+              <circle cx="18" cy="19" r="3"/>
+              <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/>
+              <line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>
+            </svg>
+          </button>
+          <button class="panel-close" id="route-panel-close">&times;</button>
+        </div>
+        <div class="route-input-body">
+          <div class="route-input-fields">
+            <div class="route-input-dots">
+              <span class="route-dot start"></span>
+              <span class="route-dot-line"></span>
+              <span class="route-dot end"></span>
+            </div>
+            <div class="route-input-boxes">
+              <div class="route-field-wrap">
+                <input id="route-from-input" class="route-field" type="text" placeholder="请输入起点" autocomplete="off">
+                <div id="route-from-suggest" class="suggest-dropdown hidden"></div>
+              </div>
+              <div class="route-field-wrap">
+                <input id="route-to-input" class="route-field" type="text" placeholder="请输入终点" autocomplete="off">
+                <div id="route-to-suggest" class="suggest-dropdown hidden"></div>
+              </div>
+            </div>
+            <div class="route-input-actions">
+              <button id="route-add-waypoint-btn" class="route-action-btn" title="添加途经点">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
+              </button>
+              <button id="route-swap-btn" class="route-action-btn" title="反转起终点">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 4v16M7 4l-3 3M7 4l3 3M17 20V4M17 20l-3-3M17 20l3-3"/></svg>
+              </button>
+            </div>
+          </div>
+        </div>
+        <div id="route-history-divider" class="route-input-divider hidden"></div>
+        <div id="route-history" class="route-history hidden"></div>
+      </div>
+      <!-- Route Result (inline, shown below input when route is planned) -->
+      <div id="route-result-view" class="hidden">
+        <div id="route-info" class="route-info">
+          <div class="route-summary" id="route-summary"></div>
+          <div class="route-steps" id="route-steps"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- POI detail is now rendered via AMap.InfoWindow anchored to markers -->
+
+  <!-- ── Map Container ─────────────────────────────────────── -->
+  <div id="map-container"></div>
+
+  <!-- ── Status Bar ────────────────────────────────────────── -->
+  <div id="status-bar">
+    <span class="status-logo">AMapGUI</span>
+    <span class="status-dot" id="status-dot"></span>
+    <span class="status-text" id="status-text">正在加载地图…</span>
+    <span class="status-spacer"></span>
+    <span class="status-info" id="status-info"></span>
+  </div>
+
+  <!-- ── Scripts ───────────────────────────────────────────── -->
+  <script src="https://webapi.amap.com/loader.js"></script>
+  <script src="./app.js"></script>
+
+</body>
+</html>
