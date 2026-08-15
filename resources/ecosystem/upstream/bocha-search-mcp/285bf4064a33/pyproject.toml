@@ -1,0 +1,19 @@
+[project]
+name = "bocha-search-mcp"
+version = "0.0.1"
+description = "A"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+ "mcp[cli]>=1.6.0",
+]
+[[project.authors]]
+name = "kunkun"
+email = "kunkun@1998.com"
+
+[build-system]
+requires = [ "hatchling",]
+build-backend = "hatchling.build"
+
+[project.scripts]
+bocha-search-mcp = "bocha_search_mcp:main"
