@@ -1,0 +1,739 @@
+# Alibaba Cloud ECS Remote Connection / Service Access Diagnostic Guide
+
+## Overview
+
+This guide provides a systematic diagnostic workflow for Alibaba Cloud ECS remote
+connection issues, applicable to scenarios such as SSH/RDP failures and inaccessible services.
+
+---
+
+## 1. Problem Localization Strategy
+
+### 1.1 Initial Information Gathering
+
+When a user reports "cannot remotely connect to an ECS instance" or "service is inaccessible",
+use a **progressive information-gathering** strategy:
+
+**Step 1: Ask for key information**
+
+✩ Instance ID (required) — format: `i-xxxxxxxxxxxxxxxxx`
+✩ Region (required) — e.g., `cn-hangzhou`, `cn-beijing`, `cn-shanghai`
+✩ Connection method — SSH(22) / RDP(3389) / VNC / other ports / Workbench / Web service
+✩ Error message or symptom description
+
+**Rationale:**
+
+✫ Avoid blind guessing; gather the minimum necessary information
+✫ Provide a common-issues checklist so the user can do initial self-triage
+✫ If the user provides only partial information, proactively request what is missing
+
+### 1.2 Adaptive Lookup
+
+When the user says "find it for me" or the information is incomplete, switch strategy immediately:
+
+✩ Traverse common Alibaba Cloud regions to locate the instance
+✩ Prioritize high-frequency regions: `cn-hangzhou`, `cn-beijing`, `cn-shanghai`, `cn-shenzhen`
+✩ Stop searching as soon as the instance is found
+
+> **⚠️ Empty-result handling ([MUST]):** If `describe-instances` still returns an empty
+> result after traversing the candidate regions (`TotalCount = 0`), **follow the
+> "Empty-result protocol" in Phase 0 of `SKILL.md`** strictly (terminate the workflow,
+> do NOT enumerate/switch instances, output the fixed message template). This document
+> does not repeat the rule, to keep a single source of truth.
+
+**Region-traversal commands ([MUST] pass BOTH region flags — verified live):**
+
+```bash
+# Get the list of all regions
+aliyun ecs describe-regions --user-agent "AlibabaCloud-Agent-Skills/alibabacloud-ecs-diagnose/{session-id} skill-version/{skill-version}"
+
+# Look up the instance in a specific region
+# --region routes the request to that region's endpoint; --biz-region-id is the API's
+# RegionId. When the target region differs from the CLI profile's configured region,
+# passing only --biz-region-id gets the request rejected with
+# InvalidOperation.NotSupportedEndpoint and the instance falsely looks "not found".
+aliyun ecs describe-instances \
+  --region cn-hangzhou --biz-region-id cn-hangzhou \
+  --instance-ids '["i-xxx"]' \
+  --user-agent "AlibabaCloud-Agent-Skills/alibabacloud-ecs-diagnose/{session-id} skill-version/{skill-version}"
+```
+
+> **Cross-region rule:** every candidate-region query in the traversal uses the same
+> instance ID with BOTH `--region <candidate>` and `--biz-region-id <candidate>`.
+> Only when the instance is found (or all candidates are exhausted) does the search
+> stop. The empty-result protocol (Phase 0 of `SKILL.md`) then applies.
+
+---
+
+## 2. Systematic Diagnostic Workflow
+
+### 2.1 Layered Diagnostic Model
+
+```
+Layer 1: Instance basic status
+  ├─ Whether the instance exists
+  ├─ Instance running status (Running/Stopped/Pending/Starting/Stopping)
+  └─ System status check (StatusKey)
+
+Layer 2: Network reachability
+  ├─ Whether a public IP / Elastic IP (EIP) exists
+  ├─ VPC / VSwitch configuration
+  └─ Route tables and NAT gateway
+
+Layer 3: Security control
+  ├─ Security group inbound rules ⭐ most common issue
+  ├─ Network ACL rules (Enterprise Edition VPC)
+  └─ OS firewall (iptables/firewalld/Windows Firewall)
+
+Layer 4: Authentication configuration
+  ├─ Key pair configuration (Linux SSH)
+  ├─ Login password (Linux/Windows)
+  └─ Username correctness (root/ecs-user/Administrator)
+```
+
+### 2.2 Diagnostic Execution Order
+
+#### Step 1: Get complete instance information
+
+```bash
+aliyun ecs describe-instances \
+  --biz-region-id <region> \
+  --instance-ids '["<instance-id>"]' \
+  --user-agent "AlibabaCloud-Agent-Skills/alibabacloud-ecs-diagnose/{session-id} skill-version/{skill-version}"
+```
+
+**A single call returns:**
+
+✫ Running status (Status)
+✫ Public IP (PublicIpAddress)
+✫ Elastic IP (EipAddress)
+✫ Security group ID list (SecurityGroupIds)
+✫ VPC / VSwitch ID (VpcAttributes)
+✫ Key pair name (KeyPairName)
+✫ Operating system type (OSType: linux/windows)
+
+**Key field parsing:**
+
+```json
+{
+  "Status": "Running",
+  "PublicIpAddress": {"IpAddress": ["47.xx.xx.xx"]},
+  "EipAddress": {"IpAddress": "47.xx.xx.xx"},
+  "SecurityGroupIds": {"SecurityGroupId": ["sg-xxx"]},
+  "VpcAttributes": {
+    "VpcId": "vpc-xxx",
+    "VSwitchId": "vsw-xxx",
+    "PrivateIpAddress": {"IpAddress": ["192.168.x.x"]}
+  },
+  "KeyPairName": "my-keypair",
+  "OSType": "linux"
+}
+```
+
+#### Step 2: Check security group rules
+
+> **[MUST] Always execute this step**, regardless of the Layer 1 / Layer 2 findings.
+> A missing public IP / EIP, or a private-IP-only instance reached over VPN / NAT /
+> internal network, does NOT exempt the diagnosis from the security group ingress
+> inspection — the ingress rules are still the highest-probability root cause (80%),
+> and the user explicitly asked whether the target ports are open.
+
+```bash
+# Query security group inbound rules
+aliyun ecs describe-security-group-attribute \
+  --biz-region-id <region> \
+  --security-group-id <sg-id> \
+  --direction ingress \
+  --user-agent "AlibabaCloud-Agent-Skills/alibabacloud-ecs-diagnose/{session-id} skill-version/{skill-version}"
+```
+
+**Focus on:**
+
+✫ Whether SSH port 22 (Linux) or RDP port 3389 (Windows) is open
+✫ Whether the target service port is open (e.g., 80, 443, 8080)
+✫ Whether the authorization object (SourceCidrIp) includes the user's IP or `0.0.0.0/0`
+
+**Security group rule response example:**
+
+```json
+{
+  "Permissions": {
+    "Permission": [
+      {
+        "PortRange": "22/22",
+        "SourceCidrIp": "0.0.0.0/0",
+        "IpProtocol": "TCP",
+        "Policy": "Accept",
+        "Direction": "ingress"
+      }
+    ]
+  }
+}
+```
+
+#### Step 3: Check instance system status
+
+```bash
+# Check instance status
+aliyun ecs describe-instance-status \
+  --region <region> --biz-region-id <region> \
+  --instance-id <instance-id> \
+  --user-agent "AlibabaCloud-Agent-Skills/alibabacloud-ecs-diagnose/{session-id} skill-version/{skill-version}"
+
+# Check system events (planned maintenance, anomalies, etc.)
+aliyun ecs describe-instance-history-events \
+  --biz-region-id <region> \
+  --instance-id <instance-id> \
+  --user-agent "AlibabaCloud-Agent-Skills/alibabacloud-ecs-diagnose/{session-id} skill-version/{skill-version}"
+```
+
+#### Step 4: Check Cloud Assistant status (backup connection method)
+
+```bash
+aliyun ecs describe-cloud-assistant-status \
+  --region <region> --biz-region-id <region> \
+  --instance-id <instance-id> \
+  --user-agent "AlibabaCloud-Agent-Skills/alibabacloud-ecs-diagnose/{session-id} skill-version/{skill-version}"
+```
+
+> **Reliability note (verified live):** the returned `CloudAssistantStatus` field is
+> unreliable in BOTH directions — it may report `true` for a stopped instance, or
+> `false` for a running instance where Cloud Assistant actually works. Never gate Deep
+> Diagnostics on this field; instead send an actual probe (`run-command` with
+> `echo PROBE_OK`) and treat a decoded `PROBE_OK` as the only proof the channel works.
+
+#### Step 5: Provide solutions based on findings
+
+---
+
+## 3. Problem Identification Logic
+
+### 3.1 Typical Diagnostic Result Example
+
+```
+Instance status check:
+  ✓ Status: Running
+  ✓ PublicIp: 47.xx.xx.xx
+  ✓ KeyPairName: my-keypair
+
+Security group rule check:
+  ✓ 80/80 TCP - 0.0.0.0/0 (HTTP)
+  ✓ 443/443 TCP - 0.0.0.0/0 (HTTPS)
+  ❌ Missing 22/22 TCP (SSH) inbound rule
+```
+
+**Diagnostic conclusion:** Security group does not open the SSH port → this is the root
+cause of 80% of connection issues.
+
+### 3.2 Common Problem Patterns and Priority
+
+| Priority | Problem Type | Proportion | Check Method |
+| ---------- | -------------- | ------------ | -------------- |
+| 1 | Security group port not open | 80% | DescribeSecurityGroupAttribute |
+| 2 | Instance not running | 8% | DescribeInstances → Status |
+| 3 | No public IP | 5% | Check PublicIpAddress and EipAddress |
+| 4 | Key/password issue | 4% | User confirmation or verify via VNC |
+| 5 | OS internal fault | 3% | Cloud Assistant or VNC diagnostics |
+
+---
+
+## 4. Solution Library
+
+### 4.1 Add Security Group Rules
+
+**Add SSH access rule (Linux):**
+
+```bash
+# Temporary option - allow all IPs (not recommended for production)
+aliyun ecs authorize-security-group \
+  --biz-region-id <region> \
+  --security-group-id <sg-id> \
+  --ip-protocol tcp \
+  --port-range 22/22 \
+  --source-cidr-ip 0.0.0.0/0 \
+  --description "SSH access - temporary" \
+  --user-agent "AlibabaCloud-Agent-Skills/alibabacloud-ecs-diagnose/{session-id} skill-version/{skill-version}"
+
+# Recommended option - restrict to a specific IP
+aliyun ecs authorize-security-group \
+  --biz-region-id <region> \
+  --security-group-id <sg-id> \
+  --ip-protocol tcp \
+  --port-range 22/22 \
+  --source-cidr-ip <user-ip>/32 \
+  --description "SSH access - specific IP" \
+  --user-agent "AlibabaCloud-Agent-Skills/alibabacloud-ecs-diagnose/{session-id} skill-version/{skill-version}"
+```
+
+**Add RDP access rule (Windows):**
+
+```bash
+aliyun ecs authorize-security-group \
+  --biz-region-id <region> \
+  --security-group-id <sg-id> \
+  --ip-protocol tcp \
+  --port-range 3389/3389 \
+  --source-cidr-ip <user-ip>/32 \
+  --description "RDP remote desktop access" \
+  --user-agent "AlibabaCloud-Agent-Skills/alibabacloud-ecs-diagnose/{session-id} skill-version/{skill-version}"
+```
+
+**Add Web service ports:**
+
+```bash
+# HTTP 80
+aliyun ecs authorize-security-group \
+  --biz-region-id <region> \
+  --security-group-id <sg-id> \
+  --ip-protocol tcp \
+  --port-range 80/80 \
+  --source-cidr-ip 0.0.0.0/0 \
+  --user-agent "AlibabaCloud-Agent-Skills/alibabacloud-ecs-diagnose/{session-id} skill-version/{skill-version}"
+
+# HTTPS 443
+aliyun ecs authorize-security-group \
+  --biz-region-id <region> \
+  --security-group-id <sg-id> \
+  --ip-protocol tcp \
+  --port-range 443/443 \
+  --source-cidr-ip 0.0.0.0/0 \
+  --user-agent "AlibabaCloud-Agent-Skills/alibabacloud-ecs-diagnose/{session-id} skill-version/{skill-version}"
+```
+
+> **Platform-managed Drop rules ([verified live]):** some security groups contain a
+> Drop rule created by "Alibaba Cloud Security Team". These rules **auto-restore after
+> being revoked** — do NOT try to remove them. If such a Drop rule blocks the port you
+> need, the correct fix is to add a **higher-priority (lower priority-number) Accept
+> rule scoped to the user's IP** (`--priority` lower than the Drop's), not to fight the
+> platform rule. Before proposing `revoke-security-group`, always check whether the rule
+> was platform-created.
+
+### 4.2 Solution for Instance Without Public IP
+
+**Option A: Bind an Elastic IP**
+
+```bash
+# 1. Create an EIP
+aliyun vpc allocate-eip-address \
+  --biz-region-id <region> \
+  --bandwidth 5 \
+  --internet-charge-type PayByTraffic \
+  --user-agent "AlibabaCloud-Agent-Skills/alibabacloud-ecs-diagnose/{session-id} skill-version/{skill-version}"
+
+# 2. Bind the EIP to the instance
+aliyun vpc associate-eip-address \
+  --biz-region-id <region> \
+  --allocation-id <eip-allocation-id> \
+  --instance-id <instance-id> \
+  --instance-type EcsInstance \
+  --user-agent "AlibabaCloud-Agent-Skills/alibabacloud-ecs-diagnose/{session-id} skill-version/{skill-version}"
+```
+
+> **EIP binding limitation ([verified live]):** an EIP cannot be bound
+> (`associate-eip-address`) to an instance that already has a public IP assigned at
+> creation — the call is rejected. Before proposing this fix, confirm from
+> `describe-instances` that `PublicIpAddress` is empty. Any test EIP created during
+> diagnosis must be released (`release-eip-address`) in the session cleanup.
+
+**Option B: Use a NAT gateway (private-network instance)**
+
+```bash
+# Query NAT gateways
+aliyun vpc describe-nat-gateways \
+  --biz-region-id <region> \
+  --vpc-id <vpc-id> \
+  --user-agent "AlibabaCloud-Agent-Skills/alibabacloud-ecs-diagnose/{session-id} skill-version/{skill-version}"
+```
+
+### 4.3 Solution for Instance Not Running
+
+```bash
+# Start the instance
+aliyun ecs start-instance \
+  --instance-id <instance-id> \
+  --user-agent "AlibabaCloud-Agent-Skills/alibabacloud-ecs-diagnose/{session-id} skill-version/{skill-version}"
+
+# Check startup status
+aliyun ecs describe-instance-status \
+  --region <region> --biz-region-id <region> \
+  --instance-id <instance-id> \
+  --user-agent "AlibabaCloud-Agent-Skills/alibabacloud-ecs-diagnose/{session-id} skill-version/{skill-version}"
+```
+
+### 4.4 Password Reset (when login is impossible)
+
+```bash
+# Reset password (requires a reboot to take effect)
+aliyun ecs modify-instance-attribute \
+  --instance-id <instance-id> \
+  --password '<NewPassword123!>' \
+  --user-agent "AlibabaCloud-Agent-Skills/alibabacloud-ecs-diagnose/{session-id} skill-version/{skill-version}"
+
+# Reboot the instance to apply the new password
+aliyun ecs reboot-instance \
+  --instance-id <instance-id> \
+  --user-agent "AlibabaCloud-Agent-Skills/alibabacloud-ecs-diagnose/{session-id} skill-version/{skill-version}"
+```
+
+### 4.5 Connect via Cloud Assistant (backup option)
+
+When neither SSH nor RDP is usable:
+
+```bash
+# 1. Check Cloud Assistant status (field is unreliable — confirm with a probe, see Step 4 note)
+aliyun ecs describe-cloud-assistant-status \
+  --region <region> --biz-region-id <region> \
+  --instance-id <instance-id> \
+  --user-agent "AlibabaCloud-Agent-Skills/alibabacloud-ecs-diagnose/{session-id} skill-version/{skill-version}"
+
+# 2. Send a diagnostic command — command content is PLAINTEXT (the plugin encodes it;
+#    pre-encoding causes silent empty-output false negatives)
+aliyun ecs run-command \
+  --region <region> --biz-region-id <region> \
+  --instance-id <instance-id> \
+  --type RunShellScript \
+  --command-content 'ss -tlnp | grep -E ":(22|3389|80|443)\b" ; systemctl is-active sshd || systemctl is-active ssh' \
+  --timeout 60 \
+  --user-agent "AlibabaCloud-Agent-Skills/alibabacloud-ecs-diagnose/{session-id} skill-version/{skill-version}"
+
+# 3. View command execution results — poll until per-instance InvocationStatus is
+#    `Success`, then decode the Base64 Output field
+aliyun ecs describe-invocation-results \
+  --region <region> --biz-region-id <region> \
+  --invoke-id <invoke-id> \
+  --user-agent "AlibabaCloud-Agent-Skills/alibabacloud-ecs-diagnose/{session-id} skill-version/{skill-version}"
+```
+
+**Windows instances — validated probe command set (verified live on Windows Server):**
+
+```powershell
+# Run as RunPowerShellScript via run-command (content in plaintext)
+Write-Output "PROBE_OK"
+Get-Service TermService                          # RDP service state
+Get-NetTCPConnection -LocalPort 3389 -State Listen   # RDP listening
+Get-NetFirewallProfile | Select-Object Name,Enabled  # firewall profiles
+Get-Volume                                       # disk volumes
+```
+
+### 4.6 Use the VNC Console (last resort)
+
+Via the Alibaba Cloud console:
+✩ Log in to the ECS console
+✩ Find the target instance → Remote Connect → VNC connection
+✩ Log in with the VNC password to perform internal diagnostics
+
+---
+
+## 5. Verification Strategy
+
+### 5.1 Multi-Layer Verification
+
+**Verification 1: Configuration layer**
+
+```bash
+# Confirm the security group rule has been added
+aliyun ecs describe-security-group-attribute \
+  --biz-region-id <region> \
+  --security-group-id <sg-id> \
+  --direction ingress \
+  --user-agent "AlibabaCloud-Agent-Skills/alibabacloud-ecs-diagnose/{session-id} skill-version/{skill-version}"
+```
+
+**Verification 2: Network layer**
+
+```bash
+# Test port reachability (10s timeout)
+nc -zv -w 10 <public-ip> 22
+
+# Or wrap telnet with timeout (10s timeout)
+timeout 10 telnet <public-ip> 22
+```
+
+**Verification 3: Application layer**
+
+```bash
+# SSH connection test (10s timeout)
+ssh -o ConnectTimeout=10 -i <key-file> root@<public-ip>
+
+# RDP connection test (Windows) - use a remote desktop client or PowerShell
+Test-NetConnection -ComputerName <public-ip> -Port 3389 -InformationLevel Detailed
+```
+
+### 5.2 Problem-Transfer Handling
+
+Process for handling newly discovered issues:
+
+```
+SSH port is open but connection still fails
+    ↓
+Check the OS firewall
+    ↓
+Run via Cloud Assistant: iptables -L / firewall-cmd --list-all
+    ↓
+Found iptables blocking → provide disable/configure commands
+    ↓
+Verify the connection
+```
+
+---
+
+## 6. User Interaction Design Principles
+
+### 6.1 Progressive Disclosure
+
+**Stage 1: Quick diagnosis**
+✫ Start acting without waiting for the user to provide all information
+✫ User says "find it for me" → immediately auto-search common regions
+
+**Stage 2: Problem presentation**
+
+```
+Diagnostic result:
+✓ Instance status: Running
+✓ Public IP: 47.xx.xx.xx
+✓ Cloud Assistant: installed
+❌ Security group does not open port 22 ← root cause
+```
+
+**Stage 3: Solution**
+✫ Provide concrete CLI commands
+✫ Ask whether to execute them
+✫ Give security recommendations
+
+### 6.2 Operation Confirmation Rules
+
+**Operations requiring user confirmation:**
+✩ Modify security group rules
+✩ Reboot the instance
+✩ Reset the password
+✩ Bind/unbind an EIP
+
+**Operations that can run automatically:**
+✩ Query instance information
+✩ Check configuration status
+✩ Test port connectivity
+✩ Check Cloud Assistant status
+
+### 6.3 Security Reminder
+
+```
+⚠️ Security recommendation:
+The current configuration allows access from all IPs (0.0.0.0/0). Recommendations:
+1. Restrict the source IP to your actual IP address
+2. Your current public IP is: <obtained via API>
+3. Recommended command: --SourceCidrIp <your-ip>/32
+```
+
+---
+
+## 7. Parallel Diagnostics Optimization
+
+### 7.1 Checks That Can Run in Parallel
+
+```bash
+# The following checks can run simultaneously:
+Parallel task 1: aliyun ecs describe-instances ... --user-agent "AlibabaCloud-Agent-Skills/alibabacloud-ecs-diagnose/{session-id} skill-version/{skill-version}"        # Instance status
+Parallel task 2: aliyun ecs describe-security-group-attribute ... --user-agent "AlibabaCloud-Agent-Skills/alibabacloud-ecs-diagnose/{session-id} skill-version/{skill-version}"  # Security group
+Parallel task 3: aliyun ecs describe-cloud-assistant-status ... --user-agent "AlibabaCloud-Agent-Skills/alibabacloud-ecs-diagnose/{session-id} skill-version/{skill-version}"    # Cloud Assistant
+Parallel task 4: nc -zv -w 10 <ip> 22                    # Port test (10s timeout)
+```
+
+### 7.2 Smart Recommendation
+
+Infer the required ports from the instance name/tags:
+
+| Instance Name Keyword | Recommended Ports to Open |
+| ----------------------- | --------------------------- |
+| web, nginx, httpd | 80, 443 |
+| mysql, mariadb | 3306 |
+| redis | 6379 |
+| mongodb | 27017 |
+| postgresql | 5432 |
+| elasticsearch | 9200, 9300 |
+| rabbitmq | 5672, 15672 |
+
+---
+
+## 8. Common CLI Command Quick Reference
+
+### 8.1 Instance Operations
+
+```bash
+# Query instance details
+aliyun ecs describe-instances \
+  --biz-region-id <region> \
+  --instance-ids '["<id>"]' \
+  --user-agent "AlibabaCloud-Agent-Skills/alibabacloud-ecs-diagnose/{session-id} skill-version/{skill-version}"
+
+# Query instance status
+aliyun ecs describe-instance-status \
+  --biz-region-id <region> \
+  --instance-id <id> \
+  --user-agent "AlibabaCloud-Agent-Skills/alibabacloud-ecs-diagnose/{session-id} skill-version/{skill-version}"
+
+# Start instance
+aliyun ecs start-instance \
+  --instance-id <id> \
+  --user-agent "AlibabaCloud-Agent-Skills/alibabacloud-ecs-diagnose/{session-id} skill-version/{skill-version}"
+
+# Stop instance
+aliyun ecs stop-instance \
+  --instance-id <id> \
+  --user-agent "AlibabaCloud-Agent-Skills/alibabacloud-ecs-diagnose/{session-id} skill-version/{skill-version}"
+
+# Reboot instance
+aliyun ecs reboot-instance \
+  --instance-id <id> \
+  --user-agent "AlibabaCloud-Agent-Skills/alibabacloud-ecs-diagnose/{session-id} skill-version/{skill-version}"
+```
+
+### 8.2 Security Group Operations
+
+```bash
+# Query the security groups associated with the instance
+aliyun ecs describe-security-groups \
+  --biz-region-id <region> \
+  --user-agent "AlibabaCloud-Agent-Skills/alibabacloud-ecs-diagnose/{session-id} skill-version/{skill-version}"
+
+# Query security group rules
+aliyun ecs describe-security-group-attribute \
+  --biz-region-id <region> \
+  --security-group-id <sg-id> \
+  --direction ingress \
+  --user-agent "AlibabaCloud-Agent-Skills/alibabacloud-ecs-diagnose/{session-id} skill-version/{skill-version}"
+
+# Add an inbound rule
+aliyun ecs authorize-security-group \
+  --biz-region-id <region> \
+  --security-group-id <sg-id> \
+  --ip-protocol tcp \
+  --port-range <port>/<port> \
+  --source-cidr-ip <cidr> \
+  --user-agent "AlibabaCloud-Agent-Skills/alibabacloud-ecs-diagnose/{session-id} skill-version/{skill-version}"
+
+# Delete an inbound rule
+aliyun ecs revoke-security-group \
+  --biz-region-id <region> \
+  --security-group-id <sg-id> \
+  --ip-protocol tcp \
+  --port-range <port>/<port> \
+  --source-cidr-ip <cidr> \
+  --user-agent "AlibabaCloud-Agent-Skills/alibabacloud-ecs-diagnose/{session-id} skill-version/{skill-version}"
+```
+
+### 8.3 Network Operations
+
+```bash
+# Query EIPs
+aliyun vpc describe-eip-addresses \
+  --biz-region-id <region> \
+  --user-agent "AlibabaCloud-Agent-Skills/alibabacloud-ecs-diagnose/{session-id} skill-version/{skill-version}"
+
+# Allocate an EIP
+aliyun vpc allocate-eip-address \
+  --biz-region-id <region> \
+  --bandwidth 5 \
+  --user-agent "AlibabaCloud-Agent-Skills/alibabacloud-ecs-diagnose/{session-id} skill-version/{skill-version}"
+
+# Bind an EIP
+aliyun vpc associate-eip-address \
+  --biz-region-id <region> \
+  --allocation-id <eip-id> \
+  --instance-id <instance-id> \
+  --instance-type EcsInstance \
+  --user-agent "AlibabaCloud-Agent-Skills/alibabacloud-ecs-diagnose/{session-id} skill-version/{skill-version}"
+
+# Unbind an EIP
+aliyun vpc unassociate-eip-address \
+  --allocation-id <eip-id> \
+  --user-agent "AlibabaCloud-Agent-Skills/alibabacloud-ecs-diagnose/{session-id} skill-version/{skill-version}"
+```
+
+### 8.4 Cloud Assistant Operations
+
+```bash
+# Check Cloud Assistant status (--instance-id is a list: space-separated values)
+aliyun ecs describe-cloud-assistant-status \
+  --region <region> --biz-region-id <region> \
+  --instance-id <id> \
+  --user-agent "AlibabaCloud-Agent-Skills/alibabacloud-ecs-diagnose/{session-id} skill-version/{skill-version}"
+
+# Run a Shell command (Linux) - command content is PLAINTEXT, plugin encodes it
+aliyun ecs run-command \
+  --region <region> --biz-region-id <region> \
+  --instance-id <id> \
+  --type RunShellScript \
+  --command-content 'uptime' \
+  --timeout 60 \
+  --user-agent "AlibabaCloud-Agent-Skills/alibabacloud-ecs-diagnose/{session-id} skill-version/{skill-version}"
+
+# Run a PowerShell command (Windows) - command content is PLAINTEXT, plugin encodes it
+aliyun ecs run-command \
+  --region <region> --biz-region-id <region> \
+  --instance-id <id> \
+  --type RunPowerShellScript \
+  --command-content 'Write-Output "PROBE_OK"' \
+  --timeout 60 \
+  --user-agent "AlibabaCloud-Agent-Skills/alibabacloud-ecs-diagnose/{session-id} skill-version/{skill-version}"
+
+# View command execution results (Output is Base64 — decode after InvocationStatus is Success)
+aliyun ecs describe-invocation-results \
+  --region <region> --biz-region-id <region> \
+  --invoke-id <invoke-id> \
+  --user-agent "AlibabaCloud-Agent-Skills/alibabacloud-ecs-diagnose/{session-id} skill-version/{skill-version}"
+```
+
+---
+
+## 9. Diagnostic Decision Tree
+
+```
+Start diagnosis
+    │
+    ▼
+Does the instance exist? ──No──► Phase 0 empty-result protocol → workflow TERMINATES
+    │Yes
+    ▼
+Is the instance Running? ──No──► Record finding: start the instance ──┐
+    │Yes                                                              │
+    ▼                                                                 │
+Does it have a public IP/EIP? ──No──► Record finding: bind an EIP ─────┤
+    │Yes                                  or configure NAT            │
+    ▼                                                                 │
+    │◄────────────────────────────────────────────────────────────────-┘
+    ▼  (findings collected, diagnosis CONTINUES)
+Does the security group open the target port? ──No──► Add a security group rule
+    │Yes
+    ▼
+Is the port reachable (nc/telnet)? ──No──► Check the OS firewall (iptables/firewalld)
+    │Yes
+    ▼
+Is the SSH/RDP service running? ──No──► Start the service via Cloud Assistant
+    │Yes
+    ▼
+Are the key/password correct? ──No──► Reset the password or replace the key
+    │Yes
+    ▼
+Connection succeeds ✓
+```
+
+> **[MUST] The decision tree defines the order in which findings are collected — it is
+> NOT an early-exit chain.** A "No" branch records the finding plus its remediation and
+> then continues down the tree; it must never abort the remaining layers. Reporting
+> "no public IP" alone and skipping the Layer 3 security group ingress inspection
+> (`DescribeSecurityGroupAttribute`) is an incomplete diagnosis, because the instance may
+> be reached over VPN / NAT / an internal network and can still have blocked ports.
+> The single exception that terminates the workflow early is the Phase 0 empty-result
+> protocol (instance not found).
+
+---
+
+## 10. Summary
+
+This diagnostic workflow embodies:
+
+✩ **Systematic thinking**: a layered diagnostic model, troubleshooting from outside in
+✩ **Efficiency first**: minimal information gathering, fastest problem localization
+✩ **User-friendly**: proactive action, clear feedback, offering choices
+✩ **Security awareness**: balancing convenience and security
+✩ **Fault-tolerant design**: automatically adjusting strategy on new issues, providing backups
