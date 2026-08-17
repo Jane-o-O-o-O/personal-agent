@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: GitCode 产品帮助文档
+    url: https://docs.gitcode.com
+    about: 如果你有产品使用上的问题，你可以先查看 GitCode 官方帮助文档

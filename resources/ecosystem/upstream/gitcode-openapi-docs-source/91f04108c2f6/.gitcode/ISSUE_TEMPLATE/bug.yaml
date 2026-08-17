@@ -1,0 +1,77 @@
+name: Bug 反馈
+description: 反馈产品使用过程的 Bug
+title: "[Bug]-"
+labels: ["bug"]
+assignees: ""
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢你向我们反馈问题！为了帮助我们尽快地解决问题，请尽可能向我们提供以下信息。
+
+  - type: input
+    id: url
+    attributes:
+      label: 遇到 bug 的页面
+      description: 请提供你遇到 bug 时所访问的页面 url
+      placeholder: 例如：https://gitcode.com/......
+    validations:
+      required: true
+
+  - type: dropdown
+    id: affected-packages
+    attributes:
+      label: 遇到 bug 的功能模块
+      options:
+        - 搜索相关
+        - 代码相关（代码推送、下载等）
+        - 项目相关
+        - 组织相关
+        - 用户相关
+        - 其它功能
+      multiple: false
+    validations:
+      required: true
+
+  - type: input
+    id: bug_description
+    attributes:
+      label: 问题描述
+      description: 简要描述问题，包括期望的行为和实际的行为
+      placeholder: 问题简要描述...
+
+  - type: textarea
+    id: steps_to_reproduce
+    attributes:
+      label: 重现步骤
+      description: 请列出重现问题的详细步骤
+      placeholder: 1. 打开...\n2. 点击...
+
+  - type: input
+    id: expected_behavior
+    attributes:
+      label: 期望的行为
+      description: 请描述你期望的行为
+      placeholder: 期望的行为...
+
+  - type: input
+    id: actual_behavior
+    attributes:
+      label: 实际的行为
+      description: 请描述实际发生的行为
+      placeholder: 实际的行为...
+
+  - type: textarea
+    id: additional_context
+    attributes:
+      label: 附加信息
+      description: 任何其他有助于我们理解问题的附加信息
+      placeholder: 附加信息，例如具体报错信息等...
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: 环境信息
+      description: 请提供系统信息和相关版本
+      placeholder: 操作系统：Windows 10\n浏览器：Chrome 89.0.4389.82...
