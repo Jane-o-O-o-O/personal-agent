@@ -1,0 +1,18 @@
+# Ignore dependencies and VCS
+node_modules
+.git
+.gitignore
+
+# Build artifacts and coverage
+dist
+coverage
+
+# Logs and caches
+npm-debug.log*
+yarn-error.log*
+**/.DS_Store
+**/.vscode
+**/.idea
+**/tmp
+**/.cache
+

@@ -1,0 +1,65 @@
+{
+  "name": "@larksuiteoapi/lark-mcp",
+  "version": "0.5.1",
+  "description": "Feishu/Lark OpenAPI MCP",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "author": "chenli.idevlab",
+  "license": "MIT",
+  "bin": {
+    "lark-mcp": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "docs",
+    "CHANGELOG.md",
+    "README.md",
+    "README_ZH.md",
+    "README_RECALL.md",
+    "README_RECALL_ZH.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "rm -rf dist && tsc",
+    "dev": "ts-node src/index.ts",
+    "dev:cli": "ts-node src/cli.ts",
+    "format": "prettier --write \"src/**/*.ts\"",
+    "prepare": "yarn build",
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "test:coverage": "jest --coverage"
+  },
+  "keywords": [
+    "feishu",
+    "lark",
+    "mcp",
+    "open-api",
+    "ai"
+  ],
+  "homepage": "https://github.com/larksuite/lark-openapi-mcp",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "dependencies": {
+    "@larksuiteoapi/node-sdk": "^1.50.0",
+    "@modelcontextprotocol/sdk": "^1.12.1",
+    "axios": "^1.8.4",
+    "commander": "^13.1.0",
+    "dotenv": "^16.4.7",
+    "env-paths": "^2.2.1",
+    "express": "^5.1.0",
+    "keytar": "^7.9.0",
+    "open": "^8.4.2",
+    "proxy-agent": "^6.5.0"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.1",
+    "@types/jest": "^29.5.14",
+    "@types/node": "^20.4.5",
+    "jest": "^29.7.0",
+    "prettier": "^3.5.3",
+    "ts-jest": "^29.3.2",
+    "ts-node": "^10.9.1",
+    "typescript": "^5.0.0"
+  }
+}

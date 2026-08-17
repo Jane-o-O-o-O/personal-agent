@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="126" height="28" viewBox="0 0 126 28" fill="none">
+  <rect width="126" height="28" rx="4" fill="white"/>
+  <g transform="translate(8, 6) scale(1.2)">
+    <path d="M10.5322 0.625C10.652 0.625 10.7498 0.722029 10.75 0.841797V11.1572C10.75 11.2772 10.6522 11.375 10.5322 11.375H0.216797C0.0970291 11.3748 0 11.277 0 11.1572V0.841797C0.000197152 0.722151 0.0971513 0.625197 0.216797 0.625H10.5322Z" fill="#FF523F"/>
+    <path d="M8.79467 8.23047H5.32007V9.42052H8.79467V8.23047Z" fill="white"/>
+  </g>
+  <text x="34" y="18" font-family="Arial, sans-serif" font-size="14" font-weight="500" fill="black">Add to Trae</text>
+</svg>

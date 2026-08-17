@@ -1,0 +1,14 @@
+**/CHANGELOG.*
+# 包管理文件
+**/pnpm-lock.yaml
+**/yarn.lock
+**/package-lock.json
+**/shrinkwrap.json
+
+# 构建产物
+**/dist
+**/lib
+
+# 在 Markdown 中，Prettier 将会对代码块进行格式化，这会影响输出
+*.md
+*.svg
