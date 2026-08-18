@@ -1,0 +1,163 @@
+// Copyright (c) 2026 Lark Technologies Pte. Ltd.
+// SPDX-License-Identifier: MIT
+
+package drive
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"strings"
+
+	"github.com/larksuite/cli/errs"
+	"github.com/larksuite/cli/internal/validate"
+	"github.com/larksuite/cli/shortcuts/common"
+)
+
+// DriveMove moves a Drive file or folder and polls any returned async task.
+var DriveMove = common.Shortcut{
+	Service:     "drive",
+	Command:     "+move",
+	Description: "Move a file or folder to another location in Drive",
+	Risk:        "write",
+	Scopes:      []string{"space:document:move"},
+	AuthTypes:   []string{"user", "bot"},
+	Flags: []common.Flag{
+		{Name: "file-token", Desc: "file or folder token to move", Required: true},
+		{Name: "type", Desc: "file type (file, docx, bitable, doc, sheet, mindnote, folder, slides)", Required: true},
+		{Name: "folder-token", Desc: "target folder token (default: root folder)"},
+	},
+	Validate: func(ctx context.Context, runtime *common.RuntimeContext) error {
+		return validateDriveMoveSpec(driveMoveSpec{
+			FileToken:   runtime.Str("file-token"),
+			FileType:    strings.ToLower(runtime.Str("type")),
+			FolderToken: runtime.Str("folder-token"),
+		})
+	},
+	DryRun: func(ctx context.Context, runtime *common.RuntimeContext) *common.DryRunAPI {
+		spec := driveMoveSpec{
+			FileToken:   runtime.Str("file-token"),
+			FileType:    strings.ToLower(runtime.Str("type")),
+			FolderToken: runtime.Str("folder-token"),
+		}
+
+		dry := common.NewDryRunAPI().
+			Desc("Move file or folder in Drive")
+
+		dry.POST("/open-apis/drive/v1/files/:file_token/move").
+			Desc("[1] Move file/folder").
+			Set("file_token", spec.FileToken).
+			Body(spec.RequestBody())
+
+		// Folder responses can contain a task or complete without creating one.
+		if spec.FileType == "folder" {
+			dry.GET("/open-apis/drive/v1/files/task_check").
+				Desc("[2] If task_id is returned: poll async task status").
+				Params(driveTaskCheckParams("<task_id>"))
+		}
+
+		return dry
+	},
+	Execute: func(ctx context.Context, runtime *common.RuntimeContext) error {
+		spec := driveMoveSpec{
+			FileToken:   runtime.Str("file-token"),
+			FileType:    strings.ToLower(runtime.Str("type")),
+			FolderToken: runtime.Str("folder-token"),
+		}
+
+		// Default to the caller's root folder so the command can move items
+		// without requiring an explicit destination in common cases.
+		if spec.FolderToken == "" {
+			rootToken, err := getRootFolderToken(ctx, runtime)
+			if err != nil {
+				return err
+			}
+			if rootToken == "" {
+				return errs.NewInternalError(errs.SubtypeInvalidResponse, "get root folder token failed, root folder is empty")
+			}
+			spec.FolderToken = rootToken
+		}
+
+		data, err := runtime.CallAPITyped(
+			"POST",
+			fmt.Sprintf("/open-apis/drive/v1/files/%s/move", validate.EncodePathSegment(spec.FileToken)),
+			nil,
+			spec.RequestBody(),
+		)
+		if err != nil {
+			return err
+		}
+
+		// A successful folder move without a task is synchronously complete.
+		if spec.FileType == "folder" {
+			var result struct {
+				TaskID string `json:"task_id"`
+			}
+			raw, err := json.Marshal(data)
+			if err == nil {
+				err = json.Unmarshal(raw, &result)
+			}
+			if err != nil {
+				return errs.NewInternalError(errs.SubtypeInvalidResponse, "move folder returned invalid task data").WithCause(err)
+			}
+			taskID := result.TaskID
+			if taskID == "" {
+				runtime.Out(map[string]interface{}{
+					"status":       "success",
+					"file_token":   spec.FileToken,
+					"folder_token": spec.FolderToken,
+					"ready":        true,
+				}, nil)
+				return nil
+			}
+
+			status, ready, err := pollDriveTaskCheck(runtime, taskID)
+			if err != nil {
+				return err
+			}
+
+			// Include both the source and destination identifiers so a timed-out
+			// folder move can be resumed or inspected without reconstructing inputs.
+			out := map[string]interface{}{
+				"task_id":      taskID,
+				"status":       status.StatusLabel(),
+				"file_token":   spec.FileToken,
+				"folder_token": spec.FolderToken,
+				"ready":        ready,
+			}
+			if !ready {
+				nextCommand := driveTaskCheckResultCommand(runtime, taskID)
+				out["timed_out"] = true
+				out["next_command"] = nextCommand
+			}
+
+			runtime.Out(out, nil)
+		} else {
+			// Non-folder moves are synchronous, so the initial request is the final
+			// outcome and no follow-up task metadata is needed.
+			runtime.Out(map[string]interface{}{
+				"file_token":   spec.FileToken,
+				"folder_token": spec.FolderToken,
+				"type":         spec.FileType,
+			}, nil)
+		}
+
+		return nil
+	},
+}
+
+// getRootFolderToken resolves the caller's Drive root folder token so other
+// commands can safely use it as a default destination.
+func getRootFolderToken(ctx context.Context, runtime *common.RuntimeContext) (string, error) {
+	data, err := runtime.CallAPITyped("GET", "/open-apis/drive/explorer/v2/root_folder/meta", nil, nil)
+	if err != nil {
+		return "", err
+	}
+
+	token := common.GetString(data, "token")
+	if token == "" {
+		return "", errs.NewInternalError(errs.SubtypeInvalidResponse, "root_folder/meta returned no token")
+	}
+
+	return token, nil
+}

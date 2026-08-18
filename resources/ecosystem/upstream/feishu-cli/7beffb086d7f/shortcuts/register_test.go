@@ -1,0 +1,701 @@
+// Copyright (c) 2026 Lark Technologies Pte. Ltd.
+// SPDX-License-Identifier: MIT
+
+package shortcuts
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
+	"testing"
+
+	"github.com/larksuite/cli/errs"
+	"github.com/larksuite/cli/internal/cmdmeta"
+	"github.com/larksuite/cli/internal/cmdutil"
+	"github.com/larksuite/cli/internal/core"
+	"github.com/spf13/cobra"
+)
+
+func newRegisterTestFactory(t *testing.T) *cmdutil.Factory {
+	t.Helper()
+	t.Setenv("LARKSUITE_CLI_CONFIG_DIR", t.TempDir())
+	f, _, _, _ := cmdutil.TestFactory(t, &core.CliConfig{})
+	return f
+}
+
+func TestAllShortcutsScopesNotNil(t *testing.T) {
+	for _, s := range allShortcuts {
+		hasScopes := s.Scopes != nil || s.UserScopes != nil || s.BotScopes != nil
+		if !hasScopes {
+			t.Errorf("shortcut %s/%s: Scopes is nil (must be explicitly set, use []string{} if no scopes needed)", s.Service, s.Command)
+		}
+	}
+}
+
+func TestAllShortcutsReturnsCopyAndIncludesBase(t *testing.T) {
+	shortcuts := AllShortcuts()
+	if len(shortcuts) == 0 {
+		t.Fatal("AllShortcuts returned empty slice")
+	}
+
+	hasBaseGet := false
+	for _, shortcut := range shortcuts {
+		if shortcut.Service == "base" && shortcut.Command == "+base-get" {
+			hasBaseGet = true
+			break
+		}
+	}
+	if !hasBaseGet {
+		t.Fatal("AllShortcuts does not include base/+base-get")
+	}
+
+	shortcuts[0].Service = "mutated"
+	if AllShortcuts()[0].Service == "mutated" {
+		t.Fatal("AllShortcuts should return a copy")
+	}
+}
+
+func TestShortcutServiceNames(t *testing.T) {
+	want := []string{
+		"application",
+		"apps",
+		"base",
+		"calendar",
+		"contact",
+		"docs",
+		"drive",
+		"event",
+		"im",
+		"mail",
+		"markdown",
+		"minutes",
+		"note",
+		"okr",
+		"sheets",
+		"slides",
+		"task",
+		"vc",
+		"whiteboard",
+		"wiki",
+	}
+
+	got := ShortcutServiceNames()
+	if !slices.Equal(got, want) {
+		t.Fatalf("ShortcutServiceNames() = %v, want %v", got, want)
+	}
+	if !slices.IsSorted(got) {
+		t.Fatalf("ShortcutServiceNames() is not sorted: %v", got)
+	}
+
+	got[0] = "mutated"
+	if second := ShortcutServiceNames(); !slices.Equal(second, want) {
+		t.Fatalf("ShortcutServiceNames() must return a stable copy, got %v", second)
+	}
+}
+
+func TestRegisterShortcutsForDomainsWithContextSelectsBuckets(t *testing.T) {
+	tests := []struct {
+		name    string
+		domains []string
+		want    []string
+	}{
+		{name: "nil mounts all", domains: nil, want: ShortcutServiceNames()},
+		{name: "empty mounts none", domains: []string{}, want: []string{}},
+		{name: "docs only", domains: []string{"docs"}, want: []string{"docs"}},
+		{name: "drive only", domains: []string{"drive"}, want: []string{"drive"}},
+		{name: "deduplicates and sorts", domains: []string{"drive", "docs", "drive"}, want: []string{"docs", "drive"}},
+		{name: "unknown mounts none", domains: []string{"unknown"}, want: []string{}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			program := &cobra.Command{Use: "root"}
+			RegisterShortcutsForDomainsWithContext(
+				context.Background(),
+				program,
+				newRegisterTestFactory(t),
+				tt.domains,
+			)
+
+			var got []string
+			for _, command := range program.Commands() {
+				got = append(got, command.Name())
+			}
+			if !slices.Equal(got, tt.want) {
+				t.Fatalf("mounted services = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestRegisterShortcutsForDomainsPreservesSelectedDomainBehavior(t *testing.T) {
+	t.Run("docs help and annotation", func(t *testing.T) {
+		program := &cobra.Command{Use: "root"}
+		RegisterShortcutsForDomainsWithContext(
+			context.Background(),
+			program,
+			newRegisterTestFactory(t),
+			[]string{"docs"},
+		)
+
+		docsCmd := findChild(program, "docs")
+		if docsCmd == nil {
+			t.Fatal("docs service command not mounted")
+		}
+		if got := cmdmeta.Domain(docsCmd); got != "docs" {
+			t.Fatalf("docs domain = %q, want docs", got)
+		}
+		if findChild(docsCmd, "+fetch") == nil {
+			t.Fatal("docs +fetch shortcut not mounted")
+		}
+		if findChild(program, "drive") != nil {
+			t.Fatal("unselected drive service should not be mounted")
+		}
+	})
+
+	t.Run("drive shortcut metadata", func(t *testing.T) {
+		program := &cobra.Command{Use: "root"}
+		RegisterShortcutsForDomainsWithContext(
+			context.Background(),
+			program,
+			newRegisterTestFactory(t),
+			[]string{"drive"},
+		)
+
+		driveCmd := findChild(program, "drive")
+		if driveCmd == nil {
+			t.Fatal("drive service command not mounted")
+		}
+		search := findChild(driveCmd, "+search")
+		if search == nil {
+			t.Fatal("drive +search shortcut not mounted")
+		}
+		if got := cmdmeta.Domain(search); got != "drive" {
+			t.Fatalf("drive +search domain = %q, want drive", got)
+		}
+		if got, ok := cmdutil.GetRisk(search); !ok || got == "" {
+			t.Fatal("drive +search risk annotation must be preserved")
+		}
+	})
+}
+
+func TestRegisterShortcutsForDomainsRunsHooksOnlyForSelectedBuckets(t *testing.T) {
+	t.Run("unselected hooks do not mutate existing parents", func(t *testing.T) {
+		program := &cobra.Command{Use: "root"}
+		appsCmd := &cobra.Command{Use: "apps"}
+		mailCmd := &cobra.Command{Use: "mail"}
+		sheetsCmd := &cobra.Command{Use: "sheets"}
+		program.AddCommand(appsCmd, mailCmd, sheetsCmd)
+
+		RegisterShortcutsForDomainsWithContext(
+			context.Background(),
+			program,
+			newRegisterTestFactory(t),
+			[]string{"docs"},
+		)
+
+		if findChild(appsCmd, "git-credential-helper") != nil {
+			t.Fatal("apps hook ran for an unselected domain")
+		}
+		in := errors.New("unknown flag: --bogus")
+		if got := mailCmd.FlagErrorFunc()(mailCmd, in); got != in {
+			t.Fatalf("mail hook ran for an unselected domain: got %T (%v)", got, got)
+		}
+		if sheetsCmd.ContainsGroup(sheetsCurrentGroupID) {
+			t.Fatal("sheets hook ran for an unselected domain")
+		}
+	})
+
+	t.Run("selected hooks run", func(t *testing.T) {
+		program := &cobra.Command{Use: "root"}
+		RegisterShortcutsForDomainsWithContext(
+			context.Background(),
+			program,
+			newRegisterTestFactory(t),
+			[]string{"sheets", "apps", "mail"},
+		)
+
+		appsCmd := findChild(program, "apps")
+		if appsCmd == nil || findChild(appsCmd, "git-credential-helper") == nil {
+			t.Fatal("selected apps hook did not run")
+		}
+		mailCmd := findChild(program, "mail")
+		if mailCmd == nil {
+			t.Fatal("selected mail service not mounted")
+		}
+		got := mailCmd.FlagErrorFunc()(mailCmd, errors.New("unknown flag: --bogus"))
+		if !errs.IsTyped(got) {
+			t.Fatalf("selected mail hook did not install typed flag handling: %T (%v)", got, got)
+		}
+		sheetsCmd := findChild(program, "sheets")
+		if sheetsCmd == nil || !sheetsCmd.ContainsGroup(sheetsCurrentGroupID) {
+			t.Fatal("selected sheets hook did not apply command groups")
+		}
+	})
+}
+
+func TestRegisterShortcutsMountsBaseCommands(t *testing.T) {
+	program := &cobra.Command{Use: "root"}
+	RegisterShortcuts(program, newRegisterTestFactory(t))
+
+	baseCmd, _, err := program.Find([]string{"base"})
+	if err != nil {
+		t.Fatalf("find base command: %v", err)
+	}
+	if baseCmd == nil || baseCmd.Name() != "base" {
+		t.Fatalf("base command not mounted: %#v", baseCmd)
+	}
+
+	workspaceCmd, _, err := program.Find([]string{"base", "+base-get"})
+	if err != nil {
+		t.Fatalf("find base workspace shortcut: %v", err)
+	}
+	if workspaceCmd == nil || workspaceCmd.Name() != "+base-get" {
+		t.Fatalf("base workspace shortcut not mounted: %#v", workspaceCmd)
+	}
+
+	blockDataCmd, _, err := program.Find([]string{"base", "+dashboard-block-get-data"})
+	if err != nil {
+		t.Fatalf("find dashboard block get-data shortcut: %v", err)
+	}
+	if blockDataCmd == nil || blockDataCmd.Name() != "+dashboard-block-get-data" {
+		t.Fatalf("base dashboard block get-data shortcut not mounted: %#v", blockDataCmd)
+	}
+}
+
+func TestRegisterShortcutsMountsHiddenAppsGitCredentialHelper(t *testing.T) {
+	program := &cobra.Command{Use: "root"}
+	RegisterShortcuts(program, newRegisterTestFactory(t))
+
+	helperCmd, _, err := program.Find([]string{"apps", "git-credential-helper"})
+	if err != nil {
+		t.Fatalf("find apps git credential helper: %v", err)
+	}
+	if helperCmd == nil || helperCmd.Name() != "git-credential-helper" {
+		t.Fatalf("apps git credential helper not mounted: %#v", helperCmd)
+	}
+	if !helperCmd.Hidden {
+		t.Fatalf("apps git credential helper must be hidden")
+	}
+}
+
+// Service-level cobra commands created by RegisterShortcuts must carry
+// the cmdmeta.Domain annotation so plugin Selectors (platform.ByDomain)
+// and Rule.Allow path-globs can resolve a command's business domain.
+// The annotation is set on the parent; cmdmeta.Domain walks up the
+// parent chain so every leaf shortcut inherits without extra tagging.
+func TestRegisterShortcutsTagsServiceDomain(t *testing.T) {
+	program := &cobra.Command{Use: "root"}
+	RegisterShortcuts(program, newRegisterTestFactory(t))
+
+	for _, svc := range []string{"im", "docs", "drive", "calendar", "base"} {
+		group, _, err := program.Find([]string{svc})
+		if err != nil || group == nil {
+			t.Errorf("service %q not mounted", svc)
+			continue
+		}
+		if got := cmdmeta.Domain(group); got != svc {
+			t.Errorf("service %q domain = %q, want %q", svc, got, svc)
+		}
+	}
+
+	// Inheritance: a leaf shortcut under a service must also resolve
+	// to the parent's domain via cmdmeta.Domain's parent-chain walk.
+	leaf, _, err := program.Find([]string{"im", "+messages-send"})
+	if err != nil || leaf == nil {
+		t.Fatalf("expected im/+messages-send to be mounted")
+	}
+	if got := cmdmeta.Domain(leaf); got != "im" {
+		t.Errorf("leaf domain via parent inheritance = %q, want %q", got, "im")
+	}
+}
+
+func TestRegisterShortcutsMountsDocsMediaPreview(t *testing.T) {
+	program := &cobra.Command{Use: "root"}
+	RegisterShortcuts(program, newRegisterTestFactory(t))
+
+	previewCmd, _, err := program.Find([]string{"docs", "+media-preview"})
+	if err != nil {
+		t.Fatalf("find docs media preview shortcut: %v", err)
+	}
+	if previewCmd == nil || previewCmd.Name() != "+media-preview" {
+		t.Fatalf("docs media preview shortcut not mounted: %#v", previewCmd)
+	}
+}
+
+func TestRegisterShortcutsMountsDocsHistoryCommands(t *testing.T) {
+	program := &cobra.Command{Use: "root"}
+	RegisterShortcuts(program, newRegisterTestFactory(t))
+
+	for _, name := range []string{"+history-list", "+history-revert", "+history-revert-status"} {
+		cmd, _, err := program.Find([]string{"docs", name})
+		if err != nil {
+			t.Fatalf("find docs %s shortcut: %v", name, err)
+		}
+		if cmd == nil || cmd.Name() != name {
+			t.Fatalf("docs %s shortcut not mounted: %#v", name, cmd)
+		}
+		if cmd.Flags().Lookup("api-version") != nil {
+			t.Fatalf("docs %s should not expose --api-version", name)
+		}
+	}
+}
+
+func TestRegisterShortcutsDocsDomainHasNoBusinessOwnedSkillPresentation(t *testing.T) {
+	program := &cobra.Command{Use: "root"}
+	RegisterShortcuts(program, newRegisterTestFactory(t))
+
+	docsCmd, _, err := program.Find([]string{"docs"})
+	if err != nil {
+		t.Fatalf("find docs command: %v", err)
+	}
+	if docsCmd == nil || docsCmd.Name() != "docs" {
+		t.Fatalf("docs command not mounted: %#v", docsCmd)
+	}
+	if docsCmd.Flags().Lookup("api-version") != nil {
+		t.Fatal("docs command should not expose service-level --api-version")
+	}
+	if docsCmd.Short != "Document and content operations" {
+		t.Fatalf("docs short help = %q, want registry description", docsCmd.Short)
+	}
+	if strings.Contains(docsCmd.Long, "skills read") {
+		t.Fatalf("docs business command should not own skill presentation:\n%s", docsCmd.Long)
+	}
+
+	for _, child := range docsCmd.Commands() {
+		if child.Name() == "+get-skill" {
+			t.Fatal("docs +get-skill should not be mounted")
+		}
+	}
+}
+
+func TestRegisterShortcutsDocsShortcutSurfaceIsV2Only(t *testing.T) {
+	tests := []struct {
+		name         string
+		shortcut     string
+		shortcutHelp string
+		visibleFlag  string
+		hiddenFlags  []string
+		contentHelp  []string
+		unwanted     []string
+	}{
+		{
+			name:         "create",
+			shortcut:     "+create",
+			shortcutHelp: "Create a Lark document",
+			visibleFlag:  "--content",
+			hiddenFlags:  []string{"api-version", "markdown", "folder-token", "wiki-node", "wiki-space"},
+			contentHelp: []string{
+				"--title",
+				"document body; XML by default or Markdown when --doc-format markdown",
+			},
+			unwanted: []string{"--api-version", "--markdown", "--folder-token", "--wiki-node", "--wiki-space"},
+		},
+		{
+			name:         "fetch",
+			shortcut:     "+fetch",
+			shortcutHelp: "Fetch Lark document content",
+			visibleFlag:  "read scope",
+			hiddenFlags:  []string{"api-version", "offset", "limit"},
+			unwanted:     []string{"--api-version", "--offset", "--limit"},
+		},
+		{
+			name:         "update",
+			shortcut:     "+update",
+			shortcutHelp: "Update a Lark document",
+			visibleFlag:  "--command",
+			hiddenFlags:  []string{"api-version", "mode", "markdown", "selection-with-ellipsis", "selection-by-title", "new-title"},
+			contentHelp: []string{
+				"replacement or inserted content; XML by default or Markdown when --doc-format markdown",
+			},
+			unwanted: []string{"--api-version", "--mode", "--markdown", "--selection-with-ellipsis", "--selection-by-title", "--new-title"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			program := &cobra.Command{Use: "root"}
+			RegisterShortcuts(program, newRegisterTestFactory(t))
+
+			cmd, _, err := program.Find([]string{"docs", tt.shortcut})
+			if err != nil {
+				t.Fatalf("find docs %s command: %v", tt.shortcut, err)
+			}
+			if cmd == nil || cmd.Name() != tt.shortcut {
+				t.Fatalf("docs %s shortcut not mounted: %#v", tt.shortcut, cmd)
+			}
+
+			for _, flagName := range tt.hiddenFlags {
+				flag := cmd.Flags().Lookup(flagName)
+				if flag == nil {
+					t.Fatalf("docs %s missing hidden compatibility flag %q", tt.shortcut, flagName)
+				}
+				if !flag.Hidden {
+					t.Fatalf("docs %s flag %q should be hidden", tt.shortcut, flagName)
+				}
+			}
+			var out bytes.Buffer
+			cmd.SetOut(&out)
+			if err := cmd.Help(); err != nil {
+				t.Fatalf("docs %s help failed: %v", tt.shortcut, err)
+			}
+
+			for _, want := range []string{
+				tt.shortcutHelp,
+				tt.visibleFlag,
+			} {
+				if !strings.Contains(out.String(), want) {
+					t.Fatalf("docs %s help missing %q:\n%s", tt.shortcut, want, out.String())
+				}
+			}
+			for _, want := range tt.contentHelp {
+				if !strings.Contains(out.String(), want) {
+					t.Fatalf("docs %s content help missing %q:\n%s", tt.shortcut, want, out.String())
+				}
+			}
+			for _, unwanted := range []string{
+				"Tips:",
+				"+get-skill",
+				"Docs shortcuts are v2-only",
+				"Start here (required for AI agents):",
+				"lark-cli skills read",
+			} {
+				if strings.Contains(out.String(), unwanted) {
+					t.Fatalf("docs %s help should not include %q:\n%s", tt.shortcut, unwanted, out.String())
+				}
+			}
+			for _, unwanted := range tt.unwanted {
+				if strings.Contains(out.String(), unwanted) {
+					t.Fatalf("docs %s help should not include %q:\n%s", tt.shortcut, unwanted, out.String())
+				}
+			}
+		})
+	}
+}
+
+func TestRegisterShortcutsReusesExistingServiceCommand(t *testing.T) {
+	program := &cobra.Command{Use: "root"}
+	existingBase := &cobra.Command{Use: "base", Short: "existing base service"}
+	program.AddCommand(existingBase)
+
+	RegisterShortcuts(program, newRegisterTestFactory(t))
+
+	baseCount := 0
+	for _, command := range program.Commands() {
+		if command.Name() == "base" {
+			baseCount++
+		}
+	}
+	if baseCount != 1 {
+		t.Fatalf("expected 1 base service command, got %d", baseCount)
+	}
+
+	workspaceCmd, _, err := program.Find([]string{"base", "+base-get"})
+	if err != nil {
+		t.Fatalf("find base workspace shortcut under existing service: %v", err)
+	}
+	if workspaceCmd == nil {
+		t.Fatal("base workspace shortcut not mounted on existing service command")
+	}
+}
+
+// TestRegisterShortcutsInstallsMailFlagSuggestHook is the end-to-end
+// wiring guard for the mail unknown-flag fuzzy-match feature: it ensures
+// the `if service == "mail" { mail.InstallOnMail(svc) }` branch in
+// RegisterShortcutsWithContext is actually exercised, so a future refactor
+// that drops the branch (or breaks the import) will fail this test rather
+// than silently regressing the structured-error contract.
+func TestRegisterShortcutsInstallsMailFlagSuggestHook(t *testing.T) {
+	program := &cobra.Command{Use: "root"}
+	RegisterShortcuts(program, newRegisterTestFactory(t))
+
+	mailCmd, _, err := program.Find([]string{"mail"})
+	if err != nil {
+		t.Fatalf("find mail command: %v", err)
+	}
+	if mailCmd == nil || mailCmd.Name() != "mail" {
+		t.Fatalf("mail command not mounted: %#v", mailCmd)
+	}
+
+	// The FlagErrorFunc lookup walks up to the nearest non-nil hook, so
+	// invoking it on the mail parent (or any of its children) must yield
+	// a typed validation problem for the unknown flag.
+	got := mailCmd.FlagErrorFunc()(mailCmd, errors.New("unknown flag: --bogus"))
+	var validationErr *errs.ValidationError
+	if !errors.As(got, &validationErr) {
+		t.Fatalf("expected *errs.ValidationError, got %T (%v)", got, got)
+	}
+	if validationErr.Param != "--bogus" {
+		t.Fatalf("expected Param=--bogus, got %q", validationErr.Param)
+	}
+	problem, ok := errs.ProblemOf(got)
+	if !ok {
+		t.Fatalf("expected typed problem, got %T (%v)", got, got)
+	}
+	if problem.Category != errs.CategoryValidation || problem.Subtype != errs.SubtypeInvalidArgument {
+		t.Fatalf("expected validation/invalid_argument, got %s/%s", problem.Category, problem.Subtype)
+	}
+}
+
+// TestRegisterShortcutsLeavesNonMailFlagErrorUntouched confirms the
+// install is scoped: a non-mail service must keep the default cobra
+// pass-through behaviour, otherwise an accidental fall-through in
+// register.go would silently change every domain's error envelope.
+func TestRegisterShortcutsLeavesNonMailFlagErrorUntouched(t *testing.T) {
+	program := &cobra.Command{Use: "root"}
+	RegisterShortcuts(program, newRegisterTestFactory(t))
+
+	baseCmd, _, err := program.Find([]string{"base"})
+	if err != nil {
+		t.Fatalf("find base command: %v", err)
+	}
+	in := errors.New("unknown flag: --bogus")
+	got := baseCmd.FlagErrorFunc()(baseCmd, in)
+	// Default cobra hook is identity — anything else means the mail hook
+	// (which wraps into a typed *errs.ValidationError) leaked across domains.
+	if errs.IsTyped(got) {
+		t.Fatalf("base service unexpectedly produced a typed error: %#v", got)
+	}
+	if got != in {
+		t.Fatalf("base service should pass through original error pointer, got %T (%v)", got, got)
+	}
+}
+
+func TestGenerateShortcutsJSON(t *testing.T) {
+	output := os.Getenv("SHORTCUTS_OUTPUT")
+	if output == "" {
+		t.Skip("set SHORTCUTS_OUTPUT env to generate shortcuts.json")
+	}
+
+	shortcuts := AllShortcuts()
+
+	type entry struct {
+		Verb        string   `json:"verb"`
+		Description string   `json:"description"`
+		Scopes      []string `json:"scopes"`
+	}
+	grouped := make(map[string][]entry)
+	for _, s := range shortcuts {
+		verb := strings.TrimPrefix(s.Command, "+")
+		grouped[s.Service] = append(grouped[s.Service], entry{
+			Verb:        verb,
+			Description: s.Description,
+			Scopes:      s.DeclaredScopesForIdentity("user"),
+		})
+	}
+
+	data, err := json.MarshalIndent(grouped, "", "  ")
+	if err != nil {
+		t.Fatalf("marshal shortcuts: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(output), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(output, data, 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+	t.Logf("wrote %d bytes to %s", len(data), output)
+}
+
+// applySheetsCommandGroups must tag the "+"-shortcuts into the sheets group and
+// leave non-"+" subcommands (OpenAPI metaapi, help/completion) ungrouped so
+// cobra files them under "Additional Commands".
+func TestApplySheetsCommandGroups(t *testing.T) {
+	svc := &cobra.Command{Use: "sheets"}
+	newCmd := &cobra.Command{Use: "+cells-get", Short: "Read ranges"}
+	metaCmd := &cobra.Command{Use: "spreadsheets", Short: "spreadsheets operations"}
+	svc.AddCommand(newCmd, metaCmd)
+
+	applySheetsCommandGroups(svc)
+
+	if !svc.ContainsGroup(sheetsCurrentGroupID) {
+		t.Errorf("current group %q not registered", sheetsCurrentGroupID)
+	}
+	if newCmd.GroupID != sheetsCurrentGroupID {
+		t.Errorf("+cells-get GroupID = %q, want %q", newCmd.GroupID, sheetsCurrentGroupID)
+	}
+	if metaCmd.GroupID != "" {
+		t.Errorf("metaapi spreadsheets should stay ungrouped, got GroupID %q", metaCmd.GroupID)
+	}
+}
+
+// The pre-refactor sheets aliases have been removed outright: `sheets --help`
+// must list the refactored shortcuts and neither advertise nor register any of
+// the old names, so a stale skill gets the ordinary unknown-subcommand error
+// instead of silently reaching a command that no longer exists.
+func TestRegisterShortcutsSheetsDropsRemovedAliases(t *testing.T) {
+	program := &cobra.Command{Use: "root"}
+	RegisterShortcuts(program, newRegisterTestFactory(t))
+
+	sheetsCmd, _, err := program.Find([]string{"sheets"})
+	if err != nil {
+		t.Fatalf("find sheets command: %v", err)
+	}
+
+	var out bytes.Buffer
+	sheetsCmd.SetOut(&out)
+	if err := sheetsCmd.Help(); err != nil {
+		t.Fatalf("sheets help failed: %v", err)
+	}
+	got := out.String()
+
+	for _, want := range []string{"Available Commands:", "+cells-get"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("sheets help missing %q:\n%s", want, got)
+		}
+	}
+	for _, unwanted := range []string{
+		"Deprecated pre-refactor commands",
+		"update your lark-sheets skill",
+		"+read",
+		"+write",
+	} {
+		if strings.Contains(got, unwanted) {
+			t.Fatalf("sheets help still shows removed content %q:\n%s", unwanted, got)
+		}
+	}
+
+	// Find falls back to the parent for an unknown name, so the assertion is
+	// that nothing resolves to a command actually named +read.
+	for _, removed := range []string{"+read", "+write", "+create", "+media-upload"} {
+		if cmd, _, ferr := sheetsCmd.Find([]string{removed}); ferr == nil && cmd != nil && cmd.Name() == removed {
+			t.Errorf("removed alias %q is still registered", removed)
+		}
+	}
+}
+
+// Registration must wire the sheets subcommand prescriptions onto the live
+// group. The sheets package tests call InstallUnknownSubcommandHints directly,
+// so without this the registration line can be deleted and the suite stays green
+// while the shipped CLI silently reverts to generic ranked suggestions
+// (AGENTS.md: a contract test must fail if the implementation is reverted).
+func TestRegisterShortcutsInstallsSheetsSubcommandHints(t *testing.T) {
+	program := &cobra.Command{Use: "lark-cli"}
+	RegisterShortcuts(program, newRegisterTestFactory(t))
+
+	svc, _, err := program.Find([]string{"sheets"})
+	if err != nil {
+		t.Fatalf("find sheets group: %v", err)
+	}
+	if svc.Args == nil {
+		t.Fatal("sheets group has no Args validator; the prescription hook was not installed")
+	}
+
+	err = svc.Args(svc, []string{"+sheet-add"})
+	var verr *errs.ValidationError
+	if !errors.As(err, &verr) {
+		t.Fatalf("+sheet-add should return the typed prescription, got %T (%v)", err, err)
+	}
+	if !strings.Contains(verr.Hint, "+sheet-create") {
+		t.Errorf("hint should name +sheet-create, got %q", verr.Hint)
+	}
+	if len(verr.Params) != 1 || len(verr.Params[0].Suggestions) != 1 ||
+		verr.Params[0].Suggestions[0] != "+sheet-create" {
+		t.Errorf("+sheet-create should be the sole machine-readable suggestion, got %+v", verr.Params)
+	}
+}

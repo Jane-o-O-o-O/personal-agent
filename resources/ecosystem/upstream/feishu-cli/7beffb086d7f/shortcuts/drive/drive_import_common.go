@@ -1,0 +1,543 @@
+// Copyright (c) 2026 Lark Technologies Pte. Ltd.
+// SPDX-License-Identifier: MIT
+
+package drive
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/larksuite/cli/errs"
+	"github.com/larksuite/cli/internal/validate"
+	"github.com/larksuite/cli/shortcuts/common"
+)
+
+var (
+	driveImportPollAttempts = 30
+	driveImportPollInterval = 2 * time.Second
+)
+
+const (
+	// These limits follow the current product-side import constraints per format.
+	driveImport20MBFileSizeLimit  int64 = 20 * 1024 * 1024
+	driveImport100MBFileSizeLimit int64 = 100 * 1024 * 1024
+	driveImport500MBFileSizeLimit int64 = 500 * 1024 * 1024
+	driveImport600MBFileSizeLimit int64 = 600 * 1024 * 1024
+	driveImport800MBFileSizeLimit int64 = 800 * 1024 * 1024
+
+	driveImportConcurrentOperationHint = "This import conflict means another operation is running in the same Drive location. Run batch imports to the same folder/root or target bitable serially. Wait a few seconds before retrying each failed import; retry each failed item at most 3 times, then stop and report the conflict."
+)
+
+// driveImportExtToDocTypes defines which source file extensions can be imported
+// into which Drive-native document types.
+var driveImportExtToDocTypes = map[string][]string{
+	"docx":     {"docx"},
+	"doc":      {"docx"},
+	"txt":      {"docx"},
+	"md":       {"docx"},
+	"mark":     {"docx"},
+	"markdown": {"docx"},
+	"html":     {"docx"},
+	"xlsx":     {"sheet", "bitable"},
+	"xls":      {"sheet"},
+	"csv":      {"sheet", "bitable"},
+	"base":     {"bitable"},
+	"pptx":     {"slides"},
+}
+
+var driveImportConcurrentOperationCodes = []int{232140101, 232140100, 233523001}
+
+// driveImportSpec contains the user-facing import inputs after normalization.
+type driveImportSpec struct {
+	FilePath    string
+	DocType     string
+	FolderToken string
+	Name        string
+	TargetToken string // existing bitable token to import data into (only for type=bitable)
+
+	// EffectiveExt is a caller-supplied override for the extension otherwise
+	// derived from FilePath (see ImportParams.FileExtension). It lets a caller
+	// that has detected the file's real container correct a mislabeled name
+	// (e.g. an OOXML workbook saved as .xls). Empty means "trust the filename".
+	EffectiveExt string
+}
+
+// rawExtension is the lowercased extension taken verbatim from the file name.
+func (s driveImportSpec) rawExtension() string {
+	return strings.TrimPrefix(strings.ToLower(filepath.Ext(s.FilePath)), ".")
+}
+
+// FileExtension is the extension the import pipeline treats as authoritative:
+// the content-sniffed override when set, otherwise the file name's extension.
+func (s driveImportSpec) FileExtension() string {
+	if s.EffectiveExt != "" {
+		return s.EffectiveExt
+	}
+	return s.rawExtension()
+}
+
+// SourceFileName is the name used when staging the upload media. When content
+// sniffing corrected the extension, the staged name must carry the corrected
+// suffix too: the import backend cross-checks the media file name's extension
+// against the file_extension in the import task and rejects a mismatch with
+// "import file extension not match" (code 1069910).
+func (s driveImportSpec) SourceFileName() string {
+	base := filepath.Base(s.FilePath)
+	if s.EffectiveExt != "" && s.EffectiveExt != s.rawExtension() {
+		base = strings.TrimSuffix(base, filepath.Ext(base)) + "." + s.EffectiveExt
+	}
+	return base
+}
+
+func (s driveImportSpec) TargetFileName() string {
+	return importTargetFileName(s.FilePath, s.Name)
+}
+
+// CreateTaskBody builds the request body expected by /drive/v1/import_tasks.
+func (s driveImportSpec) CreateTaskBody(fileToken string) map[string]interface{} {
+	body := map[string]interface{}{
+		"file_extension": s.FileExtension(),
+		"file_token":     fileToken,
+		"type":           s.DocType,
+		"file_name":      s.TargetFileName(),
+		"point": map[string]interface{}{
+			"mount_type": 1,
+			// The import API treats an empty mount_key as "use the caller's root
+			// folder", so preserve the zero value when --folder-token is omitted.
+			"mount_key": s.FolderToken,
+		},
+	}
+
+	if s.DocType == "bitable" && s.TargetToken != "" {
+		body["token"] = s.TargetToken
+	}
+
+	return body
+}
+
+// uploadMediaForImport uploads the source file to the temporary import media
+// endpoint and returns the file token consumed by import_tasks.
+func uploadMediaForImport(ctx context.Context, runtime *common.RuntimeContext, spec driveImportSpec) (string, error) {
+	filePath := spec.FilePath
+	fileName := spec.SourceFileName()
+	importInfo, err := runtime.FileIO().Stat(filePath)
+	if err != nil {
+		return "", driveInputStatError(err)
+	}
+
+	fileSize := importInfo.Size()
+	if err = validateDriveImportFileSize(spec.FileExtension(), spec.DocType, fileSize); err != nil {
+		return "", err
+	}
+
+	extra, err := buildImportMediaExtra(spec.FileExtension(), spec.DocType)
+	if err != nil {
+		return "", err
+	}
+
+	// TTY-only liveness; see pollDriveImportTask.
+	defer runtime.StartSpinner(fmt.Sprintf("Uploading %s", fileName))()
+
+	if fileSize <= common.MaxDriveMediaUploadSinglePartSize {
+		// upload_all for import works without parent_node; omitting it preserves
+		// the existing root-level import staging behavior.
+		return common.UploadDriveMediaAllTyped(runtime, common.DriveMediaUploadAllConfig{
+			FilePath:   filePath,
+			FileName:   fileName,
+			FileSize:   fileSize,
+			ParentType: "ccm_import_open",
+			Extra:      extra,
+		})
+	}
+
+	// upload_prepare is stricter than upload_all here and expects parent_node to
+	// be sent explicitly, even when import uses the implicit root staging area.
+	return common.UploadDriveMediaMultipartTyped(runtime, common.DriveMediaMultipartUploadConfig{
+		FilePath:   filePath,
+		FileName:   fileName,
+		FileSize:   fileSize,
+		ParentType: "ccm_import_open",
+		ParentNode: "",
+		Extra:      extra,
+	})
+}
+
+func buildImportMediaExtra(ext, docType string) (string, error) {
+	// The import media endpoint uses extra to decide both the target native type
+	// and how to interpret the uploaded source file.
+	extraBytes, err := json.Marshal(map[string]string{
+		"obj_type":       docType,
+		"file_extension": ext,
+	})
+	if err != nil {
+		return "", errs.NewInternalError(errs.SubtypeUnknown, "build upload extra failed: %v", err).WithCause(err)
+	}
+	return string(extraBytes), nil
+}
+
+func driveImportFileSizeLimit(ext, docType string) (int64, bool) {
+	// Keep the limit mapping local to import flows so we do not widen behavior
+	// changes beyond drive +import.
+	switch ext {
+	case "docx", "doc":
+		return driveImport600MBFileSizeLimit, true
+	case "pptx":
+		return driveImport500MBFileSizeLimit, true
+	case "txt", "md", "mark", "markdown", "html", "xls", "base":
+		return driveImport20MBFileSizeLimit, true
+	case "xlsx":
+		return driveImport800MBFileSizeLimit, true
+	case "csv":
+		if docType == "bitable" {
+			return driveImport100MBFileSizeLimit, true
+		}
+		return driveImport20MBFileSizeLimit, true
+	default:
+		return 0, false
+	}
+}
+
+func validateDriveImportFileSize(ext, docType string, fileSize int64) error {
+	limit, ok := driveImportFileSizeLimit(ext, docType)
+	if !ok || fileSize <= limit {
+		return nil
+	}
+
+	if ext == "csv" {
+		// CSV is the only source format whose limit depends on the target type.
+		return errs.NewValidationError(errs.SubtypeInvalidArgument,
+			"file %s exceeds %s import limit for .csv when importing as %s",
+			common.FormatSize(fileSize),
+			common.FormatSize(limit),
+			docType,
+		).WithParam("--file")
+	}
+
+	return errs.NewValidationError(errs.SubtypeInvalidArgument,
+		"file %s exceeds %s import limit for .%s",
+		common.FormatSize(fileSize),
+		common.FormatSize(limit),
+		ext,
+	).WithParam("--file")
+}
+
+// validateDriveImportSpec enforces the CLI-level compatibility rules before any
+// upload or import request is sent to the backend.
+func validateDriveImportSpec(spec driveImportSpec) error {
+	ext := spec.FileExtension()
+	if ext == "" {
+		return errs.NewValidationError(errs.SubtypeInvalidArgument, "file must have an extension (e.g. .md, .docx, .xlsx, .pptx)").WithParam("--file")
+	}
+
+	switch spec.DocType {
+	case "docx", "sheet", "bitable", "slides":
+	default:
+		return errs.NewValidationError(errs.SubtypeInvalidArgument, "unsupported target document type: %s. Supported types are: docx, sheet, bitable, slides", spec.DocType).WithParam("--type")
+	}
+
+	supportedTypes, ok := driveImportExtToDocTypes[ext]
+	if !ok {
+		return errs.NewValidationError(errs.SubtypeInvalidArgument, "unsupported file extension: %s. Supported extensions are: docx, doc, txt, md, mark, markdown, html, xlsx, xls, csv, base, pptx", ext).WithParam("--file")
+	}
+
+	typeAllowed := false
+	// Validate the extension/type pair locally so users get a precise error
+	// before the file upload step.
+	for _, allowedType := range supportedTypes {
+		if allowedType == spec.DocType {
+			typeAllowed = true
+			break
+		}
+	}
+	if !typeAllowed {
+		var hint string
+		switch ext {
+		case "xlsx", "csv":
+			hint = fmt.Sprintf(".%s files can only be imported as 'sheet' or 'bitable', not '%s'", ext, spec.DocType)
+		case "xls":
+			hint = fmt.Sprintf(".xls files can only be imported as 'sheet', not '%s'", spec.DocType)
+		case "base":
+			hint = fmt.Sprintf(".base files can only be imported as 'bitable', not '%s'", spec.DocType)
+		case "pptx":
+			hint = fmt.Sprintf(".pptx files can only be imported as 'slides', not '%s'", spec.DocType)
+		default:
+			hint = fmt.Sprintf(".%s files can only be imported as 'docx', not '%s'", ext, spec.DocType)
+		}
+		return errs.NewValidationError(errs.SubtypeInvalidArgument, "file type mismatch: %s", hint)
+	}
+
+	if strings.TrimSpace(spec.FolderToken) != "" {
+		if err := validate.ResourceName(spec.FolderToken, "--folder-token"); err != nil {
+			return errs.NewValidationError(errs.SubtypeInvalidArgument, "%s", err).WithParam("--folder-token")
+		}
+	}
+
+	if strings.TrimSpace(spec.TargetToken) != "" {
+		if spec.DocType != "bitable" {
+			return errs.NewValidationError(errs.SubtypeInvalidArgument, "--target-token is only supported when --type is bitable").WithParam("--target-token")
+		}
+		if err := validate.ResourceName(spec.TargetToken, "--target-token"); err != nil {
+			return errs.NewValidationError(errs.SubtypeInvalidArgument, "%s", err).WithParam("--target-token")
+		}
+	}
+
+	return nil
+}
+
+func appendDriveImportFolderTokenWikiCheckDryRun(dry *common.DryRunAPI, spec driveImportSpec) {
+	folderToken := strings.TrimSpace(spec.FolderToken)
+	if folderToken == "" {
+		return
+	}
+
+	dry.GET("/open-apis/wiki/v2/spaces/node_by_token").
+		Desc("[0] Validate whether --folder-token is a wiki node").
+		Params(map[string]interface{}{"token": folderToken})
+}
+
+func rejectDriveImportWikiFolderToken(runtime *common.RuntimeContext, folderToken string) error {
+	folderToken = strings.TrimSpace(folderToken)
+	if folderToken == "" {
+		return nil
+	}
+
+	data, err := runtime.CallAPITyped(
+		"GET",
+		"/open-apis/wiki/v2/spaces/node_by_token",
+		map[string]interface{}{"token": folderToken},
+		nil,
+	)
+	if err == nil {
+		node := common.GetMap(data, "node")
+		if len(node) == 0 {
+			return nil
+		}
+
+		return errs.NewValidationError(
+			errs.SubtypeInvalidArgument,
+			"--folder-token only supports Drive folder tokens, but the provided token resolves to a wiki node",
+		).
+			WithParam("--folder-token").
+			WithHint("Pass a Drive folder token, or omit --folder-token to import into the Drive root folder. Wiki node tokens are not accepted as import mount folders.")
+	}
+
+	return nil
+}
+
+// driveImportStatus captures the backend fields needed to decide whether the
+// import can be surfaced immediately or requires a follow-up poll.
+type driveImportStatus struct {
+	Ticket      string
+	DocType     string
+	Token       string
+	URL         string
+	JobErrorMsg string
+	Extra       interface{}
+	JobStatus   int
+}
+
+func (s driveImportStatus) Ready() bool {
+	return s.Token != "" && s.JobStatus == 0
+}
+
+func (s driveImportStatus) Pending() bool {
+	return s.JobStatus == 1 || s.JobStatus == 2 || (s.JobStatus == 0 && s.Token == "")
+}
+
+func (s driveImportStatus) Failed() bool {
+	return !s.Ready() && !s.Pending() && s.JobStatus != 0
+}
+
+func (s driveImportStatus) StatusLabel() string {
+	switch s.JobStatus {
+	case 0:
+		// Some responses report status=0 before the imported token is materialized.
+		// Treat that intermediate state as pending rather than completed.
+		if s.Token == "" {
+			return "pending"
+		}
+		return "success"
+	case 1:
+		return "new"
+	case 2:
+		return "processing"
+	default:
+		return fmt.Sprintf("status_%d", s.JobStatus)
+	}
+}
+
+// driveImportTaskResultCommand prints the resume command returned after bounded
+// polling times out locally.
+func driveImportTaskResultCommand(runtime *common.RuntimeContext, ticket string) string {
+	prefix, identity := driveTaskResultCommandContext(runtime)
+	return fmt.Sprintf("%s drive +task_result --scenario import --ticket %s --as %s", prefix, ticket, identity)
+}
+
+// createDriveImportTask creates the server-side import task after the media
+// upload has produced a reusable file token.
+func createDriveImportTask(runtime *common.RuntimeContext, spec driveImportSpec, fileToken string) (string, error) {
+	data, err := runtime.CallAPITyped("POST", "/open-apis/drive/v1/import_tasks", nil, spec.CreateTaskBody(fileToken))
+	if err != nil {
+		return "", err
+	}
+
+	ticket := common.GetString(data, "ticket")
+	if ticket == "" {
+		return "", errs.NewInternalError(errs.SubtypeInvalidResponse, "no ticket returned from import_tasks")
+	}
+	return ticket, nil
+}
+
+// getDriveImportStatus fetches the current state of an import task by ticket.
+func getDriveImportStatus(runtime *common.RuntimeContext, ticket string) (driveImportStatus, error) {
+	if err := validate.ResourceName(ticket, "--ticket"); err != nil {
+		return driveImportStatus{}, errs.NewValidationError(errs.SubtypeInvalidArgument, "%s", err).WithParam("--ticket")
+	}
+
+	data, err := runtime.CallAPITyped(
+		"GET",
+		fmt.Sprintf("/open-apis/drive/v1/import_tasks/%s", validate.EncodePathSegment(ticket)),
+		nil,
+		nil,
+	)
+	if err != nil {
+		return driveImportStatus{}, err
+	}
+
+	return parseDriveImportStatus(ticket, data), nil
+}
+
+// parseDriveImportStatus accepts either the wrapped API response or an already
+// extracted result object to keep the helper easy to test.
+func parseDriveImportStatus(ticket string, data map[string]interface{}) driveImportStatus {
+	result := common.GetMap(data, "result")
+	if result == nil {
+		// Some tests and helper call sites already pass the unwrapped result body.
+		result = data
+	}
+
+	return driveImportStatus{
+		Ticket:      ticket,
+		DocType:     common.GetString(result, "type"),
+		Token:       common.GetString(result, "token"),
+		URL:         common.GetString(result, "url"),
+		JobErrorMsg: common.GetString(result, "job_error_msg"),
+		Extra:       result["extra"],
+		JobStatus:   int(common.GetFloat(result, "job_status")),
+	}
+}
+
+// driveImportPollSummary reports a poll run that needed retries. Transient
+// status failures are swallowed and retried, so without this a caller cannot
+// tell a clean import from one that limped to the finish line — which is the
+// only decision-relevant part of what the per-attempt stderr lines used to say.
+type driveImportPollSummary struct {
+	Attempts          int
+	TransientFailures int
+	LastError         error
+}
+
+// attach adds the summary to a result payload, but only when retries actually
+// happened, so clean runs keep their existing output shape.
+func (s driveImportPollSummary) attach(out map[string]interface{}) {
+	if s.TransientFailures == 0 {
+		return
+	}
+	summary := map[string]interface{}{
+		"attempts":           s.Attempts,
+		"transient_failures": s.TransientFailures,
+	}
+	if s.LastError != nil {
+		summary["last_error"] = s.LastError.Error()
+	}
+	out["poll"] = summary
+}
+
+// pollDriveImportTask waits for the import to finish within a bounded window
+// and returns the last observed status for resume-on-timeout flows.
+func pollDriveImportTask(runtime *common.RuntimeContext, ticket string) (driveImportStatus, bool, driveImportPollSummary, error) {
+	// Interactive liveness only: StartSpinner is gated on StderrIsTerminal and
+	// is a strict no-op for pipes, CI and captured output, so a bounded poll
+	// stops looking like a hang at a human terminal without putting a byte on
+	// a machine caller's stderr.
+	defer runtime.StartSpinner("Importing")()
+
+	lastStatus := driveImportStatus{Ticket: ticket}
+	var lastErr error
+	hadSuccessfulPoll := false
+	summary := driveImportPollSummary{}
+	for attempt := 1; attempt <= driveImportPollAttempts; attempt++ {
+		if attempt > 1 {
+			time.Sleep(driveImportPollInterval)
+		}
+
+		summary.Attempts = attempt
+		status, err := getDriveImportStatus(runtime, ticket)
+		if err != nil {
+			lastErr = err
+			// Keep polling through transient failures; the count rides out on
+			// the result instead of on stderr.
+			summary.TransientFailures++
+			summary.LastError = err
+			continue
+		}
+		lastStatus = status
+		hadSuccessfulPoll = true
+
+		// Stop immediately on terminal states and otherwise return the last known
+		// status so the caller can expose a follow-up command on timeout.
+		if status.Ready() {
+			return status, true, summary, nil
+		}
+		if status.Failed() {
+			return status, false, summary, driveImportFailureError(status)
+		}
+	}
+	if !hadSuccessfulPoll && lastErr != nil {
+		return lastStatus, false, summary, lastErr
+	}
+
+	return lastStatus, false, summary, nil
+}
+
+func driveImportFailureError(status driveImportStatus) *errs.APIError {
+	msg := strings.TrimSpace(status.JobErrorMsg)
+	if msg == "" {
+		msg = status.StatusLabel()
+	}
+
+	apiErr := errs.NewAPIError(errs.SubtypeServerError, "import failed with status %d: %s", status.JobStatus, msg)
+	if code, ok := driveImportConcurrentOperationCode(msg); ok {
+		apiErr = apiErr.WithCode(code).WithRetryable().WithHint(driveImportConcurrentOperationHint)
+	}
+	return apiErr
+}
+
+func driveImportConcurrentOperationCode(msg string) (int, bool) {
+	for _, code := range driveImportConcurrentOperationCodes {
+		codeText := strconv.Itoa(code)
+		for idx := strings.Index(msg, codeText); idx >= 0; {
+			end := idx + len(codeText)
+			if (idx == 0 || !isASCIIDigit(msg[idx-1])) && (end == len(msg) || !isASCIIDigit(msg[end])) {
+				return code, true
+			}
+
+			nextStart := idx + 1
+			next := strings.Index(msg[nextStart:], codeText)
+			if next < 0 {
+				break
+			}
+			idx = nextStart + next
+		}
+	}
+	return 0, false
+}
+
+func isASCIIDigit(ch byte) bool {
+	return ch >= '0' && ch <= '9'
+}

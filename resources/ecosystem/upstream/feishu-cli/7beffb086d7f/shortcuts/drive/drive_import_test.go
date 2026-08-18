@@ -1,0 +1,803 @@
+// Copyright (c) 2026 Lark Technologies Pte. Ltd.
+// SPDX-License-Identifier: MIT
+
+package drive
+
+import (
+	"context"
+	"encoding/json"
+	"os"
+	"strings"
+	"testing"
+
+	"github.com/spf13/cobra"
+
+	"github.com/larksuite/cli/internal/cmdutil"
+	"github.com/larksuite/cli/internal/core"
+	"github.com/larksuite/cli/internal/httpmock"
+	_ "github.com/larksuite/cli/internal/vfs/localfileio"
+	"github.com/larksuite/cli/shortcuts/common"
+)
+
+// TestImportDefaultFileName verifies filename derivation for supported import sources.
+func TestImportDefaultFileName(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		filePath string
+		want     string
+	}{
+		{
+			name:     "strip xlsx extension",
+			filePath: "/tmp/base-import.xlsx",
+			want:     "base-import",
+		},
+		{
+			name:     "strip last extension only",
+			filePath: "/tmp/report.final.csv",
+			want:     "report.final",
+		},
+		{
+			name:     "keep name without extension",
+			filePath: "/tmp/README",
+			want:     "README",
+		},
+		{
+			name:     "keep hidden file name when trim would be empty",
+			filePath: "/tmp/.env",
+			want:     ".env",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := importDefaultFileName(tt.filePath); got != tt.want {
+				t.Fatalf("importDefaultFileName(%q) = %q, want %q", tt.filePath, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestImportTargetFileName verifies explicit and inferred import target names.
+func TestImportTargetFileName(t *testing.T) {
+	t.Parallel()
+
+	if got := importTargetFileName("/tmp/base-import.xlsx", "custom-name.xlsx"); got != "custom-name.xlsx" {
+		t.Fatalf("explicit name should win, got %q", got)
+	}
+	if got := importTargetFileName("/tmp/base-import.xlsx", ""); got != "base-import" {
+		t.Fatalf("default import name = %q, want %q", got, "base-import")
+	}
+}
+
+// TestDriveImportDryRunUsesExtensionlessDefaultName verifies the default imported document name.
+func TestDriveImportDryRunUsesExtensionlessDefaultName(t *testing.T) {
+	tmpDir := t.TempDir()
+	withDriveWorkingDir(t, tmpDir)
+
+	if err := os.WriteFile("base-import.xlsx", []byte("fake-xlsx"), 0644); err != nil {
+		t.Fatalf("WriteFile() error: %v", err)
+	}
+
+	cmd := &cobra.Command{Use: "drive +import"}
+	cmd.Flags().String("file", "", "")
+	cmd.Flags().String("type", "", "")
+	cmd.Flags().String("folder-token", "", "")
+	cmd.Flags().String("name", "", "")
+	cmd.Flags().String("target-token", "", "")
+	if err := cmd.Flags().Set("file", "./base-import.xlsx"); err != nil {
+		t.Fatalf("set --file: %v", err)
+	}
+	if err := cmd.Flags().Set("type", "bitable"); err != nil {
+		t.Fatalf("set --type: %v", err)
+	}
+	if err := cmd.Flags().Set("folder-token", "fld_test"); err != nil {
+		t.Fatalf("set --folder-token: %v", err)
+	}
+
+	runtime := common.TestNewRuntimeContextWithIdentity(cmd, nil, core.AsBot)
+	dry := DriveImport.DryRun(context.Background(), runtime)
+	if dry == nil {
+		t.Fatal("DryRun returned nil")
+	}
+
+	data, err := json.Marshal(dry)
+	if err != nil {
+		t.Fatalf("marshal dry run: %v", err)
+	}
+
+	var got struct {
+		API []struct {
+			Desc string                 `json:"desc"`
+			URL  string                 `json:"url"`
+			Body map[string]interface{} `json:"body"`
+		} `json:"api"`
+	}
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("unmarshal dry run json: %v", err)
+	}
+	if len(got.API) != 5 {
+		t.Fatalf("expected 5 API calls, got %d", len(got.API))
+	}
+	wantDesc := "After the import result returns the final cloud document target in bot mode, the CLI will also try to grant the current CLI user full_access on it."
+	if got.API[len(got.API)-1].Desc != wantDesc {
+		t.Fatalf("desc = %q, want %q", got.API[len(got.API)-1].Desc, wantDesc)
+	}
+
+	if got.API[0].Body != nil {
+		t.Fatalf("wiki probe should not have a request body, got %#v", got.API[0].Body)
+	}
+
+	uploadName, _ := got.API[1].Body["file_name"].(string)
+	if uploadName != "base-import.xlsx" {
+		t.Fatalf("upload file_name = %q, want %q", uploadName, "base-import.xlsx")
+	}
+
+	if got.API[2].URL != "/open-apis/drive/v1/lark_cli_file_event/report" {
+		t.Fatalf("report URL = %q, want lark_cli_file_event/report", got.API[2].URL)
+	}
+
+	importName, _ := got.API[3].Body["file_name"].(string)
+	if importName != "base-import" {
+		t.Fatalf("import task file_name = %q, want %q", importName, "base-import")
+	}
+}
+
+// TestDriveImportDryRunShowsMultipartUploadForLargeFile verifies the multipart plan for oversized single-part inputs.
+func TestDriveImportDryRunShowsMultipartUploadForLargeFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	withDriveWorkingDir(t, tmpDir)
+
+	fh, err := os.Create("large.xlsx")
+	if err != nil {
+		t.Fatalf("Create() error: %v", err)
+	}
+	if err := fh.Truncate(common.MaxDriveMediaUploadSinglePartSize + 1); err != nil {
+		t.Fatalf("Truncate() error: %v", err)
+	}
+	if err := fh.Close(); err != nil {
+		t.Fatalf("Close() error: %v", err)
+	}
+
+	cmd := &cobra.Command{Use: "drive +import"}
+	cmd.Flags().String("file", "", "")
+	cmd.Flags().String("type", "", "")
+	cmd.Flags().String("folder-token", "", "")
+	cmd.Flags().String("name", "", "")
+	cmd.Flags().String("target-token", "", "")
+	if err := cmd.Flags().Set("file", "./large.xlsx"); err != nil {
+		t.Fatalf("set --file: %v", err)
+	}
+	if err := cmd.Flags().Set("type", "sheet"); err != nil {
+		t.Fatalf("set --type: %v", err)
+	}
+
+	runtime := common.TestNewRuntimeContextWithCtx(context.Background(), cmd, nil)
+	dry := DriveImport.DryRun(context.Background(), runtime)
+	if dry == nil {
+		t.Fatal("DryRun returned nil")
+	}
+
+	data, err := json.Marshal(dry)
+	if err != nil {
+		t.Fatalf("marshal dry run: %v", err)
+	}
+
+	var got struct {
+		API []struct {
+			Method string `json:"method"`
+			URL    string `json:"url"`
+		} `json:"api"`
+	}
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("unmarshal dry run json: %v", err)
+	}
+	if len(got.API) != 6 {
+		t.Fatalf("expected 6 API calls, got %d", len(got.API))
+	}
+	if got.API[0].URL != "/open-apis/drive/v1/medias/upload_prepare" {
+		t.Fatalf("dry-run first URL = %q, want upload_prepare", got.API[0].URL)
+	}
+	if got.API[1].URL != "/open-apis/drive/v1/medias/upload_part" {
+		t.Fatalf("dry-run second URL = %q, want upload_part", got.API[1].URL)
+	}
+	if got.API[2].URL != "/open-apis/drive/v1/medias/upload_finish" {
+		t.Fatalf("dry-run third URL = %q, want upload_finish", got.API[2].URL)
+	}
+	if got.API[3].URL != "/open-apis/drive/v1/lark_cli_file_event/report" {
+		t.Fatalf("report URL = %q, want lark_cli_file_event/report", got.API[3].URL)
+	}
+}
+
+// TestDriveImportDryRunReturnsErrorForUnsafePath verifies rejection of unsafe import paths.
+func TestDriveImportDryRunReturnsErrorForUnsafePath(t *testing.T) {
+	t.Parallel()
+
+	cmd := &cobra.Command{Use: "drive +import"}
+	cmd.Flags().String("file", "", "")
+	cmd.Flags().String("type", "", "")
+	cmd.Flags().String("folder-token", "", "")
+	cmd.Flags().String("name", "", "")
+	cmd.Flags().String("target-token", "", "")
+	if err := cmd.Flags().Set("file", "../outside.md"); err != nil {
+		t.Fatalf("set --file: %v", err)
+	}
+	if err := cmd.Flags().Set("type", "docx"); err != nil {
+		t.Fatalf("set --type: %v", err)
+	}
+
+	runtime := common.TestNewRuntimeContext(cmd, nil)
+	dry := DriveImport.DryRun(context.Background(), runtime)
+	if dry == nil {
+		t.Fatal("DryRun returned nil")
+	}
+
+	data, err := json.Marshal(dry)
+	if err != nil {
+		t.Fatalf("marshal dry run: %v", err)
+	}
+
+	var got struct {
+		API   []struct{} `json:"api"`
+		Error string     `json:"error"`
+	}
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("unmarshal dry run json: %v", err)
+	}
+	if got.Error == "" || !strings.Contains(got.Error, "unsafe file path") {
+		t.Fatalf("dry-run error = %q, want unsafe file path error", got.Error)
+	}
+	if len(got.API) != 0 {
+		t.Fatalf("expected no API calls when preflight fails, got %d", len(got.API))
+	}
+}
+
+// TestDriveImportDryRunReturnsErrorForOversizedMarkdown verifies the Markdown import size limit.
+func TestDriveImportDryRunReturnsErrorForOversizedMarkdown(t *testing.T) {
+	tmpDir := t.TempDir()
+	withDriveWorkingDir(t, tmpDir)
+
+	fh, err := os.Create("large.md")
+	if err != nil {
+		t.Fatalf("Create() error: %v", err)
+	}
+	if err := fh.Truncate(driveImport20MBFileSizeLimit + 5*1024*1024); err != nil {
+		t.Fatalf("Truncate() error: %v", err)
+	}
+	if err := fh.Close(); err != nil {
+		t.Fatalf("Close() error: %v", err)
+	}
+
+	cmd := &cobra.Command{Use: "drive +import"}
+	cmd.Flags().String("file", "", "")
+	cmd.Flags().String("type", "", "")
+	cmd.Flags().String("folder-token", "", "")
+	cmd.Flags().String("name", "", "")
+	cmd.Flags().String("target-token", "", "")
+	if err := cmd.Flags().Set("file", "./large.md"); err != nil {
+		t.Fatalf("set --file: %v", err)
+	}
+	if err := cmd.Flags().Set("type", "docx"); err != nil {
+		t.Fatalf("set --type: %v", err)
+	}
+
+	runtime := common.TestNewRuntimeContextWithCtx(context.Background(), cmd, nil)
+	dry := DriveImport.DryRun(context.Background(), runtime)
+	if dry == nil {
+		t.Fatal("DryRun returned nil")
+	}
+
+	data, err := json.Marshal(dry)
+	if err != nil {
+		t.Fatalf("marshal dry run: %v", err)
+	}
+
+	var got struct {
+		API   []struct{} `json:"api"`
+		Error string     `json:"error"`
+	}
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("unmarshal dry run json: %v", err)
+	}
+	if got.Error == "" || !strings.Contains(got.Error, "exceeds 20.0 MB import limit for .md") {
+		t.Fatalf("dry-run error = %q, want oversized markdown error", got.Error)
+	}
+	if len(got.API) != 0 {
+		t.Fatalf("expected no API calls when size preflight fails, got %d", len(got.API))
+	}
+}
+
+// TestDriveImportDryRunReturnsErrorForDirectoryInput verifies rejection of directory inputs.
+func TestDriveImportDryRunReturnsErrorForDirectoryInput(t *testing.T) {
+	tmpDir := t.TempDir()
+	withDriveWorkingDir(t, tmpDir)
+
+	if err := os.Mkdir("folder-input", 0755); err != nil {
+		t.Fatalf("Mkdir() error: %v", err)
+	}
+
+	cmd := &cobra.Command{Use: "drive +import"}
+	cmd.Flags().String("file", "", "")
+	cmd.Flags().String("type", "", "")
+	cmd.Flags().String("folder-token", "", "")
+	cmd.Flags().String("name", "", "")
+	cmd.Flags().String("target-token", "", "")
+	if err := cmd.Flags().Set("file", "./folder-input"); err != nil {
+		t.Fatalf("set --file: %v", err)
+	}
+	if err := cmd.Flags().Set("type", "docx"); err != nil {
+		t.Fatalf("set --type: %v", err)
+	}
+
+	runtime := common.TestNewRuntimeContextWithCtx(context.Background(), cmd, nil)
+	dry := DriveImport.DryRun(context.Background(), runtime)
+	if dry == nil {
+		t.Fatal("DryRun returned nil")
+	}
+
+	data, err := json.Marshal(dry)
+	if err != nil {
+		t.Fatalf("marshal dry run: %v", err)
+	}
+
+	var got struct {
+		API   []struct{} `json:"api"`
+		Error string     `json:"error"`
+	}
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("unmarshal dry run json: %v", err)
+	}
+	if got.Error == "" || !strings.Contains(got.Error, "file must be a regular file") {
+		t.Fatalf("dry-run error = %q, want regular file error", got.Error)
+	}
+	if len(got.API) != 0 {
+		t.Fatalf("expected no API calls when file type preflight fails, got %d", len(got.API))
+	}
+}
+
+// TestDriveImportCreateTaskBodyKeepsEmptyMountKeyForRoot verifies the root import task contract.
+func TestDriveImportCreateTaskBodyKeepsEmptyMountKeyForRoot(t *testing.T) {
+	t.Parallel()
+
+	spec := driveImportSpec{
+		FilePath: "/tmp/README.md",
+		DocType:  "docx",
+	}
+
+	body := spec.CreateTaskBody("file_token_test")
+	point, ok := body["point"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("point = %#v, want map", body["point"])
+	}
+
+	raw, exists := point["mount_key"]
+	if !exists {
+		t.Fatal("mount_key missing; want empty string for root import")
+	}
+	got, ok := raw.(string)
+	if !ok {
+		t.Fatalf("mount_key type = %T, want string", raw)
+	}
+	if got != "" {
+		t.Fatalf("mount_key = %q, want empty string for root import", got)
+	}
+
+	spec.FolderToken = "fld_test"
+	body = spec.CreateTaskBody("file_token_test")
+	point, ok = body["point"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("point = %#v, want map", body["point"])
+	}
+	if got, _ := point["mount_key"].(string); got != "fld_test" {
+		t.Fatalf("mount_key = %q, want %q", got, "fld_test")
+	}
+}
+
+// TestDriveImportCreateTaskBodyWithTargetToken verifies Base import task targeting.
+func TestDriveImportCreateTaskBodyWithTargetToken(t *testing.T) {
+	t.Parallel()
+
+	spec := driveImportSpec{
+		FilePath:    "/tmp/data.xlsx",
+		DocType:     "bitable",
+		TargetToken: "bascnxxxxx",
+	}
+
+	body := spec.CreateTaskBody("file_token_test")
+
+	// point stays the same as default (mount_type=1)
+	point, ok := body["point"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("point = %#v, want map", body["point"])
+	}
+	if mt := point["mount_type"]; mt != float64(1) && mt != 1 {
+		t.Fatalf("mount_type = %v (%T), want 1", mt, mt)
+	}
+
+	// token is injected at body top-level
+	if tt, _ := body["token"].(string); tt != "bascnxxxxx" {
+		t.Fatalf("token = %q, want %q", tt, "bascnxxxxx")
+	}
+}
+
+// TestDriveImportCreateTaskBodyTargetTokenIgnoredForNonBitable verifies that only Base imports use target tokens.
+func TestDriveImportCreateTaskBodyTargetTokenIgnoredForNonBitable(t *testing.T) {
+	t.Parallel()
+
+	spec := driveImportSpec{
+		FilePath:    "/tmp/data.xlsx",
+		DocType:     "sheet",
+		TargetToken: "bascnxxxxx",
+		FolderToken: "fld_test",
+	}
+
+	body := spec.CreateTaskBody("file_token_test")
+	point, ok := body["point"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("point = %#v, want map", body["point"])
+	}
+
+	// Non-bitable should use default folder mount (type=1), ignoring TargetToken
+	if mt := point["mount_type"]; mt != float64(1) && mt != 1 {
+		t.Fatalf("mount_type = %v (%T), want 1 (folder mount)", mt, mt)
+	}
+	if _, exists := point["target_token"]; exists {
+		t.Fatal("target_token should not be present for non-bitable type")
+	}
+}
+
+// TestDriveImportDryRunWithTargetToken verifies that a target token is preserved in the import plan.
+func TestDriveImportDryRunWithTargetToken(t *testing.T) {
+	tmpDir := t.TempDir()
+	withDriveWorkingDir(t, tmpDir)
+
+	if err := os.WriteFile("data.xlsx", []byte("fake-xlsx"), 0644); err != nil {
+		t.Fatalf("WriteFile() error: %v", err)
+	}
+
+	cmd := &cobra.Command{Use: "drive +import"}
+	cmd.Flags().String("file", "", "")
+	cmd.Flags().String("type", "", "")
+	cmd.Flags().String("folder-token", "", "")
+	cmd.Flags().String("name", "", "")
+	cmd.Flags().String("target-token", "", "")
+	if err := cmd.Flags().Set("file", "./data.xlsx"); err != nil {
+		t.Fatalf("set --file: %v", err)
+	}
+	if err := cmd.Flags().Set("type", "bitable"); err != nil {
+		t.Fatalf("set --type: %v", err)
+	}
+	if err := cmd.Flags().Set("target-token", "bascntarget123"); err != nil {
+		t.Fatalf("set --target-token: %v", err)
+	}
+
+	runtime := common.TestNewRuntimeContextWithCtx(context.Background(), cmd, nil)
+	dry := DriveImport.DryRun(context.Background(), runtime)
+	if dry == nil {
+		t.Fatal("DryRun returned nil")
+	}
+
+	data, err := json.Marshal(dry)
+	if err != nil {
+		t.Fatalf("marshal dry run: %v", err)
+	}
+
+	var got struct {
+		API []struct {
+			URL  string                 `json:"url"`
+			Body map[string]interface{} `json:"body"`
+		} `json:"api"`
+	}
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("unmarshal dry run json: %v", err)
+	}
+	if len(got.API) != 4 {
+		t.Fatalf("expected 4 API calls, got %d", len(got.API))
+	}
+
+	if got.API[1].URL != "/open-apis/drive/v1/lark_cli_file_event/report" {
+		t.Fatalf("report URL = %q, want lark_cli_file_event/report", got.API[1].URL)
+	}
+
+	// The import task body (API[2]) should contain target_token in point.
+	importTaskBody := got.API[2].Body
+	point, ok := importTaskBody["point"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("point = %#v, want map", importTaskBody["point"])
+	}
+	if mt := point["mount_type"]; mt != float64(1) && mt != 1 {
+		t.Fatalf("dry-run mount_type = %v (%T), want 1 (unchanged)", mt, mt)
+	}
+	if tt, _ := importTaskBody["token"].(string); tt != "bascntarget123" {
+		t.Fatalf("dry-run token = %q, want %q", tt, "bascntarget123")
+	}
+}
+
+// TestDriveImportDryRunTargetTokenRejectedForSheet verifies target-token validation for sheet imports.
+func TestDriveImportDryRunTargetTokenRejectedForSheet(t *testing.T) {
+	tmpDir := t.TempDir()
+	withDriveWorkingDir(t, tmpDir)
+
+	if err := os.WriteFile("data.xlsx", []byte("fake-xlsx"), 0644); err != nil {
+		t.Fatalf("WriteFile() error: %v", err)
+	}
+
+	cmd := &cobra.Command{Use: "drive +import"}
+	cmd.Flags().String("file", "", "")
+	cmd.Flags().String("type", "", "")
+	cmd.Flags().String("folder-token", "", "")
+	cmd.Flags().String("name", "", "")
+	cmd.Flags().String("target-token", "", "")
+	if err := cmd.Flags().Set("file", "./data.xlsx"); err != nil {
+		t.Fatalf("set --file: %v", err)
+	}
+	if err := cmd.Flags().Set("type", "sheet"); err != nil {
+		t.Fatalf("set --type: %v", err)
+	}
+	if err := cmd.Flags().Set("target-token", "bascnxxx"); err != nil {
+		t.Fatalf("set --target-token: %v", err)
+	}
+
+	runtime := common.TestNewRuntimeContextWithCtx(context.Background(), cmd, nil)
+	dry := DriveImport.DryRun(context.Background(), runtime)
+	if dry == nil {
+		t.Fatal("DryRun returned nil")
+	}
+
+	data, err := json.Marshal(dry)
+	if err != nil {
+		t.Fatalf("marshal dry run: %v", err)
+	}
+
+	var got struct {
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if got.Error == "" || !strings.Contains(got.Error, "--target-token is only supported when --type is bitable") {
+		t.Fatalf("dry-run error = %q, want target-token validation error", got.Error)
+	}
+}
+
+// driveImportMockEnv mounts the three stubs needed for a full +import run:
+// media upload_all -> import_tasks (create) -> import_tasks/<ticket> (poll).
+// Returns nothing; caller asserts on stdout via decodeDriveEnvelope.
+func driveImportMockEnv(t *testing.T, reg *httpmock.Registry, ticket string, pollData map[string]interface{}) {
+	t.Helper()
+	reg.Register(&httpmock.Stub{
+		Method: "POST",
+		URL:    "/open-apis/drive/v1/medias/upload_all",
+		Body: map[string]interface{}{
+			"code": 0, "msg": "ok",
+			"data": map[string]interface{}{"file_token": "file_import_media"},
+		},
+	})
+	reg.Register(&httpmock.Stub{
+		Method: "POST",
+		URL:    "/open-apis/drive/v1/import_tasks",
+		Body: map[string]interface{}{
+			"code": 0, "msg": "ok",
+			"data": map[string]interface{}{"ticket": ticket},
+		},
+	})
+	reg.Register(&httpmock.Stub{
+		Method: "GET",
+		URL:    "/open-apis/drive/v1/import_tasks/" + ticket,
+		Body: map[string]interface{}{
+			"code": 0, "msg": "ok",
+			"data": map[string]interface{}{"result": pollData},
+		},
+	})
+}
+
+// driveImportTestConfig builds a CliConfig for the import fallback tests.
+// The brand defaults to BrandFeishu when omitted; pass core.BrandLark to
+// exercise the larksuite.com branch of BuildResourceURL.
+func driveImportTestConfig(suffix string, brands ...core.LarkBrand) *core.CliConfig {
+	brand := core.BrandFeishu
+	if len(brands) > 0 {
+		brand = brands[0]
+	}
+	return &core.CliConfig{
+		AppID:     "drive-import-fallback-" + suffix,
+		AppSecret: "test-secret",
+		Brand:     brand,
+	}
+}
+
+// TestDriveImportFallbackURLWhenBackendOmitsIt verifies client-side URL construction.
+func TestDriveImportFallbackURLWhenBackendOmitsIt(t *testing.T) {
+	f, stdout, _, reg := cmdutil.TestFactory(t, driveImportTestConfig("missing-url"))
+	driveImportMockEnv(t, reg, "ticket_fallback", map[string]interface{}{
+		"token":      "doxcn_imported",
+		"type":       "docx",
+		"job_status": float64(0),
+		// "url" deliberately omitted: import API frequently returns the doc
+		// without an absolute URL, leaving the CLI to backfill from token.
+	})
+
+	tmpDir := t.TempDir()
+	origDir, _ := os.Getwd()
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("Chdir: %v", err)
+	}
+	defer os.Chdir(origDir)
+	if err := os.WriteFile("notes.md", []byte("# Hi"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	if err := mountAndRunDrive(t, DriveImport, []string{
+		"+import", "--file", "notes.md", "--type", "docx", "--as", "user",
+	}, f, stdout); err != nil {
+		t.Fatalf("import should succeed, got: %v", err)
+	}
+
+	data := decodeDriveEnvelope(t, stdout)
+	if got, want := data["url"], "https://www.feishu.cn/docx/doxcn_imported"; got != want {
+		t.Fatalf("data.url = %#v, want %q (brand-standard fallback)", got, want)
+	}
+}
+
+// TestDriveImportPreservesBackendURL verifies that a server-provided URL is returned unchanged.
+func TestDriveImportPreservesBackendURL(t *testing.T) {
+	f, stdout, _, reg := cmdutil.TestFactory(t, driveImportTestConfig("preserve-url"))
+	driveImportMockEnv(t, reg, "ticket_preserve", map[string]interface{}{
+		"token":      "doxcn_imported",
+		"type":       "docx",
+		"job_status": float64(0),
+		"url":        "https://tenant.larkoffice.com/docx/doxcn_imported",
+	})
+
+	tmpDir := t.TempDir()
+	origDir, _ := os.Getwd()
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("Chdir: %v", err)
+	}
+	defer os.Chdir(origDir)
+	if err := os.WriteFile("notes.md", []byte("# Hi"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	if err := mountAndRunDrive(t, DriveImport, []string{
+		"+import", "--file", "notes.md", "--type", "docx", "--as", "user",
+	}, f, stdout); err != nil {
+		t.Fatalf("import should succeed, got: %v", err)
+	}
+
+	data := decodeDriveEnvelope(t, stdout)
+	if got, want := data["url"], "https://tenant.larkoffice.com/docx/doxcn_imported"; got != want {
+		t.Fatalf("data.url = %#v, want backend tenant URL %q (fallback must not overwrite)", got, want)
+	}
+}
+
+// TestDriveImportFallbackURLWhenServerURLIsWhitespace verifies fallback for blank server URLs.
+func TestDriveImportFallbackURLWhenServerURLIsWhitespace(t *testing.T) {
+	f, stdout, _, reg := cmdutil.TestFactory(t, driveImportTestConfig("whitespace-url"))
+	driveImportMockEnv(t, reg, "ticket_whitespace", map[string]interface{}{
+		"token":      "doxcn_imported",
+		"type":       "docx",
+		"job_status": float64(0),
+		"url":        "   ", // whitespace-only must trigger fallback, not pass through.
+	})
+
+	tmpDir := t.TempDir()
+	origDir, _ := os.Getwd()
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("Chdir: %v", err)
+	}
+	defer os.Chdir(origDir)
+	if err := os.WriteFile("notes.md", []byte("# Hi"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	if err := mountAndRunDrive(t, DriveImport, []string{
+		"+import", "--file", "notes.md", "--type", "docx", "--as", "user",
+	}, f, stdout); err != nil {
+		t.Fatalf("import should succeed, got: %v", err)
+	}
+
+	data := decodeDriveEnvelope(t, stdout)
+	if got, want := data["url"], "https://www.feishu.cn/docx/doxcn_imported"; got != want {
+		t.Fatalf("data.url = %#v, want %q (whitespace-only backend URL must yield fallback)", got, want)
+	}
+}
+
+// TestDriveImportFallbackURLForLarkBrand verifies fallback URL construction for Lark tenants.
+func TestDriveImportFallbackURLForLarkBrand(t *testing.T) {
+	f, stdout, _, reg := cmdutil.TestFactory(t, driveImportTestConfig("lark-brand", core.BrandLark))
+	driveImportMockEnv(t, reg, "ticket_lark", map[string]interface{}{
+		"token":      "doxcn_imported",
+		"type":       "docx",
+		"job_status": float64(0),
+		// "url" omitted to force the fallback through the lark host branch.
+	})
+
+	tmpDir := t.TempDir()
+	origDir, _ := os.Getwd()
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("Chdir: %v", err)
+	}
+	defer os.Chdir(origDir)
+	if err := os.WriteFile("notes.md", []byte("# Hi"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	if err := mountAndRunDrive(t, DriveImport, []string{
+		"+import", "--file", "notes.md", "--type", "docx", "--as", "user",
+	}, f, stdout); err != nil {
+		t.Fatalf("import should succeed, got: %v", err)
+	}
+
+	data := decodeDriveEnvelope(t, stdout)
+	if got, want := data["url"], "https://www.larksuite.com/docx/doxcn_imported"; got != want {
+		t.Fatalf("data.url = %#v, want %q (lark brand fallback)", got, want)
+	}
+}
+
+// TestDriveImportFallbackURLWhenServerTypeIsAlias verifies normalization of server document-type aliases.
+func TestDriveImportFallbackURLWhenServerTypeIsAlias(t *testing.T) {
+	f, stdout, _, reg := cmdutil.TestFactory(t, driveImportTestConfig("alias-type"))
+	driveImportMockEnv(t, reg, "ticket_alias", map[string]interface{}{
+		"token":      "shtcn_imported",
+		"type":       "sheets", // non-canonical alias the server may return
+		"job_status": float64(0),
+	})
+
+	tmpDir := t.TempDir()
+	origDir, _ := os.Getwd()
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("Chdir: %v", err)
+	}
+	defer os.Chdir(origDir)
+	if err := os.WriteFile("data.csv", []byte("a,b\n1,2\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	if err := mountAndRunDrive(t, DriveImport, []string{
+		"+import", "--file", "data.csv", "--type", "sheet", "--as", "user",
+	}, f, stdout); err != nil {
+		t.Fatalf("import should succeed, got: %v", err)
+	}
+
+	data := decodeDriveEnvelope(t, stdout)
+	// Server returned "sheets" (alias) — normalize falls back to the user
+	// --type "sheet", so BuildResourceURL picks the canonical /sheets/ path.
+	if got, want := data["url"], "https://www.feishu.cn/sheets/shtcn_imported"; got != want {
+		t.Fatalf("data.url = %#v, want %q (alias normalized via spec.DocType fallback)", got, want)
+	}
+}
+
+// TestDriveImportFallbackURLForSlides verifies fallback URL construction for imported slides.
+func TestDriveImportFallbackURLForSlides(t *testing.T) {
+	f, stdout, _, reg := cmdutil.TestFactory(t, driveImportTestConfig("slides"))
+	driveImportMockEnv(t, reg, "ticket_slides", map[string]interface{}{
+		"token":      "sldcn_imported",
+		"type":       "slides",
+		"job_status": float64(0),
+	})
+
+	tmpDir := t.TempDir()
+	origDir, _ := os.Getwd()
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("Chdir: %v", err)
+	}
+	defer os.Chdir(origDir)
+	if err := os.WriteFile("deck.pptx", []byte("fake-pptx"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	if err := mountAndRunDrive(t, DriveImport, []string{
+		"+import", "--file", "deck.pptx", "--type", "slides", "--as", "user",
+	}, f, stdout); err != nil {
+		t.Fatalf("import should succeed, got: %v", err)
+	}
+
+	data := decodeDriveEnvelope(t, stdout)
+	if got, want := data["url"], "https://www.feishu.cn/slides/sldcn_imported"; got != want {
+		t.Fatalf("data.url = %#v, want %q (slides fallback)", got, want)
+	}
+}

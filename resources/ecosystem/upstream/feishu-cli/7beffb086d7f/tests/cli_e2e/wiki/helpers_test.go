@@ -1,0 +1,691 @@
+// Copyright (c) 2026 Lark Technologies Pte. Ltd.
+// SPDX-License-Identifier: MIT
+
+package wiki
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"strings"
+	"testing"
+	"time"
+
+	clie2e "github.com/larksuite/cli/tests/cli_e2e"
+	"github.com/stretchr/testify/require"
+	"github.com/tidwall/gjson"
+)
+
+func createWikiNode(t *testing.T, parentT *testing.T, ctx context.Context, spaceID string, data map[string]any) (gjson.Result, *clie2e.Result, error) {
+	t.Helper()
+
+	result, err := clie2e.RunCmd(ctx, clie2e.Request{
+		Args:      []string{"api", "post", "/open-apis/wiki/v2/spaces/" + spaceID + "/nodes"},
+		DefaultAs: "bot",
+		Data:      data,
+	})
+	if err != nil || result.ExitCode != 0 {
+		return gjson.Result{}, result, err
+	}
+
+	node := gjson.Get(result.Stdout, "data.node")
+	require.True(t, node.Exists(), "stdout:\n%s", result.Stdout)
+
+	nodeToken := node.Get("node_token").String()
+	require.NotEmpty(t, nodeToken, "stdout:\n%s", result.Stdout)
+	objType := node.Get("obj_type").String()
+	parentT.Cleanup(func() {
+		cleanupCtx, cancel := clie2e.CleanupContext()
+		defer cancel()
+
+		deleteResult, deleteErr := deleteWikiNodeAndVerify(cleanupCtx, spaceID, nodeToken, objType)
+		clie2e.ReportCleanupFailure(parentT, "delete wiki node "+nodeToken, deleteResult, deleteErr)
+	})
+
+	return node, result, nil
+}
+
+// createWikiNodeUnderAnyHost creates an isolated parent under an existing
+// my_library root node. It avoids adding test nodes directly at the root level,
+// whose single-layer limit is easy to exhaust when cleanup regresses. If the
+// library is empty, it creates one reusable root host and keeps it for future
+// test runs.
+func createWikiNodeUnderAnyHost(t *testing.T, parentT *testing.T, ctx context.Context, title string) (gjson.Result, gjson.Result) {
+	t.Helper()
+
+	hosts := listWikiRootHosts(t, ctx)
+	if len(hosts) == 0 {
+		hosts = append(hosts, createWikiRootHost(t, ctx))
+	}
+
+	var layerLimitResults []string
+	for _, host := range hosts {
+		spaceID := host.Get("space_id").String()
+		hostNodeToken := host.Get("node_token").String()
+		if spaceID == "" || hostNodeToken == "" {
+			continue
+		}
+		node, result, err := createWikiNode(t, parentT, ctx, spaceID, map[string]any{
+			"node_type":         "origin",
+			"obj_type":          "docx",
+			"title":             title,
+			"parent_node_token": hostNodeToken,
+		})
+		if err == nil && result.ExitCode == 0 {
+			return host, node
+		}
+		if isWikiLayerLimitResult(result) {
+			layerLimitResults = append(layerLimitResults, fmt.Sprintf("host=%s stdout=%s stderr=%s", hostNodeToken, result.Stdout, result.Stderr))
+			continue
+		}
+		require.NoError(t, err)
+		require.Failf(t, "create wiki node under host failed", "host=%s exit=%d stdout=%s stderr=%s", hostNodeToken, result.ExitCode, result.Stdout, result.Stderr)
+	}
+	require.Failf(t, "create wiki node under host failed", "all candidate hosts hit the single-layer node limit:\n%s", strings.Join(layerLimitResults, "\n"))
+	return gjson.Result{}, gjson.Result{}
+}
+
+func createWikiRootHost(t *testing.T, ctx context.Context) gjson.Result {
+	t.Helper()
+
+	result, err := clie2e.RunCmdWithRetry(ctx, clie2e.Request{
+		Args:      []string{"api", "post", "/open-apis/wiki/v2/spaces/my_library/nodes"},
+		DefaultAs: "bot",
+		Data: map[string]any{
+			"node_type": "origin",
+			"obj_type":  "docx",
+			"title":     "lark-cli-e2e-wiki-host",
+		},
+	}, clie2e.RetryOptions{})
+	require.NoError(t, err)
+	result.AssertExitCode(t, 0)
+	result.AssertStdoutStatus(t, true)
+
+	host := gjson.Get(result.Stdout, "data.node")
+	require.True(t, host.Exists(), "stdout:\n%s", result.Stdout)
+	require.NotEmpty(t, host.Get("space_id").String(), "stdout:\n%s", result.Stdout)
+	require.NotEmpty(t, host.Get("node_token").String(), "stdout:\n%s", result.Stdout)
+	return host
+}
+
+func listWikiRootHosts(t *testing.T, ctx context.Context) []gjson.Result {
+	t.Helper()
+
+	var hosts []gjson.Result
+	pageToken := ""
+	seenPageTokens := map[string]struct{}{}
+	for {
+		params := map[string]any{"page_size": 50}
+		if pageToken != "" {
+			if _, exists := seenPageTokens[pageToken]; exists {
+				t.Fatalf("wiki root host pagination loop detected for page_token %q", pageToken)
+			}
+			seenPageTokens[pageToken] = struct{}{}
+			params["page_token"] = pageToken
+		}
+
+		listResult, err := clie2e.RunCmdWithRetry(ctx, clie2e.Request{
+			Args:      []string{"api", "get", "/open-apis/wiki/v2/spaces/my_library/nodes"},
+			DefaultAs: "bot",
+			Params:    params,
+		}, clie2e.RetryOptions{})
+		require.NoError(t, err)
+		listResult.AssertExitCode(t, 0)
+		listResult.AssertStdoutStatus(t, true)
+
+		parsed := gjson.Parse(listResult.Stdout)
+		hosts = append(hosts, parsed.Get("data.items").Array()...)
+
+		pageToken = parsed.Get("data.page_token").String()
+		if pageToken == "" || !parsed.Get("data.has_more").Bool() {
+			return hosts
+		}
+	}
+}
+
+func isWikiLayerLimitResult(result *clie2e.Result) bool {
+	if result == nil {
+		return false
+	}
+	combined := result.Stdout + "\n" + result.Stderr
+	return strings.Contains(combined, "131003") ||
+		strings.Contains(strings.ToLower(combined), "single-layer nodes")
+}
+
+func getWikiNode(t *testing.T, ctx context.Context, nodeToken string) gjson.Result {
+	t.Helper()
+
+	result, err := clie2e.RunCmd(ctx, clie2e.Request{
+		Args:      []string{"api", "get", "/open-apis/wiki/v2/spaces/get_node"},
+		DefaultAs: "bot",
+		Params:    map[string]any{"token": nodeToken},
+	})
+	require.NoError(t, err)
+	result.AssertExitCode(t, 0)
+	result.AssertStdoutStatus(t, true)
+
+	node := gjson.Get(result.Stdout, "data.node")
+	require.True(t, node.Exists(), "stdout:\n%s", result.Stdout)
+	return node
+}
+
+func getWikiSpace(t *testing.T, ctx context.Context, spaceID string) gjson.Result {
+	t.Helper()
+
+	result, err := clie2e.RunCmd(ctx, clie2e.Request{
+		Args:      []string{"api", "get", "/open-apis/wiki/v2/spaces/" + spaceID},
+		DefaultAs: "bot",
+	})
+	require.NoError(t, err)
+	result.AssertExitCode(t, 0)
+	result.AssertStdoutStatus(t, true)
+
+	space := gjson.Get(result.Stdout, "data.space")
+	require.True(t, space.Exists(), "stdout:\n%s", result.Stdout)
+	return space
+}
+
+func listWikiSpaces(t *testing.T, ctx context.Context, pageSize int) gjson.Result {
+	t.Helper()
+
+	result, err := clie2e.RunCmd(ctx, clie2e.Request{
+		Args:      []string{"api", "get", "/open-apis/wiki/v2/spaces"},
+		DefaultAs: "bot",
+		Params:    map[string]any{"page_size": pageSize},
+	})
+	require.NoError(t, err)
+	result.AssertExitCode(t, 0)
+	result.AssertStdoutStatus(t, true)
+	return gjson.Parse(result.Stdout)
+}
+
+type wikiNodeInfo struct {
+	NodeToken string
+	ObjType   string
+}
+
+const (
+	wikiDeleteVisibilityTimeout = 30 * time.Second
+	wikiDeleteVisibilityPoll    = 3 * time.Second
+)
+
+// deleteWikiNodeAndVerify removes a wiki node, then polls get_node until the
+// original node token is gone. Wiki cleanup cannot use drive +delete because
+// wiki origin nodes need the backing obj_token and parent nodes must delete
+// children first.
+func deleteWikiNodeAndVerify(ctx context.Context, spaceID, nodeToken, objType string) (*clie2e.Result, error) {
+	getResult, getErr := clie2e.RunCmdWithRetry(ctx, clie2e.Request{
+		Args:      []string{"api", "get", "/open-apis/wiki/v2/spaces/get_node"},
+		DefaultAs: "bot",
+		Params:    map[string]any{"token": nodeToken},
+	}, clie2e.RetryOptions{})
+	if getErr != nil {
+		return getResult, getErr
+	}
+	if getResult == nil {
+		return nil, fmt.Errorf("get wiki node %s before delete returned nil result", nodeToken)
+	}
+	if getResult.ExitCode != 0 || !wikiAPISuccess(getResult.Stdout) {
+		if isWikiNodeDeletedResult(getResult) {
+			getResult.ExitCode = 0
+			getResult.RunErr = nil
+			return getResult, nil
+		}
+		return getResult, fmt.Errorf("get wiki node %s before delete failed: exit=%d stdout=%s stderr=%s", nodeToken, getResult.ExitCode, getResult.Stdout, getResult.Stderr)
+	}
+
+	if wikiGetNodeIdentity(getResult.Stdout, nodeToken) == wikiNodeIdentityDifferent {
+		// get_node resolved the token to a different entity (e.g. after
+		// wiki +move-to-drive); the original wiki node is already gone.
+		// An indeterminate identity (missing node payload) falls through so
+		// cleanup still attempts the delete instead of leaking a real node.
+		return getResult, nil
+	}
+
+	node := gjson.Get(getResult.Stdout, "data.node")
+	originalNodeToken := nodeToken
+	if resolvedSpaceID := node.Get("space_id").String(); resolvedSpaceID != "" {
+		spaceID = resolvedSpaceID
+	}
+	if resolvedObjType := node.Get("obj_type").String(); resolvedObjType != "" {
+		objType = resolvedObjType
+	}
+	if objType == "" {
+		objType = "docx"
+	}
+
+	children, childListResult, childListErr := listWikiNodeChildren(ctx, spaceID, originalNodeToken)
+	if childListErr != nil || childListResult == nil || childListResult.ExitCode != 0 {
+		return childListResult, childListErr
+	}
+	for _, child := range children {
+		childDeleteResult, childDeleteErr := deleteWikiNodeAndVerify(ctx, spaceID, child.NodeToken, child.ObjType)
+		if childDeleteErr != nil || childDeleteResult == nil || (childDeleteResult.ExitCode != 0 && !isWikiNodeDeletedResult(childDeleteResult)) {
+			return childDeleteResult, childDeleteErr
+		}
+	}
+
+	deleteToken, objType := wikiDeleteTarget(node, originalNodeToken, objType)
+
+	deleteResult, deleteErr := clie2e.RunCmdWithRetry(ctx, clie2e.Request{
+		Args:      []string{"api", "delete", "/open-apis/wiki/v2/spaces/" + spaceID + "/nodes/" + deleteToken},
+		DefaultAs: "bot",
+		Data:      map[string]any{"obj_type": objType},
+	}, clie2e.RetryOptions{})
+	if deleteErr != nil || deleteResult == nil {
+		return deleteResult, deleteErr
+	}
+	if deleteResult.ExitCode != 0 || !wikiAPISuccess(deleteResult.Stdout) {
+		deleted, verifyErr := isWikiNodeDeleted(ctx, originalNodeToken)
+		if verifyErr != nil {
+			return deleteResult, verifyErr
+		}
+		if deleted {
+			deleteResult.ExitCode = 0
+			return deleteResult, nil
+		}
+		return deleteResult, fmt.Errorf("wiki node %s still exists after delete failed: exit=%d stdout=%s stderr=%s", originalNodeToken, deleteResult.ExitCode, deleteResult.Stdout, deleteResult.Stderr)
+	}
+	if err := waitWikiNodeDeleted(ctx, originalNodeToken); err != nil {
+		return deleteResult, err
+	}
+	return deleteResult, nil
+}
+
+// wikiDeleteTarget returns the token kind expected by the delete-node API.
+// Origin nodes are addressed by their backing object token and object type;
+// shortcut nodes are addressed by their Wiki node token and obj_type=wiki.
+func wikiDeleteTarget(node gjson.Result, nodeToken, fallbackObjType string) (string, string) {
+	if node.Get("node_type").String() == "shortcut" {
+		return nodeToken, "wiki"
+	}
+	if objToken := node.Get("obj_token").String(); objToken != "" {
+		nodeToken = objToken
+	}
+	if objType := node.Get("obj_type").String(); objType != "" {
+		fallbackObjType = objType
+	}
+	return nodeToken, fallbackObjType
+}
+
+func TestWikiDeleteTarget(t *testing.T) {
+	tests := []struct {
+		name        string
+		nodeJSON    string
+		nodeToken   string
+		objType     string
+		wantToken   string
+		wantObjType string
+	}{
+		{
+			name:        "origin uses backing object",
+			nodeJSON:    `{"node_type":"origin","node_token":"wikcnOrigin","obj_token":"docxOrigin","obj_type":"docx"}`,
+			nodeToken:   "wikcnOrigin",
+			objType:     "docx",
+			wantToken:   "docxOrigin",
+			wantObjType: "docx",
+		},
+		{
+			name:        "shortcut uses wiki node",
+			nodeJSON:    `{"node_type":"shortcut","node_token":"wikcnShortcut","obj_token":"boxcnFile","obj_type":"file"}`,
+			nodeToken:   "wikcnShortcut",
+			objType:     "file",
+			wantToken:   "wikcnShortcut",
+			wantObjType: "wiki",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotToken, gotObjType := wikiDeleteTarget(gjson.Parse(tt.nodeJSON), tt.nodeToken, tt.objType)
+			require.Equal(t, tt.wantToken, gotToken)
+			require.Equal(t, tt.wantObjType, gotObjType)
+		})
+	}
+}
+
+func listWikiNodeChildren(ctx context.Context, spaceID, parentNodeToken string) ([]wikiNodeInfo, *clie2e.Result, error) {
+	var children []wikiNodeInfo
+	pageToken := ""
+	seenPageTokens := map[string]struct{}{}
+	for {
+		params := map[string]any{
+			"page_size":         50,
+			"parent_node_token": parentNodeToken,
+		}
+		if pageToken != "" {
+			if _, exists := seenPageTokens[pageToken]; exists {
+				return children, nil, fmt.Errorf("wiki children pagination loop detected for parent %s page_token %q", parentNodeToken, pageToken)
+			}
+			seenPageTokens[pageToken] = struct{}{}
+			params["page_token"] = pageToken
+		}
+
+		result, err := clie2e.RunCmdWithRetry(ctx, clie2e.Request{
+			Args:      []string{"api", "get", "/open-apis/wiki/v2/spaces/" + spaceID + "/nodes"},
+			DefaultAs: "bot",
+			Params:    params,
+		}, clie2e.RetryOptions{})
+		if err != nil || result == nil || result.ExitCode != 0 {
+			return children, result, err
+		}
+		if !wikiAPISuccess(result.Stdout) {
+			return children, result, fmt.Errorf("list wiki node children for parent %s failed: stdout=%s stderr=%s", parentNodeToken, result.Stdout, result.Stderr)
+		}
+
+		parsed := gjson.Parse(result.Stdout)
+		for _, item := range parsed.Get("data.items").Array() {
+			nodeToken := item.Get("node_token").String()
+			if nodeToken == "" {
+				continue
+			}
+			objType := item.Get("obj_type").String()
+			if objType == "" {
+				objType = "docx"
+			}
+			children = append(children, wikiNodeInfo{NodeToken: nodeToken, ObjType: objType})
+		}
+
+		pageToken = parsed.Get("data.page_token").String()
+		if pageToken == "" || !parsed.Get("data.has_more").Bool() {
+			return children, result, nil
+		}
+	}
+}
+
+func waitWikiNodeDeleted(ctx context.Context, nodeToken string) error {
+	var lastTransientErr error
+
+	opts := clie2e.WaitOptions{
+		Timeout:  wikiDeleteVisibilityTimeout,
+		Interval: wikiDeleteVisibilityPoll,
+		TimeoutError: func() error {
+			if lastTransientErr != nil {
+				return fmt.Errorf("wiki node %s delete verification kept hitting transient errors: %w", nodeToken, lastTransientErr)
+			}
+			return fmt.Errorf("wiki node %s still exists after delete", nodeToken)
+		},
+	}
+
+	return clie2e.WaitForCondition(ctx, opts, func() (bool, error) {
+		deleted, err := isWikiNodeDeleted(ctx, nodeToken)
+		if err != nil {
+			if isWikiVerifyTransientError(err) {
+				lastTransientErr = err
+				return false, nil
+			} else {
+				return false, err
+			}
+		}
+		if deleted {
+			return true, nil
+		}
+		return false, nil
+	})
+}
+
+func isWikiNodeDeleted(ctx context.Context, nodeToken string) (bool, error) {
+	result, err := clie2e.RunCmdWithRetry(ctx, clie2e.Request{
+		Args:      []string{"api", "get", "/open-apis/wiki/v2/spaces/get_node"},
+		DefaultAs: "bot",
+		Params:    map[string]any{"token": nodeToken},
+	}, clie2e.RetryOptions{})
+	if err != nil {
+		return false, err
+	}
+	if result == nil {
+		return false, fmt.Errorf("verify wiki node %s after delete returned nil result", nodeToken)
+	}
+	if result.ExitCode == 0 && wikiAPISuccess(result.Stdout) {
+		// After wiki +move-to-drive, get_node on the old token can still
+		// answer code=0 but resolve to a different entity. Only a response
+		// that resolved to a different non-empty node_token proves the
+		// original node is gone; a missing node payload is indeterminate
+		// and must not be read as deleted.
+		return wikiGetNodeIdentity(result.Stdout, nodeToken) == wikiNodeIdentityDifferent, nil
+	}
+	if isWikiNodeDeletedResult(result) {
+		return true, nil
+	}
+	if isWikiVerifyTransientResult(result) {
+		return false, wikiVerifyTransientError{
+			err: fmt.Errorf("verify wiki node %s after delete hit transient response: exit=%d stdout=%s stderr=%s", nodeToken, result.ExitCode, result.Stdout, result.Stderr),
+		}
+	}
+	return false, fmt.Errorf("verify wiki node %s after delete: exit=%d stdout=%s stderr=%s", nodeToken, result.ExitCode, result.Stdout, result.Stderr)
+}
+
+type wikiVerifyTransientError struct {
+	err error
+}
+
+func (e wikiVerifyTransientError) Error() string {
+	return e.err.Error()
+}
+
+func (e wikiVerifyTransientError) Unwrap() error {
+	return e.err
+}
+
+func isWikiVerifyTransientError(err error) bool {
+	var transient wikiVerifyTransientError
+	return err != nil && errors.As(err, &transient)
+}
+
+func wikiAPISuccess(stdout string) bool {
+	if ok := gjson.Get(stdout, "ok"); ok.Exists() {
+		return ok.Bool()
+	}
+	if code := gjson.Get(stdout, "code"); code.Exists() {
+		return code.Int() == 0
+	}
+	return false
+}
+
+type wikiNodeIdentity int
+
+const (
+	// wikiNodeIdentityUnknown: the response does not carry a node_token
+	// (data.node is optional in the get_node response), so the identity of
+	// the resolved entity cannot be judged either way.
+	wikiNodeIdentityUnknown wikiNodeIdentity = iota
+	// wikiNodeIdentitySame: the response still carries the queried
+	// node_token, proving the original node exists.
+	wikiNodeIdentitySame
+	// wikiNodeIdentityDifferent: the response resolved to a different,
+	// non-empty node_token (e.g. after wiki +move-to-drive), proving the
+	// original wiki node is gone.
+	wikiNodeIdentityDifferent
+)
+
+// wikiGetNodeIdentity classifies whether a successful get_node response still
+// refers to the queried node token. After wiki +move-to-drive, the old token
+// may keep resolving with code=0 to a node whose node_token (and parent) are
+// no longer the original, so a success response alone does not prove the
+// original node still exists — but only a different non-empty token proves it
+// is gone; a missing token is indeterminate.
+func wikiGetNodeIdentity(stdout, nodeToken string) wikiNodeIdentity {
+	returned := gjson.Get(stdout, "data.node.node_token").String()
+	if nodeToken == "" || returned == "" {
+		return wikiNodeIdentityUnknown
+	}
+	if returned == nodeToken {
+		return wikiNodeIdentitySame
+	}
+	return wikiNodeIdentityDifferent
+}
+
+func isWikiNodeDeletedResult(result *clie2e.Result) bool {
+	if result == nil {
+		return false
+	}
+	for _, payload := range []string{result.Stdout, result.Stderr} {
+		for _, path := range []string{"error.code", "code"} {
+			if code := gjson.Get(payload, path); code.Exists() && isWikiNodeDeletedCode(code.Int()) {
+				return true
+			}
+		}
+	}
+	combined := strings.ToLower(result.Stdout + "\n" + result.Stderr)
+	return strings.Contains(combined, "131005") ||
+		strings.Contains(combined, "node not found") ||
+		strings.Contains(combined, "node has been deleted") ||
+		strings.Contains(combined, "not found")
+}
+
+func isWikiNodeDeletedCode(code int64) bool {
+	return code == 131005 || code == 93012 || code == 131012
+}
+
+func isWikiVerifyTransientResult(result *clie2e.Result) bool {
+	if result == nil {
+		return false
+	}
+	payload := result.Stdout
+	if strings.TrimSpace(payload) == "" {
+		payload = result.Stderr
+	}
+	if gjson.Get(payload, "error.type").String() != "internal" ||
+		gjson.Get(payload, "error.subtype").String() != "invalid_response" {
+		return false
+	}
+	message := strings.ToLower(gjson.Get(payload, "error.message").String())
+	return strings.Contains(message, "http 429") ||
+		strings.Contains(message, "http 500") ||
+		strings.Contains(message, "http 502") ||
+		strings.Contains(message, "http 503") ||
+		strings.Contains(message, "http 504")
+}
+
+func TestWikiGetNodeIdentity(t *testing.T) {
+	const nodeToken = "wikcnOriginalNode"
+	successPayload := func(returnedToken string) string {
+		return `{"code":0,"msg":"success","data":{"node":{"node_token":"` + returnedToken + `","obj_token":"doccnMovedDoc","obj_type":"docx","parent_node_token":"wikcnOtherParent","space_id":"7000000000000000001"}}}`
+	}
+
+	t.Run("same node token proves the node still exists", func(t *testing.T) {
+		require.Equal(t, wikiNodeIdentitySame, wikiGetNodeIdentity(successPayload(nodeToken), nodeToken))
+	})
+
+	t.Run("code 0 with a different node token after move-to-drive means the original node is gone", func(t *testing.T) {
+		require.Equal(t, wikiNodeIdentityDifferent, wikiGetNodeIdentity(successPayload("wikcnResolvedElsewhere"), nodeToken))
+	})
+
+	t.Run("success response without a node payload is indeterminate, not proof of deletion", func(t *testing.T) {
+		require.Equal(t, wikiNodeIdentityUnknown, wikiGetNodeIdentity(`{"code":0,"msg":"success","data":{}}`, nodeToken))
+	})
+
+	t.Run("empty returned node token is indeterminate", func(t *testing.T) {
+		require.Equal(t, wikiNodeIdentityUnknown, wikiGetNodeIdentity(`{"code":0,"msg":"success","data":{"node":{"node_token":""}}}`, nodeToken))
+	})
+
+	t.Run("empty queried token is indeterminate", func(t *testing.T) {
+		require.Equal(t, wikiNodeIdentityUnknown, wikiGetNodeIdentity(successPayload(nodeToken), ""))
+	})
+}
+
+func TestWikiVerifyTransientResult(t *testing.T) {
+	t.Run("matches invalid response from transient http status", func(t *testing.T) {
+		result := &clie2e.Result{
+			ExitCode: 5,
+			Stderr:   `{"ok":false,"error":{"type":"internal","subtype":"invalid_response","message":"SDK returned an invalid JSON response: failed to parse TAT response (HTTP 429): invalid character 'r' looking for beginning of value"}}`,
+		}
+
+		require.True(t, isWikiVerifyTransientResult(result))
+	})
+
+	t.Run("does not match unrelated invalid response", func(t *testing.T) {
+		result := &clie2e.Result{
+			ExitCode: 5,
+			Stderr:   `{"ok":false,"error":{"type":"internal","subtype":"invalid_response","message":"SDK returned an invalid JSON response: malformed body"}}`,
+		}
+
+		require.False(t, isWikiVerifyTransientResult(result))
+	})
+
+	t.Run("does not match api errors", func(t *testing.T) {
+		result := &clie2e.Result{
+			ExitCode: 1,
+			Stderr:   `{"ok":false,"error":{"type":"api","subtype":"conflict","message":"resource contention occurred, please retry","retryable":true}}`,
+		}
+
+		require.False(t, isWikiVerifyTransientResult(result))
+	})
+}
+
+func TestIsWikiNodeDeletedResult(t *testing.T) {
+	tests := []struct {
+		name   string
+		result *clie2e.Result
+		want   bool
+	}{
+		{
+			name:   "raw get-node deleted code on stderr",
+			result: &clie2e.Result{ExitCode: 1, Stderr: `{"ok":false,"error":{"type":"api","code":93012,"message":"node has been deleted"}}`},
+			want:   true,
+		},
+		{
+			name:   "CLI terminal deleted code on stderr",
+			result: &clie2e.Result{ExitCode: 1, Stderr: `{"ok":false,"error":{"type":"api","code":131012,"message":"node has been deleted"}}`},
+			want:   true,
+		},
+		{
+			name:   "legacy node not found code on stdout",
+			result: &clie2e.Result{ExitCode: 1, Stdout: `{"code":131005,"msg":"node not found"}`},
+			want:   true,
+		},
+		{
+			name:   "unrelated API error",
+			result: &clie2e.Result{ExitCode: 1, Stderr: `{"ok":false,"error":{"type":"api","code":131004,"message":"permission denied"}}`},
+			want:   false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.want, isWikiNodeDeletedResult(tt.result))
+		})
+	}
+}
+
+func findWikiNodeByToken(t *testing.T, ctx context.Context, spaceID string, nodeToken string, parentNodeTokens ...string) gjson.Result {
+	t.Helper()
+
+	pageToken := ""
+	lastStdout := ""
+	seenPageTokens := map[string]struct{}{}
+	for {
+		params := map[string]any{"page_size": 50}
+		if len(parentNodeTokens) > 0 && parentNodeTokens[0] != "" {
+			params["parent_node_token"] = parentNodeTokens[0]
+		}
+		if pageToken != "" {
+			if _, exists := seenPageTokens[pageToken]; exists {
+				t.Fatalf("wiki list pagination loop detected for page_token %q, last stdout:\n%s", pageToken, lastStdout)
+			}
+			seenPageTokens[pageToken] = struct{}{}
+			params["page_token"] = pageToken
+		}
+
+		result, err := clie2e.RunCmd(ctx, clie2e.Request{
+			Args:      []string{"api", "get", "/open-apis/wiki/v2/spaces/" + spaceID + "/nodes"},
+			DefaultAs: "bot",
+			Params:    params,
+		})
+		require.NoError(t, err)
+		result.AssertExitCode(t, 0)
+		result.AssertStdoutStatus(t, true)
+
+		lastStdout = result.Stdout
+		parsed := gjson.Parse(result.Stdout)
+		node := parsed.Get(`data.items.#(node_token=="` + nodeToken + `")`)
+		if node.Exists() {
+			return node
+		}
+
+		pageToken = parsed.Get("data.page_token").String()
+		if pageToken == "" || !parsed.Get("data.has_more").Bool() {
+			t.Fatalf("wiki node %q not found in listed pages, last stdout:\n%s", nodeToken, lastStdout)
+		}
+	}
+}

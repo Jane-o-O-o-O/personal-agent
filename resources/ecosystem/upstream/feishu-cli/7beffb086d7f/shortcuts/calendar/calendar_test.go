@@ -1,0 +1,4805 @@
+// Copyright (c) 2026 Lark Technologies Pte. Ltd.
+// SPDX-License-Identifier: MIT
+
+package calendar
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"net/http"
+	"strings"
+	"sync"
+	"testing"
+
+	"github.com/larksuite/cli/errs"
+	"github.com/larksuite/cli/internal/cmdutil"
+	"github.com/larksuite/cli/internal/core"
+	"github.com/larksuite/cli/internal/httpmock"
+	"github.com/larksuite/cli/internal/output"
+	"github.com/larksuite/cli/shortcuts/common"
+	"github.com/spf13/cobra"
+)
+
+// codeInvalidParamsWithDetail is the Lark "invalid params" code (190014) used
+// across the API-error fixtures below. It mirrors the value registered in
+// internal/errclass/codemeta_calendar.go.
+const codeInvalidParamsWithDetail = 190014
+
+// ---------------------------------------------------------------------------
+// helpers
+// ---------------------------------------------------------------------------
+
+// warmOnce ensures the Lark SDK's internal token cache is populated exactly
+// once per test binary.  The SDK caches tenant tokens by app credentials, so
+// only the very first API call in the process actually hits the token endpoint.
+var warmOnce sync.Once
+
+func warmTokenCache(t *testing.T) {
+	t.Helper()
+	warmOnce.Do(func() {
+		f, _, _, reg := cmdutil.TestFactory(t, defaultConfig())
+		reg.Register(&httpmock.Stub{
+			URL:  "/open-apis/test/v1/warm",
+			Body: map[string]interface{}{"code": 0, "msg": "ok", "data": map[string]interface{}{}},
+		})
+		s := common.Shortcut{
+			Service:   "test",
+			Command:   "+warm",
+			AuthTypes: []string{"bot"},
+			Execute: func(_ context.Context, rctx *common.RuntimeContext) error {
+				_, err := rctx.CallAPITyped("GET", "/open-apis/test/v1/warm", nil, nil)
+				return err
+			},
+		}
+		parent := &cobra.Command{Use: "test"}
+		s.Mount(parent, f)
+		parent.SetArgs([]string{"+warm"})
+		parent.SilenceErrors = true
+		parent.SilenceUsage = true
+		parent.Execute()
+	})
+}
+
+func mountAndRun(t *testing.T, s common.Shortcut, args []string, f *cmdutil.Factory, stdout *bytes.Buffer) error {
+	t.Helper()
+	warmTokenCache(t)
+	parent := &cobra.Command{Use: "test"}
+	s.Mount(parent, f)
+	parent.SetArgs(args)
+	parent.SilenceErrors = true
+	parent.SilenceUsage = true
+	if stdout != nil {
+		stdout.Reset()
+	}
+	return parent.Execute()
+}
+
+func defaultConfig() *core.CliConfig {
+	return &core.CliConfig{
+		AppID: "test-app", AppSecret: "test-secret", Brand: core.BrandFeishu,
+		UserOpenId: "ou_testuser",
+	}
+}
+
+func noLoginConfig() *core.CliConfig {
+	return &core.CliConfig{
+		AppID: "test-app", AppSecret: "test-secret", Brand: core.BrandFeishu,
+	}
+}
+
+func noLoginBotDefaultConfig() *core.CliConfig {
+	return &core.CliConfig{
+		AppID: "test-app", AppSecret: "test-secret", Brand: core.BrandFeishu,
+		DefaultAs: "bot",
+	}
+}
+
+// ---------------------------------------------------------------------------
+// CalendarCreate tests
+// ---------------------------------------------------------------------------
+
+func TestCreate_CreateEventOnly(t *testing.T) {
+	f, stdout, _, reg := cmdutil.TestFactory(t, defaultConfig())
+
+	reg.Register(&httpmock.Stub{
+		Method: "POST",
+		URL:    "/open-apis/calendar/v4/calendars/cal_test123/events",
+		Body: map[string]interface{}{
+			"code": 0, "msg": "ok",
+			"data": map[string]interface{}{
+				"event": map[string]interface{}{
+					"event_id": "evt_001",
+					"summary":  "Test Meeting",
+					"start_time": map[string]interface{}{
+						"timestamp": "1742515200",
+					},
+					"end_time": map[string]interface{}{
+						"timestamp": "1742518800",
+					},
+				},
+			},
+		},
+	})
+
+	err := mountAndRun(t, CalendarCreate, []string{
+		"+create",
+		"--summary", "Test Meeting",
+		"--start", "2025-03-21T00:00:00+08:00",
+		"--end", "2025-03-21T01:00:00+08:00",
+		"--calendar-id", "cal_test123",
+		"--as", "bot",
+	}, f, stdout)
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(stdout.String(), "evt_001") {
+		t.Errorf("stdout should contain event_id, got: %s", stdout.String())
+	}
+}
+
+func TestCreate_CreateEventOnly_PrettyFormat(t *testing.T) {
+	f, stdout, _, reg := cmdutil.TestFactory(t, defaultConfig())
+
+	reg.Register(&httpmock.Stub{
+		Method: "POST",
+		URL:    "/open-apis/calendar/v4/calendars/cal_test123/events",
+		Body: map[string]interface{}{
+			"code": 0, "msg": "ok",
+			"data": map[string]interface{}{
+				"event": map[string]interface{}{
+					"event_id": "evt_001",
+					"summary":  "Test Meeting",
+					"start_time": map[string]interface{}{
+						"timestamp": "1742515200",
+					},
+					"end_time": map[string]interface{}{
+						"timestamp": "1742518800",
+					},
+				},
+			},
+		},
+	})
+
+	err := mountAndRun(t, CalendarCreate, []string{
+		"+create",
+		"--summary", "Test Meeting",
+		"--start", "2025-03-21T00:00:00+08:00",
+		"--end", "2025-03-21T01:00:00+08:00",
+		"--calendar-id", "cal_test123",
+		"--as", "bot",
+		"--format", "pretty",
+	}, f, stdout)
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	out := stdout.String()
+	if !strings.Contains(out, "evt_001") {
+		t.Errorf("stdout should contain event_id, got: %s", out)
+	}
+	if !strings.Contains(out, "Event created successfully") {
+		t.Errorf("stdout should contain success message, got: %s", out)
+	}
+}
+
+func TestBuildEventData_DefaultVChat(t *testing.T) {
+	cmd := &cobra.Command{Use: "test"}
+	cmd.Flags().String("summary", "", "")
+	cmd.Flags().String("description", "", "")
+	cmd.Flags().String("rrule", "", "")
+	cmd.Flags().Set("summary", "Team Sync")
+	cmd.Flags().Set("description", "Weekly meeting")
+
+	runtime := common.TestNewRuntimeContext(cmd, defaultConfig())
+	eventData := buildEventData(runtime, "1742515200", "1742518800")
+
+	vchat, ok := eventData["vchat"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("vchat = %T, want map[string]interface{}", eventData["vchat"])
+	}
+	if got := vchat["vc_type"]; got != "vc" {
+		t.Fatalf("vchat.vc_type = %q, want %q", got, "vc")
+	}
+	if _, exists := vchat["meeting_settings"]; exists {
+		t.Fatalf("vchat.meeting_settings should be absent without --meeting-owner-id, got %v", vchat["meeting_settings"])
+	}
+}
+
+func TestBuildEventData_MeetingOwner(t *testing.T) {
+	cmd := &cobra.Command{Use: "test"}
+	cmd.Flags().String("summary", "", "")
+	cmd.Flags().String("description", "", "")
+	cmd.Flags().String("rrule", "", "")
+	cmd.Flags().String("meeting-owner-id", "", "")
+	cmd.Flags().Set("summary", "Team Sync")
+	cmd.Flags().Set("meeting-owner-id", "ou_owner123")
+
+	runtime := common.TestNewRuntimeContext(cmd, defaultConfig())
+	eventData := buildEventData(runtime, "1742515200", "1742518800")
+
+	vchat, ok := eventData["vchat"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("vchat = %T, want map[string]interface{}", eventData["vchat"])
+	}
+	if got := vchat["vc_type"]; got != "vc" {
+		t.Fatalf("vchat.vc_type = %q, want %q", got, "vc")
+	}
+	settings, ok := vchat["meeting_settings"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("vchat.meeting_settings = %T, want map[string]interface{}", vchat["meeting_settings"])
+	}
+	if got := settings["owner_id"]; got != "ou_owner123" {
+		t.Fatalf("vchat.meeting_settings.owner_id = %q, want %q", got, "ou_owner123")
+	}
+}
+
+func TestCreate_MeetingOwner_DryRun_IncludesOwnerID(t *testing.T) {
+	f, stdout, _, _ := cmdutil.TestFactory(t, defaultConfig())
+
+	err := mountAndRun(t, CalendarCreate, []string{
+		"+create",
+		"--summary", "x",
+		"--start", "2025-03-21T10:00:00+08:00",
+		"--end", "2025-03-21T11:00:00+08:00",
+		"--calendar-id", "cal_test123",
+		"--meeting-owner-id", "ou_owner123",
+		"--dry-run",
+		"--as", "bot",
+	}, f, stdout)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(stdout.String(), `"owner_id": "ou_owner123"`) {
+		t.Errorf("dry-run should include vchat.meeting_settings.owner_id, got: %s", stdout.String())
+	}
+}
+
+func TestCreate_MeetingOwner_BareOuPrefix_Typed(t *testing.T) {
+	f, _, _, _ := cmdutil.TestFactory(t, defaultConfig())
+	err := mountAndRun(t, CalendarCreate, []string{"+create", "--summary", "x", "--start", "2025-03-21T10:00:00+08:00", "--end", "2025-03-21T11:00:00+08:00", "--calendar-id", "cal_test123", "--meeting-owner-id", "ou_", "--as", "bot"}, f, nil)
+	if err == nil {
+		t.Fatal("want error")
+	}
+	var ve *errs.ValidationError
+	if !errors.As(err, &ve) {
+		t.Fatalf("want *errs.ValidationError, got %T", err)
+	}
+	if ve.Subtype != errs.SubtypeInvalidArgument {
+		t.Errorf("subtype=%q", ve.Subtype)
+	}
+	if ve.Param != "--meeting-owner-id" {
+		t.Errorf("param=%q, want --meeting-owner-id", ve.Param)
+	}
+}
+
+func TestCreate_MeetingOwner_NonOuPrefix_Typed(t *testing.T) {
+	f, _, _, _ := cmdutil.TestFactory(t, defaultConfig())
+	err := mountAndRun(t, CalendarCreate, []string{"+create", "--summary", "x", "--start", "2025-03-21T10:00:00+08:00", "--end", "2025-03-21T11:00:00+08:00", "--calendar-id", "cal_test123", "--meeting-owner-id", "oc_notuser", "--as", "bot"}, f, nil)
+	if err == nil {
+		t.Fatal("want error")
+	}
+	var ve *errs.ValidationError
+	if !errors.As(err, &ve) {
+		t.Fatalf("want *errs.ValidationError, got %T", err)
+	}
+	if ve.Param != "--meeting-owner-id" {
+		t.Errorf("param=%q, want --meeting-owner-id", ve.Param)
+	}
+}
+
+func TestCreate_MeetingOwner_NonBot_Typed(t *testing.T) {
+	f, _, _, _ := cmdutil.TestFactory(t, defaultConfig())
+	err := mountAndRun(t, CalendarCreate, []string{"+create", "--summary", "x", "--start", "2025-03-21T10:00:00+08:00", "--end", "2025-03-21T11:00:00+08:00", "--calendar-id", "cal_test123", "--meeting-owner-id", "ou_owner123", "--as", "user"}, f, nil)
+	if err == nil {
+		t.Fatal("want error")
+	}
+	var ve *errs.ValidationError
+	if !errors.As(err, &ve) {
+		t.Fatalf("want *errs.ValidationError, got %T", err)
+	}
+	if ve.Param != "--meeting-owner-id" {
+		t.Errorf("param=%q, want --meeting-owner-id", ve.Param)
+	}
+}
+
+func TestCreate_WithAttendees_Success(t *testing.T) {
+	f, _, _, reg := cmdutil.TestFactory(t, defaultConfig())
+
+	reg.Register(&httpmock.Stub{
+		Method: "POST",
+		URL:    "/open-apis/calendar/v4/calendars/cal_test123/events",
+		Body: map[string]interface{}{
+			"code": 0, "msg": "ok",
+			"data": map[string]interface{}{
+				"event": map[string]interface{}{
+					"event_id": "evt_002",
+					"summary":  "Team Sync",
+					"start_time": map[string]interface{}{
+						"timestamp": "1742515200",
+					},
+					"end_time": map[string]interface{}{
+						"timestamp": "1742518800",
+					},
+				},
+			},
+		},
+	})
+	reg.Register(&httpmock.Stub{
+		Method: "POST",
+		URL:    "/events/evt_002/attendees",
+		Body: map[string]interface{}{
+			"code": 0, "msg": "ok",
+			"data": map[string]interface{}{},
+		},
+	})
+
+	err := mountAndRun(t, CalendarCreate, []string{
+		"+create",
+		"--summary", "Team Sync",
+		"--start", "2025-03-21T00:00:00+08:00",
+		"--end", "2025-03-21T01:00:00+08:00",
+		"--calendar-id", "cal_test123",
+		"--attendee-ids", "ou_user1,ou_user2,oc_group1",
+		"--as", "bot",
+	}, f, nil)
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestCreate_WithAttendees_AsBot_AddsBotSelf(t *testing.T) {
+	f, _, _, reg := cmdutil.TestFactory(t, defaultConfig())
+
+	reg.Register(&httpmock.Stub{
+		Method: "GET",
+		URL:    "/open-apis/bot/v3/info",
+		Body: map[string]interface{}{
+			"code": 0, "msg": "ok",
+			"bot": map[string]interface{}{
+				"open_id":  "ou_botself",
+				"app_name": "Test Bot",
+			},
+		},
+	})
+	reg.Register(&httpmock.Stub{
+		Method: "POST",
+		URL:    "/open-apis/calendar/v4/calendars/cal_test123/events",
+		Body: map[string]interface{}{
+			"code": 0, "msg": "ok",
+			"data": map[string]interface{}{
+				"event": map[string]interface{}{
+					"event_id": "evt_bot",
+					"summary":  "Bot Sync",
+					"start_time": map[string]interface{}{
+						"timestamp": "1742515200",
+					},
+					"end_time": map[string]interface{}{
+						"timestamp": "1742518800",
+					},
+				},
+			},
+		},
+	})
+	attendeesStub := &httpmock.Stub{
+		Method: "POST",
+		URL:    "/events/evt_bot/attendees",
+		Body: map[string]interface{}{
+			"code": 0, "msg": "ok",
+			"data": map[string]interface{}{},
+		},
+	}
+	reg.Register(attendeesStub)
+
+	err := mountAndRun(t, CalendarCreate, []string{
+		"+create",
+		"--summary", "Bot Sync",
+		"--start", "2025-03-21T00:00:00+08:00",
+		"--end", "2025-03-21T01:00:00+08:00",
+		"--calendar-id", "cal_test123",
+		"--attendee-ids", "ou_user1",
+		"--as", "bot",
+	}, f, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if attendeesStub.CapturedBody == nil {
+		t.Fatal("attendees API was not called")
+	}
+	if !bytes.Contains(attendeesStub.CapturedBody, []byte("ou_botself")) {
+		t.Fatalf("expected bot open_id ou_botself in attendees request, got: %s", attendeesStub.CapturedBody)
+	}
+	if !bytes.Contains(attendeesStub.CapturedBody, []byte("ou_user1")) {
+		t.Fatalf("expected requested attendee ou_user1 in attendees request, got: %s", attendeesStub.CapturedBody)
+	}
+}
+
+func TestCreate_WithAttendees_AsBot_BotInfoFails_ProceedsWithoutBot(t *testing.T) {
+	f, _, _, reg := cmdutil.TestFactory(t, defaultConfig())
+
+	reg.Register(&httpmock.Stub{
+		Method: "GET",
+		URL:    "/open-apis/bot/v3/info",
+		Body: map[string]interface{}{
+			"code": 99991663, "msg": "app ticket invalid",
+		},
+	})
+	reg.Register(&httpmock.Stub{
+		Method: "POST",
+		URL:    "/open-apis/calendar/v4/calendars/cal_test123/events",
+		Body: map[string]interface{}{
+			"code": 0, "msg": "ok",
+			"data": map[string]interface{}{
+				"event": map[string]interface{}{
+					"event_id": "evt_nobot",
+					"summary":  "Bot Sync",
+					"start_time": map[string]interface{}{
+						"timestamp": "1742515200",
+					},
+					"end_time": map[string]interface{}{
+						"timestamp": "1742518800",
+					},
+				},
+			},
+		},
+	})
+	attendeesStub := &httpmock.Stub{
+		Method: "POST",
+		URL:    "/events/evt_nobot/attendees",
+		Body: map[string]interface{}{
+			"code": 0, "msg": "ok",
+			"data": map[string]interface{}{},
+		},
+	}
+	reg.Register(attendeesStub)
+
+	err := mountAndRun(t, CalendarCreate, []string{
+		"+create",
+		"--summary", "Bot Sync",
+		"--start", "2025-03-21T00:00:00+08:00",
+		"--end", "2025-03-21T01:00:00+08:00",
+		"--calendar-id", "cal_test123",
+		"--attendee-ids", "ou_user1",
+		"--as", "bot",
+	}, f, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if attendeesStub.CapturedBody == nil {
+		t.Fatal("attendees API was not called")
+	}
+	if !bytes.Contains(attendeesStub.CapturedBody, []byte("ou_user1")) {
+		t.Fatalf("expected requested attendee ou_user1 in attendees request, got: %s", attendeesStub.CapturedBody)
+	}
+	if bytes.Contains(attendeesStub.CapturedBody, []byte("ou_botself")) {
+		t.Fatalf("bot open_id should be absent when /bot/v3/info fails, got: %s", attendeesStub.CapturedBody)
+	}
+}
+
+func TestCreate_WithAttendees_APIError_RollsBack(t *testing.T) {
+	f, _, _, reg := cmdutil.TestFactory(t, defaultConfig())
+
+	reg.Register(&httpmock.Stub{
+		Method: "POST",
+		URL:    "/open-apis/calendar/v4/calendars/cal_test123/events",
+		Body: map[string]interface{}{
+			"code": 0, "msg": "ok",
+			"data": map[string]interface{}{
+				"event": map[string]interface{}{
+					"event_id": "evt_003",
+					"summary":  "Bad Attendees",
+					"start_time": map[string]interface{}{
+						"timestamp": "1742515200",
+					},
+					"end_time": map[string]interface{}{
+						"timestamp": "1742518800",
+					},
+				},
+			},
+		},
+	})
+	// Attendees API returns business error
+	reg.Register(&httpmock.Stub{
+		Method: "POST",
+		URL:    "/events/evt_003/attendees",
+		Body: map[string]interface{}{
+			"code": 190002,
+			"msg":  "invalid user_id",
+		},
+	})
+	// Rollback: delete the event
+	reg.Register(&httpmock.Stub{
+		Method: "DELETE",
+		URL:    "/events/evt_003",
+		Body:   map[string]interface{}{"code": 0, "msg": "ok"},
+	})
+
+	err := mountAndRun(t, CalendarCreate, []string{
+		"+create",
+		"--summary", "Bad Attendees",
+		"--start", "2025-03-21T00:00:00+08:00",
+		"--end", "2025-03-21T01:00:00+08:00",
+		"--calendar-id", "cal_test123",
+		"--attendee-ids", "ou_invalid",
+		"--as", "bot",
+	}, f, nil)
+
+	if err == nil {
+		t.Fatal("expected error for invalid attendees, got nil")
+	}
+	// Enrich-in-place: classification of the add-attendees failure is preserved
+	// (APIError / code 190002) and the rollback context rides on the Hint.
+	var ae *errs.APIError
+	if !errors.As(err, &ae) {
+		t.Fatalf("expected *errs.APIError, got %T", err)
+	}
+	if ae.Code != 190002 {
+		t.Errorf("expected preserved code 190002, got %d", ae.Code)
+	}
+	if !strings.Contains(ae.Hint, "rolled back successfully") {
+		t.Fatalf("hint should mention rollback, got: %q", ae.Hint)
+	}
+}
+
+func TestCreate_CreateEvent_APIError(t *testing.T) {
+	f, _, _, reg := cmdutil.TestFactory(t, defaultConfig())
+
+	reg.Register(&httpmock.Stub{
+		Method: "POST",
+		URL:    "/open-apis/calendar/v4/calendars/cal_test123/events",
+		Body: map[string]interface{}{
+			"code": 190001,
+			"msg":  "permission denied",
+		},
+	})
+
+	err := mountAndRun(t, CalendarCreate, []string{
+		"+create",
+		"--summary", "Denied",
+		"--start", "2025-03-21T00:00:00+08:00",
+		"--end", "2025-03-21T01:00:00+08:00",
+		"--calendar-id", "cal_test123",
+		"--as", "bot",
+	}, f, nil)
+
+	if err == nil {
+		t.Fatal("expected error for API failure, got nil")
+	}
+}
+
+func TestCreate_EndBeforeStart(t *testing.T) {
+	f, _, _, _ := cmdutil.TestFactory(t, defaultConfig())
+
+	err := mountAndRun(t, CalendarCreate, []string{
+		"+create",
+		"--summary", "Invalid",
+		"--start", "2025-03-21T10:00:00+08:00",
+		"--end", "2025-03-21T09:00:00+08:00",
+		"--as", "bot",
+	}, f, nil)
+
+	if err == nil {
+		t.Fatal("expected validation error for end < start, got nil")
+	}
+	if !strings.Contains(err.Error(), "end time must be after start time") {
+		t.Errorf("error should mention end/start, got: %v", err)
+	}
+}
+
+func TestCreate_ExplicitCalendarId(t *testing.T) {
+	f, _, _, reg := cmdutil.TestFactory(t, defaultConfig())
+	reg.Register(&httpmock.Stub{
+		Method: "POST",
+		URL:    "/open-apis/calendar/v4/calendars/cal_explicit/events",
+		Body: map[string]interface{}{
+			"code": 0, "msg": "ok",
+			"data": map[string]interface{}{
+				"event": map[string]interface{}{
+					"event_id":   "evt_004",
+					"summary":    "Explicit Cal",
+					"start_time": map[string]interface{}{"timestamp": "1742515200"},
+					"end_time":   map[string]interface{}{"timestamp": "1742518800"},
+				},
+			},
+		},
+	})
+
+	err := mountAndRun(t, CalendarCreate, []string{
+		"+create",
+		"--summary", "Explicit Cal",
+		"--start", "2025-03-21T00:00:00+08:00",
+		"--end", "2025-03-21T01:00:00+08:00",
+		"--calendar-id", "cal_explicit",
+		"--as", "bot",
+	}, f, nil)
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestCreate_NoEventIdReturned(t *testing.T) {
+	f, _, _, reg := cmdutil.TestFactory(t, defaultConfig())
+
+	reg.Register(&httpmock.Stub{
+		Method: "POST",
+		URL:    "/open-apis/calendar/v4/calendars/cal_test123/events",
+		Body: map[string]interface{}{
+			"code": 0, "msg": "ok",
+			"data": map[string]interface{}{
+				"event": map[string]interface{}{},
+			},
+		},
+	})
+
+	err := mountAndRun(t, CalendarCreate, []string{
+		"+create",
+		"--summary", "No ID",
+		"--start", "2025-03-21T00:00:00+08:00",
+		"--end", "2025-03-21T01:00:00+08:00",
+		"--calendar-id", "cal_test123",
+		"--as", "bot",
+	}, f, nil)
+
+	if err == nil {
+		t.Fatal("expected error when no event_id returned, got nil")
+	}
+}
+
+func TestCreate_CreateEvent_InvalidParamsWithDetail(t *testing.T) {
+	f, _, _, reg := cmdutil.TestFactory(t, defaultConfig())
+
+	reg.Register(&httpmock.Stub{
+		Method: "POST",
+		URL:    "/open-apis/calendar/v4/calendars/cal_test123/events",
+		Body: map[string]interface{}{
+			"code": codeInvalidParamsWithDetail,
+			"msg":  "invalid params",
+			"error": map[string]interface{}{
+				"details": []interface{}{
+					map[string]interface{}{"value": "end_time should be later than start_time"},
+				},
+			},
+		},
+	})
+
+	err := mountAndRun(t, CalendarCreate, []string{
+		"+create",
+		"--summary", "Bad Time",
+		"--start", "2025-03-21T10:00:00+08:00",
+		"--end", "2025-03-21T11:00:00+08:00",
+		"--calendar-id", "cal_test123",
+		"--as", "bot",
+	}, f, nil)
+
+	if err == nil {
+		t.Fatal("expected error for 190014, got nil")
+	}
+	var ae *errs.APIError
+	if !errors.As(err, &ae) {
+		t.Fatalf("expected *errs.APIError, got %T", err)
+	}
+	if ae.Subtype != errs.SubtypeInvalidParameters {
+		t.Errorf("subtype=%q, want invalid_parameters", ae.Subtype)
+	}
+	if ae.Code != codeInvalidParamsWithDetail {
+		t.Errorf("expected code %d, got %d", codeInvalidParamsWithDetail, ae.Code)
+	}
+	if !strings.Contains(ae.Hint, "end_time should be later than start_time") {
+		t.Errorf("expected detail value in hint, got %q", ae.Hint)
+	}
+}
+
+func TestCreate_CreateEvent_InvalidParamsWithoutDetailValue(t *testing.T) {
+	f, _, _, reg := cmdutil.TestFactory(t, defaultConfig())
+
+	reg.Register(&httpmock.Stub{
+		Method: "POST",
+		URL:    "/open-apis/calendar/v4/calendars/cal_test123/events",
+		Body: map[string]interface{}{
+			"code": codeInvalidParamsWithDetail,
+			"msg":  "invalid params",
+		},
+	})
+
+	err := mountAndRun(t, CalendarCreate, []string{
+		"+create",
+		"--summary", "Bad Time",
+		"--start", "2025-03-21T10:00:00+08:00",
+		"--end", "2025-03-21T11:00:00+08:00",
+		"--calendar-id", "cal_test123",
+		"--as", "bot",
+	}, f, nil)
+
+	if err == nil {
+		t.Fatal("expected error for 190014, got nil")
+	}
+	var ae *errs.APIError
+	if !errors.As(err, &ae) {
+		t.Fatalf("expected *errs.APIError, got %T", err)
+	}
+	if ae.Subtype != errs.SubtypeInvalidParameters {
+		t.Errorf("subtype=%q, want invalid_parameters", ae.Subtype)
+	}
+	if ae.Code != codeInvalidParamsWithDetail {
+		t.Errorf("expected code %d, got %d", codeInvalidParamsWithDetail, ae.Code)
+	}
+}
+
+func TestCreate_CreateEvent_InvalidParams_ErrorNotMap(t *testing.T) {
+	f, _, _, reg := cmdutil.TestFactory(t, defaultConfig())
+
+	reg.Register(&httpmock.Stub{
+		Method:      "POST",
+		URL:         "/open-apis/calendar/v4/calendars/cal_test123/events",
+		RawBody:     []byte(`{"code":190014,"msg":"invalid params","error":"just a string"}`),
+		ContentType: "text/plain",
+	})
+
+	err := mountAndRun(t, CalendarCreate, []string{
+		"+create",
+		"--summary", "Bad Time",
+		"--start", "2025-03-21T10:00:00+08:00",
+		"--end", "2025-03-21T11:00:00+08:00",
+		"--calendar-id", "cal_test123",
+		"--as", "bot",
+	}, f, nil)
+
+	if err == nil {
+		t.Fatal("expected error for 190014, got nil")
+	}
+	var ae *errs.APIError
+	if !errors.As(err, &ae) {
+		t.Fatalf("expected *errs.APIError, got %T", err)
+	}
+	if ae.Code != codeInvalidParamsWithDetail {
+		t.Errorf("expected code %d, got %d", codeInvalidParamsWithDetail, ae.Code)
+	}
+}
+
+func TestCreate_CreateEvent_InvalidParams_NoDetailsKey(t *testing.T) {
+	f, _, _, reg := cmdutil.TestFactory(t, defaultConfig())
+
+	reg.Register(&httpmock.Stub{
+		Method: "POST",
+		URL:    "/open-apis/calendar/v4/calendars/cal_test123/events",
+		Body: map[string]interface{}{
+			"code": codeInvalidParamsWithDetail,
+			"msg":  "invalid params",
+			"error": map[string]interface{}{
+				"other_key": "no details here",
+			},
+		},
+	})
+
+	err := mountAndRun(t, CalendarCreate, []string{
+		"+create",
+		"--summary", "Bad Time",
+		"--start", "2025-03-21T10:00:00+08:00",
+		"--end", "2025-03-21T11:00:00+08:00",
+		"--calendar-id", "cal_test123",
+		"--as", "bot",
+	}, f, nil)
+
+	if err == nil {
+		t.Fatal("expected error for 190014, got nil")
+	}
+	var ae *errs.APIError
+	if !errors.As(err, &ae) {
+		t.Fatalf("expected *errs.APIError, got %T", err)
+	}
+	if ae.Code != codeInvalidParamsWithDetail {
+		t.Errorf("expected code %d, got %d", codeInvalidParamsWithDetail, ae.Code)
+	}
+}
+
+func TestCreate_CreateEvent_InvalidParams_DetailItemNotMap(t *testing.T) {
+	f, _, _, reg := cmdutil.TestFactory(t, defaultConfig())
+
+	reg.Register(&httpmock.Stub{
+		Method: "POST",
+		URL:    "/open-apis/calendar/v4/calendars/cal_test123/events",
+		Body: map[string]interface{}{
+			"code": codeInvalidParamsWithDetail,
+			"msg":  "invalid params",
+			"error": map[string]interface{}{
+				"details": []interface{}{nil},
+			},
+		},
+	})
+
+	err := mountAndRun(t, CalendarCreate, []string{
+		"+create",
+		"--summary", "Bad Time",
+		"--start", "2025-03-21T10:00:00+08:00",
+		"--end", "2025-03-21T11:00:00+08:00",
+		"--calendar-id", "cal_test123",
+		"--as", "bot",
+	}, f, nil)
+
+	if err == nil {
+		t.Fatal("expected error for 190014, got nil")
+	}
+	var ae *errs.APIError
+	if !errors.As(err, &ae) {
+		t.Fatalf("expected *errs.APIError, got %T", err)
+	}
+	if ae.Code != codeInvalidParamsWithDetail {
+		t.Errorf("expected code %d, got %d", codeInvalidParamsWithDetail, ae.Code)
+	}
+}
+
+func TestCreate_WithAttendees_InvalidParamsWithDetail_RollsBack(t *testing.T) {
+	f, _, _, reg := cmdutil.TestFactory(t, defaultConfig())
+
+	reg.Register(&httpmock.Stub{
+		Method: "POST",
+		URL:    "/open-apis/calendar/v4/calendars/cal_test123/events",
+		Body: map[string]interface{}{
+			"code": 0, "msg": "ok",
+			"data": map[string]interface{}{
+				"event": map[string]interface{}{
+					"event_id":   "evt_190014",
+					"summary":    "Bad Attendees",
+					"start_time": map[string]interface{}{"timestamp": "1742515200"},
+					"end_time":   map[string]interface{}{"timestamp": "1742518800"},
+				},
+			},
+		},
+	})
+	reg.Register(&httpmock.Stub{
+		Method: "POST",
+		URL:    "/events/evt_190014/attendees",
+		Body: map[string]interface{}{
+			"code": codeInvalidParamsWithDetail,
+			"msg":  "invalid params",
+			"error": map[string]interface{}{
+				"details": []interface{}{
+					map[string]interface{}{"value": "invalid attendee open_id"},
+				},
+			},
+		},
+	})
+	reg.Register(&httpmock.Stub{
+		Method: "DELETE",
+		URL:    "/events/evt_190014",
+		Body:   map[string]interface{}{"code": 0, "msg": "ok"},
+	})
+
+	err := mountAndRun(t, CalendarCreate, []string{
+		"+create",
+		"--summary", "Bad Attendees",
+		"--start", "2025-03-21T00:00:00+08:00",
+		"--end", "2025-03-21T01:00:00+08:00",
+		"--calendar-id", "cal_test123",
+		"--attendee-ids", "ou_invalid",
+		"--as", "bot",
+	}, f, nil)
+
+	if err == nil {
+		t.Fatal("expected error for invalid attendees with 190014, got nil")
+	}
+	// Enrich-in-place: the underlying typed add-attendees failure is returned
+	// unchanged except that the rollback context is appended to its Hint. Its
+	// classification (APIError / code 190014) and the lifted server detail are
+	// preserved.
+	var ae *errs.APIError
+	if !errors.As(err, &ae) {
+		t.Fatalf("expected *errs.APIError, got %T", err)
+	}
+	if ae.Code != codeInvalidParamsWithDetail {
+		t.Errorf("expected preserved code %d, got %d", codeInvalidParamsWithDetail, ae.Code)
+	}
+	if !strings.Contains(ae.Hint, "invalid attendee open_id") {
+		t.Errorf("expected lifted server detail preserved in hint, got: %q", ae.Hint)
+	}
+	if !strings.Contains(ae.Hint, "rolled back successfully") {
+		t.Errorf("expected rollback context appended to hint, got: %q", ae.Hint)
+	}
+}
+
+func TestCreate_ApprovalRoomMissingReason_GuidesRawAttendeesAPI(t *testing.T) {
+	f, _, _, reg := cmdutil.TestFactory(t, defaultConfig())
+
+	reg.Register(&httpmock.Stub{
+		Method: "POST",
+		URL:    "/open-apis/calendar/v4/calendars/cal_test123/events",
+		Body: map[string]interface{}{
+			"code": 0, "msg": "ok",
+			"data": map[string]interface{}{
+				"event": map[string]interface{}{
+					"event_id":   "evt_approval_room",
+					"summary":    "Approval Room",
+					"start_time": map[string]interface{}{"timestamp": "1742515200"},
+					"end_time":   map[string]interface{}{"timestamp": "1742518800"},
+				},
+			},
+		},
+	})
+	reg.Register(&httpmock.Stub{
+		Method: "POST",
+		URL:    "/events/evt_approval_room/attendees",
+		Body: map[string]interface{}{
+			"code": codeInvalidParamsWithDetail,
+			"msg":  "invalid params",
+			"error": map[string]interface{}{
+				"details": []interface{}{
+					map[string]interface{}{"value": "attendees[0].approval_reason is required for approval meeting rooms"},
+				},
+			},
+		},
+	})
+	reg.Register(&httpmock.Stub{
+		Method: "DELETE",
+		URL:    "/events/evt_approval_room",
+		Body:   map[string]interface{}{"code": 0, "msg": "ok"},
+	})
+
+	err := mountAndRun(t, CalendarCreate, []string{
+		"+create",
+		"--summary", "Approval Room",
+		"--start", "2025-03-21T00:00:00+08:00",
+		"--end", "2025-03-21T01:00:00+08:00",
+		"--calendar-id", "cal_test123",
+		"--attendee-ids", "omm_room1",
+		"--as", "user",
+	}, f, nil)
+
+	if err == nil {
+		t.Fatal("expected error for approval room missing approval_reason, got nil")
+	}
+	p, ok := errs.ProblemOf(err)
+	if !ok {
+		t.Fatalf("ProblemOf returned !ok for %T", err)
+	}
+	if p.Category != errs.CategoryAPI {
+		t.Errorf("category=%q, want %q", p.Category, errs.CategoryAPI)
+	}
+	if p.Subtype != errs.SubtypeInvalidParameters {
+		t.Errorf("subtype=%q, want %q", p.Subtype, errs.SubtypeInvalidParameters)
+	}
+	if p.Code != codeInvalidParamsWithDetail {
+		t.Errorf("code=%d, want %d", p.Code, codeInvalidParamsWithDetail)
+	}
+	for _, want := range []string{"approval_reason", "calendar event.attendees create", "--as user", "rolled back successfully"} {
+		if !strings.Contains(p.Hint, want) {
+			t.Errorf("hint should contain %q, got: %q", want, p.Hint)
+		}
+	}
+}
+
+// When the add-attendees call fails AND the rollback DELETE also fails, the
+// primary error stays the add failure (classification preserved) and the Hint
+// must surface BOTH the rollback failure reason and the orphan event_id so the
+// user can clean up manually.
+func TestCreate_WithAttendees_RollbackAlsoFails(t *testing.T) {
+	f, _, _, reg := cmdutil.TestFactory(t, defaultConfig())
+
+	reg.Register(&httpmock.Stub{
+		Method: "POST",
+		URL:    "/open-apis/calendar/v4/calendars/cal_test123/events",
+		Body: map[string]interface{}{
+			"code": 0, "msg": "ok",
+			"data": map[string]interface{}{
+				"event": map[string]interface{}{
+					"event_id":   "evt_orphan",
+					"summary":    "Bad Attendees",
+					"start_time": map[string]interface{}{"timestamp": "1742515200"},
+					"end_time":   map[string]interface{}{"timestamp": "1742518800"},
+				},
+			},
+		},
+	})
+	// Add-attendees fails with a business code.
+	reg.Register(&httpmock.Stub{
+		Method: "POST",
+		URL:    "/events/evt_orphan/attendees",
+		Body:   map[string]interface{}{"code": 190002, "msg": "invalid user_id"},
+	})
+	// Rollback DELETE also fails with a distinct business code.
+	reg.Register(&httpmock.Stub{
+		Method: "DELETE",
+		URL:    "/events/evt_orphan",
+		Body:   map[string]interface{}{"code": 230098, "msg": "delete blocked"},
+	})
+
+	err := mountAndRun(t, CalendarCreate, []string{
+		"+create",
+		"--summary", "Bad Attendees",
+		"--start", "2025-03-21T00:00:00+08:00",
+		"--end", "2025-03-21T01:00:00+08:00",
+		"--calendar-id", "cal_test123",
+		"--attendee-ids", "ou_invalid",
+		"--as", "bot",
+	}, f, nil)
+
+	if err == nil {
+		t.Fatal("expected error when both add and rollback fail, got nil")
+	}
+	// Primary error is the add failure: classification preserved (code 190002).
+	var ae *errs.APIError
+	if !errors.As(err, &ae) {
+		t.Fatalf("expected *errs.APIError, got %T", err)
+	}
+	if ae.Code != 190002 {
+		t.Errorf("expected preserved add-failure code 190002, got %d", ae.Code)
+	}
+	// The Hint must surface the rollback failure (its signal) and the orphan id.
+	if !strings.Contains(ae.Hint, "rollback also failed") {
+		t.Errorf("expected rollback-failure context in hint, got: %q", ae.Hint)
+	}
+	if !strings.Contains(ae.Hint, "delete blocked") {
+		t.Errorf("expected rollbackErr signal in hint, got: %q", ae.Hint)
+	}
+	if !strings.Contains(ae.Hint, "orphan event_id=evt_orphan") {
+		t.Errorf("expected orphan event_id in hint, got: %q", ae.Hint)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// CalendarUpdate tests
+// ---------------------------------------------------------------------------
+
+func TestUpdate_PatchEventOnly(t *testing.T) {
+	f, stdout, _, reg := cmdutil.TestFactory(t, defaultConfig())
+
+	reg.Register(plainEventStub("cal_test123", "evt_update1_0"))
+	stub := &httpmock.Stub{
+		Method: "PATCH",
+		URL:    "/open-apis/calendar/v4/calendars/cal_test123/events/evt_update1_0",
+		Body: map[string]interface{}{
+			"code": 0, "msg": "ok",
+			"data": map[string]interface{}{
+				"event": map[string]interface{}{
+					"event_id": "evt_update1_0",
+					"summary":  "Updated Meeting",
+					"start_time": map[string]interface{}{
+						"timestamp": "1742518800",
+					},
+					"end_time": map[string]interface{}{
+						"timestamp": "1742522400",
+					},
+				},
+			},
+		},
+	}
+	reg.Register(stub)
+
+	err := mountAndRun(t, CalendarUpdate, []string{
+		"+update",
+		"--event-id", "evt_update1_0",
+		"--calendar-id", "cal_test123",
+		"--summary", "Updated Meeting",
+		"--description", "Updated description",
+		"--start", "2025-03-21T01:00:00+08:00",
+		"--end", "2025-03-21T02:00:00+08:00",
+		"--notify=false",
+		"--as", "bot",
+	}, f, stdout)
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	var body map[string]interface{}
+	if err := json.Unmarshal(stub.CapturedBody, &body); err != nil {
+		t.Fatalf("unmarshal captured patch body: %v", err)
+	}
+	// --description is the unified field, treated as rich text and sent as
+	// description_rich; the CLI never sends the plain description field
+	// (mutually exclusive downstream).
+	if body["summary"] != "Updated Meeting" || body["description_rich"] != "Updated description" {
+		t.Fatalf("unexpected patch body: %#v", body)
+	}
+	if _, ok := body["description"]; ok {
+		t.Fatalf("plain description must not be sent, got: %#v", body)
+	}
+	if body["need_notification"] != false {
+		t.Fatalf("need_notification = %#v, want false", body["need_notification"])
+	}
+	if !strings.Contains(stdout.String(), "evt_update1_0") {
+		t.Fatalf("stdout should contain event id, got: %s", stdout.String())
+	}
+}
+
+func TestUpdate_AddAttendees(t *testing.T) {
+	f, _, _, reg := cmdutil.TestFactory(t, defaultConfig())
+
+	reg.Register(plainEventStub("cal_test123", "evt_update2_0"))
+	stub := &httpmock.Stub{
+		Method: "POST",
+		URL:    "/open-apis/calendar/v4/calendars/cal_test123/events/evt_update2_0/attendees",
+		Body:   map[string]interface{}{"code": 0, "msg": "ok", "data": map[string]interface{}{}},
+	}
+	reg.Register(stub)
+
+	err := mountAndRun(t, CalendarUpdate, []string{
+		"+update",
+		"--event-id", "evt_update2_0",
+		"--calendar-id", "cal_test123",
+		"--add-attendee-ids", "ou_user1,oc_group1,omm_room1",
+		"--as", "bot",
+	}, f, nil)
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	body := decodeCalendarCapturedBody(t, stub)
+	attendees, _ := body["attendees"].([]interface{})
+	if !calendarBodyHasAttendee(attendees, "user", "user_id", "ou_user1") ||
+		!calendarBodyHasAttendee(attendees, "chat", "chat_id", "oc_group1") ||
+		!calendarBodyHasAttendee(attendees, "resource", "room_id", "omm_room1") {
+		t.Fatalf("unexpected add attendees body: %#v", body)
+	}
+}
+
+func TestUpdate_RemoveAttendees(t *testing.T) {
+	f, _, _, reg := cmdutil.TestFactory(t, defaultConfig())
+
+	reg.Register(plainEventStub("cal_test123", "evt_update3_0"))
+	stub := &httpmock.Stub{
+		Method: "POST",
+		URL:    "/open-apis/calendar/v4/calendars/cal_test123/events/evt_update3_0/attendees/batch_delete",
+		Body:   map[string]interface{}{"code": 0, "msg": "ok", "data": map[string]interface{}{}},
+	}
+	reg.Register(stub)
+
+	err := mountAndRun(t, CalendarUpdate, []string{
+		"+update",
+		"--event-id", "evt_update3_0",
+		"--calendar-id", "cal_test123",
+		"--remove-attendee-ids", "ou_user1,oc_group1,omm_room1",
+		"--notify=false",
+		"--as", "bot",
+	}, f, nil)
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	body := decodeCalendarCapturedBody(t, stub)
+	deleteIDs, _ := body["delete_ids"].([]interface{})
+	if body["need_notification"] != false {
+		t.Fatalf("need_notification = %#v, want false", body["need_notification"])
+	}
+	if !calendarBodyHasAttendee(deleteIDs, "user", "user_id", "ou_user1") ||
+		!calendarBodyHasAttendee(deleteIDs, "chat", "chat_id", "oc_group1") ||
+		!calendarBodyHasAttendee(deleteIDs, "resource", "room_id", "omm_room1") {
+		t.Fatalf("unexpected remove attendees body: %#v", body)
+	}
+}
+
+func TestUpdate_CombinedPatchRemoveAdd(t *testing.T) {
+	f, _, _, reg := cmdutil.TestFactory(t, defaultConfig())
+
+	reg.Register(plainEventStub("primary", "evt_update4_0"))
+	patchStub := &httpmock.Stub{
+		Method: "PATCH",
+		URL:    "/events/evt_update4_0",
+		Body: map[string]interface{}{
+			"code": 0, "msg": "ok",
+			"data": map[string]interface{}{"event": map[string]interface{}{"event_id": "evt_update4_0", "summary": "Combined"}},
+		},
+	}
+	removeStub := &httpmock.Stub{
+		Method: "POST",
+		URL:    "/events/evt_update4_0/attendees/batch_delete",
+		Body:   map[string]interface{}{"code": 0, "msg": "ok", "data": map[string]interface{}{}},
+	}
+	addStub := &httpmock.Stub{
+		Method: "POST",
+		URL:    "/events/evt_update4_0/attendees",
+		Body:   map[string]interface{}{"code": 0, "msg": "ok", "data": map[string]interface{}{}},
+	}
+	reg.Register(patchStub)
+	reg.Register(removeStub)
+	reg.Register(addStub)
+
+	err := mountAndRun(t, CalendarUpdate, []string{
+		"+update",
+		"--event-id", "evt_update4_0",
+		"--summary", "Combined",
+		"--remove-attendee-ids", "ou_old",
+		"--add-attendee-ids", "ou_new",
+		"--as", "bot",
+	}, f, nil)
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(patchStub.CapturedBody) == 0 || len(removeStub.CapturedBody) == 0 || len(addStub.CapturedBody) == 0 {
+		t.Fatalf("expected patch, remove, and add requests to be captured")
+	}
+}
+
+func TestUpdate_DryRun_MultiStep(t *testing.T) {
+	f, stdout, _, _ := cmdutil.TestFactory(t, defaultConfig())
+
+	err := mountAndRun(t, CalendarUpdate, []string{
+		"+update",
+		"--event-id", "evt_dry",
+		"--calendar-id", "cal_test123",
+		"--summary", "Dry",
+		"--remove-attendee-ids", "omm_oldroom",
+		"--add-attendee-ids", "ou_new,omm_newroom",
+		"--dry-run",
+		"--as", "bot",
+	}, f, stdout)
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	out := stdout.String()
+	for _, want := range []string{"PATCH", "batch_delete", "attendees", "omm_oldroom", "omm_newroom"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("dry-run should contain %q, got: %s", want, out)
+		}
+	}
+}
+
+func TestUpdate_Validation(t *testing.T) {
+	cases := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{
+			name: "no fields",
+			args: []string{"+update", "--event-id", "evt_1", "--as", "bot"},
+			want: "nothing to update",
+		},
+		{
+			name: "invalid attendee",
+			args: []string{"+update", "--event-id", "evt_1", "--add-attendee-ids", "bad", "--as", "bot"},
+			want: "invalid attendee id format",
+		},
+		{
+			name: "duplicate add remove",
+			args: []string{"+update", "--event-id", "evt_1", "--add-attendee-ids", "ou_same", "--remove-attendee-ids", "ou_same", "--as", "bot"},
+			want: "appears in both",
+		},
+		{
+			name: "start without end",
+			args: []string{"+update", "--event-id", "evt_1", "--start", "2025-03-21T00:00:00+08:00", "--as", "bot"},
+			want: "must be specified together",
+		},
+		{
+			name: "end before start",
+			args: []string{"+update", "--event-id", "evt_1", "--start", "2025-03-21T10:00:00+08:00", "--end", "2025-03-21T09:00:00+08:00", "--as", "bot"},
+			want: "end time must be after start time",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f, _, _, _ := cmdutil.TestFactory(t, defaultConfig())
+			err := mountAndRun(t, CalendarUpdate, tc.args, f, nil)
+			if err == nil {
+				t.Fatal("expected validation error, got nil")
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("expected error containing %q, got %v", tc.want, err)
+			}
+		})
+	}
+}
+
+func decodeCalendarCapturedBody(t *testing.T, stub *httpmock.Stub) map[string]interface{} {
+	t.Helper()
+	var body map[string]interface{}
+	if err := json.Unmarshal(stub.CapturedBody, &body); err != nil {
+		t.Fatalf("unmarshal captured body: %v\nraw=%s", err, string(stub.CapturedBody))
+	}
+	return body
+}
+
+func calendarBodyHasAttendee(items []interface{}, typ, key, value string) bool {
+	for _, item := range items {
+		m, _ := item.(map[string]interface{})
+		if m["type"] == typ && m[key] == value {
+			return true
+		}
+	}
+	return false
+}
+
+// ---------------------------------------------------------------------------
+// CalendarAgenda tests
+// ---------------------------------------------------------------------------
+
+func TestCalendarShortcuts_RequireLoginUnlessExplicitBot(t *testing.T) {
+	cases := []struct {
+		name     string
+		shortcut common.Shortcut
+		args     []string
+	}{
+		{
+			name:     "agenda",
+			shortcut: CalendarAgenda,
+			args:     []string{"+agenda", "--start", "2025-03-21", "--end", "2025-03-21"},
+		},
+		{
+			name:     "create",
+			shortcut: CalendarCreate,
+			args:     []string{"+create", "--summary", "Test Meeting", "--start", "2025-03-21T00:00:00+08:00", "--end", "2025-03-21T01:00:00+08:00"},
+		},
+		{
+			name:     "update",
+			shortcut: CalendarUpdate,
+			args:     []string{"+update", "--event-id", "evt_1", "--summary", "Updated"},
+		},
+		{
+			name:     "freebusy",
+			shortcut: CalendarFreebusy,
+			args:     []string{"+freebusy", "--start", "2025-03-21", "--end", "2025-03-21"},
+		},
+		{
+			name:     "room-find",
+			shortcut: CalendarRoomFind,
+			args:     []string{"+room-find", "--slot", "2025-03-21T00:00:00+08:00~2025-03-21T01:00:00+08:00"},
+		},
+		{
+			name:     "rsvp",
+			shortcut: CalendarRsvp,
+			args:     []string{"+rsvp", "--event-id", "evt_rsvp1", "--rsvp-status", "accept"},
+		},
+		{
+			name:     "suggestion",
+			shortcut: CalendarSuggestion,
+			args:     []string{"+suggestion", "--start", "2025-03-21", "--end", "2025-03-21"},
+		},
+		{
+			name:     "list-attendees",
+			shortcut: CalendarListAttendees,
+			args:     []string{"+list-attendees", "--event-id", "evt_1"},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f, _, _, _ := cmdutil.TestFactory(t, noLoginConfig())
+
+			err := mountAndRun(t, tc.shortcut, tc.args, f, nil)
+			if err == nil {
+				t.Fatal("expected auth guard error")
+			}
+			if !strings.Contains(err.Error(), "auth login") {
+				t.Fatalf("expected auth login guidance, got: %v", err)
+			}
+			if !strings.Contains(err.Error(), "--as bot") {
+				t.Fatalf("expected explicit bot guidance, got: %v", err)
+			}
+		})
+	}
+}
+
+func TestAgenda_ExplicitBotBypassesLoginGuard(t *testing.T) {
+	f, stdout, _, reg := cmdutil.TestFactory(t, noLoginConfig())
+
+	reg.Register(&httpmock.Stub{
+		Method: "GET",
+		URL:    "/events/instance_view",
+		Body: map[string]interface{}{
+			"code": 0, "msg": "ok",
+			"data": map[string]interface{}{
+				"items": []interface{}{},
+			},
+		},
+	})
+
+	err := mountAndRun(t, CalendarAgenda, []string{
+		"+agenda",
+		"--start", "2025-03-21",
+		"--end", "2025-03-21",
+		"--as", "bot",
+	}, f, stdout)
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestAgenda_DefaultAsBotBypassesLoginGuard(t *testing.T) {
+	f, stdout, _, reg := cmdutil.TestFactory(t, noLoginBotDefaultConfig())
+
+	reg.Register(&httpmock.Stub{
+		Method: "GET",
+		URL:    "/events/instance_view",
+		Body: map[string]interface{}{
+			"code": 0, "msg": "ok",
+			"data": map[string]interface{}{
+				"items": []interface{}{},
+			},
+		},
+	})
+
+	err := mountAndRun(t, CalendarAgenda, []string{
+		"+agenda",
+		"--start", "2025-03-21",
+		"--end", "2025-03-21",
+	}, f, stdout)
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestAgenda_Success(t *testing.T) {
+	f, stdout, _, reg := cmdutil.TestFactory(t, defaultConfig())
+
+	reg.Register(&httpmock.Stub{
+		Method: "GET",
+		URL:    "/events/instance_view",
+		Body: map[string]interface{}{
+			"code": 0, "msg": "ok",
+			"data": map[string]interface{}{
+				"items": []interface{}{
+					map[string]interface{}{
+						"event_id": "evt_a1",
+						"summary":  "Morning standup",
+						"status":   "confirmed",
+						"start_time": map[string]interface{}{
+							"timestamp": "1742515200",
+						},
+						"end_time": map[string]interface{}{
+							"timestamp": "1742518800",
+						},
+					},
+					map[string]interface{}{
+						"event_id": "evt_a2",
+						"summary":  "All Day Event",
+						"status":   "confirmed",
+						"start_time": map[string]interface{}{
+							"date": "2025-03-21",
+						},
+						"end_time": map[string]interface{}{
+							"date": "2025-03-21",
+						},
+					},
+				},
+			},
+		},
+	})
+
+	err := mountAndRun(t, CalendarAgenda, []string{
+		"+agenda",
+		"--start", "2025-03-21",
+		"--end", "2025-03-21",
+		"--format", "prettry",
+		"--as", "bot",
+	}, f, stdout)
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(stdout.String(), "evt_a1") {
+		t.Errorf("stdout should contain event_id, got: %s", stdout.String())
+	}
+}
+
+func TestAgenda_UnifiesDescriptionRich(t *testing.T) {
+	f, stdout, _, reg := cmdutil.TestFactory(t, defaultConfig())
+
+	reg.Register(&httpmock.Stub{
+		Method: "GET",
+		URL:    "/events/instance_view",
+		Body: map[string]interface{}{
+			"code": 0, "msg": "ok",
+			"data": map[string]interface{}{
+				"items": []interface{}{
+					map[string]interface{}{
+						"event_id":         "evt_rich",
+						"summary":          "Rich",
+						"status":           "confirmed",
+						"description":      "[测试]\n友情提醒",
+						"description_rich": "友情提醒",
+						"start_time":       map[string]interface{}{"timestamp": "1742515200"},
+						"end_time":         map[string]interface{}{"timestamp": "1742518800"},
+					},
+					map[string]interface{}{
+						"event_id":    "evt_plain",
+						"summary":     "Plain",
+						"status":      "confirmed",
+						"description": "just text",
+						"start_time":  map[string]interface{}{"timestamp": "1742515200"},
+						"end_time":    map[string]interface{}{"timestamp": "1742518800"},
+					},
+				},
+			},
+		},
+	})
+
+	err := mountAndRun(t, CalendarAgenda, []string{
+		"+agenda",
+		"--start", "2025-03-21",
+		"--end", "2025-03-21",
+		"--as", "bot",
+	}, f, stdout)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	out := stdout.String()
+	// Read exposes a single unified description field: it carries the rich
+	// (Markdown) value when present, and the plain text otherwise. The internal
+	// description_rich key is never surfaced.
+	if !strings.Contains(out, "\"description\": \"友情提醒\"") {
+		t.Errorf("expected rich value surfaced under description, got: %s", out)
+	}
+	if !strings.Contains(out, "\"description\": \"just text\"") {
+		t.Errorf("expected plain description surfaced for plain-only event, got: %s", out)
+	}
+	if strings.Contains(out, "description_rich") {
+		t.Errorf("description_rich must not appear in output, got: %s", out)
+	}
+}
+
+func TestAgenda_EmptyResult(t *testing.T) {
+	f, stdout, _, reg := cmdutil.TestFactory(t, defaultConfig())
+
+	reg.Register(&httpmock.Stub{
+		Method: "GET",
+		URL:    "/events/instance_view",
+		Body: map[string]interface{}{
+			"code": 0, "msg": "ok",
+			"data": map[string]interface{}{
+				"items": []interface{}{},
+			},
+		},
+	})
+
+	err := mountAndRun(t, CalendarAgenda, []string{
+		"+agenda",
+		"--start", "2025-03-21",
+		"--end", "2025-03-21",
+		"--as", "bot",
+	}, f, stdout)
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	var envelope map[string]interface{}
+	if json.Unmarshal(stdout.Bytes(), &envelope) == nil {
+		if data, ok := envelope["data"].([]interface{}); ok && len(data) != 0 {
+			t.Errorf("expected empty data array, got %d items", len(data))
+		}
+	}
+}
+
+func TestAgenda_FiltersCancelledEvents(t *testing.T) {
+	f, stdout, _, reg := cmdutil.TestFactory(t, defaultConfig())
+
+	reg.Register(&httpmock.Stub{
+		Method: "GET",
+		URL:    "/events/instance_view",
+		Body: map[string]interface{}{
+			"code": 0, "msg": "ok",
+			"data": map[string]interface{}{
+				"items": []interface{}{
+					map[string]interface{}{
+						"event_id":   "evt_confirmed",
+						"summary":    "Active Event",
+						"status":     "confirmed",
+						"start_time": map[string]interface{}{"timestamp": "1742515200"},
+						"end_time":   map[string]interface{}{"timestamp": "1742518800"},
+					},
+					map[string]interface{}{
+						"event_id":   "evt_cancelled",
+						"summary":    "Cancelled Event",
+						"status":     "cancelled",
+						"start_time": map[string]interface{}{"timestamp": "1742519000"},
+						"end_time":   map[string]interface{}{"timestamp": "1742522600"},
+					},
+				},
+			},
+		},
+	})
+
+	err := mountAndRun(t, CalendarAgenda, []string{
+		"+agenda",
+		"--start", "2025-03-21",
+		"--end", "2025-03-21",
+		"--as", "bot",
+	}, f, stdout)
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	out := stdout.String()
+	if !strings.Contains(out, "evt_confirmed") {
+		t.Errorf("stdout should contain confirmed event, got: %s", out)
+	}
+	if strings.Contains(out, "evt_cancelled") {
+		t.Errorf("stdout should not contain cancelled event, got: %s", out)
+	}
+}
+
+func TestAgenda_ExplicitCalendarId(t *testing.T) {
+	f, _, _, reg := cmdutil.TestFactory(t, defaultConfig())
+	reg.Register(&httpmock.Stub{
+		Method: "GET",
+		URL:    "/open-apis/calendar/v4/calendars/cal_my/events/instance_view",
+		Body: map[string]interface{}{
+			"code": 0, "msg": "ok",
+			"data": map[string]interface{}{
+				"items": []interface{}{},
+			},
+		},
+	})
+
+	err := mountAndRun(t, CalendarAgenda, []string{
+		"+agenda",
+		"--start", "2025-03-21",
+		"--end", "2025-03-21",
+		"--calendar-id", "cal_my",
+		"--as", "bot",
+	}, f, nil)
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestAgenda_InvalidParamsWithDetail(t *testing.T) {
+	f, _, _, reg := cmdutil.TestFactory(t, defaultConfig())
+
+	reg.Register(&httpmock.Stub{
+		Method: "GET",
+		URL:    "/events/instance_view",
+		Body: map[string]interface{}{
+			"code": codeInvalidParamsWithDetail,
+			"msg":  "invalid params",
+			"error": map[string]interface{}{
+				"details": []interface{}{
+					map[string]interface{}{"value": "start_time is required"},
+				},
+			},
+		},
+	})
+
+	err := mountAndRun(t, CalendarAgenda, []string{
+		"+agenda",
+		"--start", "2025-03-21",
+		"--end", "2025-03-21",
+		"--as", "bot",
+	}, f, nil)
+
+	if err == nil {
+		t.Fatal("expected error for 190014, got nil")
+	}
+	var ae *errs.APIError
+	if !errors.As(err, &ae) {
+		t.Fatalf("expected *errs.APIError, got %T", err)
+	}
+	if ae.Subtype != errs.SubtypeInvalidParameters {
+		t.Errorf("subtype=%q, want invalid_parameters", ae.Subtype)
+	}
+	if ae.Code != codeInvalidParamsWithDetail {
+		t.Errorf("expected code %d, got %d", codeInvalidParamsWithDetail, ae.Code)
+	}
+	if !strings.Contains(ae.Hint, "start_time is required") {
+		t.Errorf("expected detail value in hint, got %q", ae.Hint)
+	}
+}
+
+func TestAgenda_NonAPIError_Passthrough(t *testing.T) {
+	f, _, _, reg := cmdutil.TestFactory(t, defaultConfig())
+
+	reg.Register(&httpmock.Stub{
+		Method:  "GET",
+		URL:     "/events/instance_view",
+		RawBody: []byte("this is not json"),
+	})
+
+	err := mountAndRun(t, CalendarAgenda, []string{
+		"+agenda",
+		"--start", "2025-03-21",
+		"--end", "2025-03-21",
+		"--as", "bot",
+	}, f, nil)
+
+	if err == nil {
+		t.Fatal("expected error for non-JSON response, got nil")
+	}
+	// A non-JSON 200 body is not an API business error: it surfaces as a typed
+	// InternalError{SubtypeInvalidResponse} from WrapJSONResponseParseError.
+	var ie *errs.InternalError
+	if !errors.As(err, &ie) {
+		t.Fatalf("expected *errs.InternalError, got %T", err)
+	}
+	if ie.Subtype != errs.SubtypeInvalidResponse {
+		t.Errorf("subtype=%q, want invalid_response", ie.Subtype)
+	}
+}
+
+// TestAgenda_TimeRangeExceeded_RecursiveSplit pins that a 193103 ("time range
+// exceeds 40-day limit") response from CallAPITyped is caught, the range is
+// split, and the successful sub-range results are aggregated. The stubs are
+// consumed in registration order: full range → 193103, then the two halves
+// succeed.
+func TestAgenda_TimeRangeExceeded_RecursiveSplit(t *testing.T) {
+	f, stdout, _, reg := cmdutil.TestFactory(t, defaultConfig())
+
+	// Full range rejected with the time-range-exceeded code.
+	reg.Register(&httpmock.Stub{
+		Method: "GET",
+		URL:    "/events/instance_view",
+		Body:   map[string]interface{}{"code": 193103, "msg": "time range exceeds limit"},
+	})
+	// Left half succeeds with one event.
+	reg.Register(&httpmock.Stub{
+		Method: "GET",
+		URL:    "/events/instance_view",
+		Body: map[string]interface{}{
+			"code": 0, "msg": "ok",
+			"data": map[string]interface{}{
+				"items": []interface{}{
+					map[string]interface{}{
+						"event_id":   "evt_left",
+						"summary":    "Left",
+						"status":     "confirmed",
+						"start_time": map[string]interface{}{"timestamp": "1742515200"},
+						"end_time":   map[string]interface{}{"timestamp": "1742518800"},
+					},
+				},
+			},
+		},
+	})
+	// Right half succeeds with one event.
+	reg.Register(&httpmock.Stub{
+		Method: "GET",
+		URL:    "/events/instance_view",
+		Body: map[string]interface{}{
+			"code": 0, "msg": "ok",
+			"data": map[string]interface{}{
+				"items": []interface{}{
+					map[string]interface{}{
+						"event_id":   "evt_right",
+						"summary":    "Right",
+						"status":     "confirmed",
+						"start_time": map[string]interface{}{"timestamp": "1742519000"},
+						"end_time":   map[string]interface{}{"timestamp": "1742522600"},
+					},
+				},
+			},
+		},
+	})
+
+	err := mountAndRun(t, CalendarAgenda, []string{
+		"+agenda",
+		"--start", "2025-03-21T00:00:00+08:00",
+		"--end", "2025-03-21T06:00:00+08:00",
+		"--as", "bot",
+	}, f, stdout)
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	out := stdout.String()
+	if !strings.Contains(out, "evt_left") || !strings.Contains(out, "evt_right") {
+		t.Errorf("expected aggregated split results, got: %s", out)
+	}
+}
+
+// TestAgenda_TooManyInstances_SplitExhausted pins that when the range is already
+// at or below the minimum split window and the server still returns 193104, the
+// recursion stops and surfaces a typed APIError carrying code 193104 (exit 1).
+func TestAgenda_TooManyInstances_SplitExhausted(t *testing.T) {
+	f, _, _, reg := cmdutil.TestFactory(t, defaultConfig())
+
+	reg.Register(&httpmock.Stub{
+		Method:   "GET",
+		URL:      "/events/instance_view",
+		Reusable: true,
+		Body:     map[string]interface{}{"code": 193104, "msg": "too many instances"},
+	})
+
+	// A 1-hour span is below minSplitWindowSeconds (2h), so the 193104 branch
+	// cannot split further and must surface the typed error.
+	err := mountAndRun(t, CalendarAgenda, []string{
+		"+agenda",
+		"--start", "2025-03-21T00:00:00+08:00",
+		"--end", "2025-03-21T01:00:00+08:00",
+		"--as", "bot",
+	}, f, nil)
+
+	if err == nil {
+		t.Fatal("expected error when split is exhausted, got nil")
+	}
+	var ae *errs.APIError
+	if !errors.As(err, &ae) {
+		t.Fatalf("expected *errs.APIError, got %T", err)
+	}
+	if ae.Code != 193104 {
+		t.Errorf("code=%d, want 193104", ae.Code)
+	}
+	if output.ExitCodeOf(err) != output.ExitAPI {
+		t.Errorf("exit=%d, want ExitAPI", output.ExitCodeOf(err))
+	}
+	if !strings.Contains(ae.Error(), "narrow the range") {
+		t.Errorf("expected narrow-the-range guidance, got: %q", ae.Error())
+	}
+}
+
+// ---------------------------------------------------------------------------
+// CalendarFreebusy tests
+// ---------------------------------------------------------------------------
+
+func TestFreebusy_Success(t *testing.T) {
+	f, stdout, _, reg := cmdutil.TestFactory(t, defaultConfig())
+	reg.Register(&httpmock.Stub{
+		Method: "POST",
+		URL:    "/open-apis/calendar/v4/freebusy/batch",
+		Body: map[string]interface{}{
+			"code": 0, "msg": "ok",
+			"data": map[string]interface{}{
+				"freebusy_lists": []interface{}{
+					map[string]interface{}{
+						"user_id": "ou_someone",
+						"freebusy_items": []interface{}{
+							map[string]interface{}{
+								"start_time": "2025-03-21T10:00:00+08:00",
+								"end_time":   "2025-03-21T11:00:00+08:00",
+							},
+						},
+					},
+				},
+			},
+		},
+	})
+
+	err := mountAndRun(t, CalendarFreebusy, []string{
+		"+freebusy",
+		"--start", "2025-03-21",
+		"--end", "2025-03-21",
+		"--user-id", "ou_someone",
+		"--as", "bot",
+	}, f, stdout)
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(stdout.String(), "start_time") {
+		t.Errorf("stdout should contain freebusy data, got: %s", stdout.String())
+	}
+}
+
+func TestFreebusy_BotWithoutUser_Fails(t *testing.T) {
+	f, _, _, _ := cmdutil.TestFactory(t, defaultConfig())
+
+	err := mountAndRun(t, CalendarFreebusy, []string{
+		"+freebusy",
+		"--start", "2025-03-21",
+		"--end", "2025-03-21",
+		"--as", "bot",
+	}, f, nil)
+
+	if err == nil {
+		t.Fatal("expected validation error for bot without --user-id, got nil")
+	}
+	if !strings.Contains(err.Error(), "--user-id is required") {
+		t.Errorf("error should mention --user-id requirement, got: %v", err)
+	}
+}
+
+func TestFreebusy_APIError(t *testing.T) {
+	f, _, _, reg := cmdutil.TestFactory(t, defaultConfig())
+	reg.Register(&httpmock.Stub{
+		Method: "POST",
+		URL:    "/open-apis/calendar/v4/freebusy/batch",
+		Body: map[string]interface{}{
+			"code": 190001,
+			"msg":  "permission denied",
+		},
+	})
+
+	err := mountAndRun(t, CalendarFreebusy, []string{
+		"+freebusy",
+		"--start", "2025-03-21",
+		"--end", "2025-03-21",
+		"--user-id", "ou_someone",
+		"--as", "bot",
+	}, f, nil)
+
+	if err == nil {
+		t.Fatal("expected error for API failure, got nil")
+	}
+}
+
+func TestFreebusy_InvalidParamsWithDetail(t *testing.T) {
+	f, _, _, reg := cmdutil.TestFactory(t, defaultConfig())
+
+	reg.Register(&httpmock.Stub{
+		Method: "POST",
+		URL:    "/open-apis/calendar/v4/freebusy/batch",
+		Body: map[string]interface{}{
+			"code": codeInvalidParamsWithDetail,
+			"msg":  "invalid params",
+			"error": map[string]interface{}{
+				"details": []interface{}{
+					map[string]interface{}{"value": "user_id is invalid"},
+				},
+			},
+		},
+	})
+
+	err := mountAndRun(t, CalendarFreebusy, []string{
+		"+freebusy",
+		"--start", "2025-03-21",
+		"--end", "2025-03-21",
+		"--user-id", "ou_someone",
+		"--as", "bot",
+	}, f, nil)
+
+	if err == nil {
+		t.Fatal("expected error for 190014, got nil")
+	}
+	var ae *errs.APIError
+	if !errors.As(err, &ae) {
+		t.Fatalf("expected *errs.APIError, got %T", err)
+	}
+	if ae.Subtype != errs.SubtypeInvalidParameters {
+		t.Errorf("subtype=%q, want invalid_parameters", ae.Subtype)
+	}
+	if ae.Code != codeInvalidParamsWithDetail {
+		t.Errorf("expected code %d, got %d", codeInvalidParamsWithDetail, ae.Code)
+	}
+	if !strings.Contains(ae.Hint, "user_id is invalid") {
+		t.Errorf("expected detail value in hint, got %q", ae.Hint)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// CalendarSuggestion tests
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// CalendarRsvp tests
+// ---------------------------------------------------------------------------
+
+func TestRsvp_Success(t *testing.T) {
+	f, stdout, _, reg := cmdutil.TestFactory(t, defaultConfig())
+
+	reg.Register(&httpmock.Stub{
+		Method: "POST",
+		URL:    "/open-apis/calendar/v4/calendars/primary/events/evt_rsvp1/reply",
+		Body: map[string]interface{}{
+			"code": 0, "msg": "ok",
+		},
+	})
+
+	err := mountAndRun(t, CalendarRsvp, []string{
+		"+rsvp",
+		"--event-id", "evt_rsvp1",
+		"--rsvp-status", "accept",
+		"--as", "bot",
+	}, f, stdout)
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	for _, want := range []string{`"event_id": "evt_rsvp1"`, `"rsvp_status": "accept"`} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Errorf("stdout should contain %s, got: %s", want, stdout.String())
+		}
+	}
+}
+
+func TestRsvp_InvalidStatus(t *testing.T) {
+	f, _, _, _ := cmdutil.TestFactory(t, defaultConfig())
+
+	err := mountAndRun(t, CalendarRsvp, []string{
+		"+rsvp",
+		"--event-id", "evt_rsvp1",
+		"--rsvp-status", "invalid_status",
+		"--as", "bot",
+	}, f, nil)
+
+	if err == nil {
+		t.Fatal("expected validation error for invalid status, got nil")
+	}
+	if !strings.Contains(err.Error(), "invalid value") {
+		t.Errorf("error should mention invalid value, got: %v", err)
+	}
+}
+
+func TestRsvp_APIError(t *testing.T) {
+	f, _, _, reg := cmdutil.TestFactory(t, defaultConfig())
+
+	reg.Register(&httpmock.Stub{
+		Method: "POST",
+		URL:    "/open-apis/calendar/v4/calendars/primary/events/evt_rsvp1/reply",
+		Body: map[string]interface{}{
+			"code": 190001,
+			"msg":  "permission denied",
+		},
+	})
+
+	err := mountAndRun(t, CalendarRsvp, []string{
+		"+rsvp",
+		"--event-id", "evt_rsvp1",
+		"--rsvp-status", "decline",
+		"--as", "bot",
+	}, f, nil)
+
+	if err == nil {
+		t.Fatal("expected error for API failure, got nil")
+	}
+}
+
+func TestRsvp_RejectsDangerousChars(t *testing.T) {
+	f, _, _, _ := cmdutil.TestFactory(t, defaultConfig())
+
+	err := mountAndRun(t, CalendarRsvp, []string{
+		"+rsvp",
+		"--event-id", "evt_rsvp1\u202e",
+		"--rsvp-status", "accept",
+		"--as", "bot",
+	}, f, nil)
+
+	if err == nil {
+		t.Fatal("expected validation error for dangerous characters, got nil")
+	}
+	if !strings.Contains(err.Error(), "dangerous Unicode") && !strings.Contains(err.Error(), "control character") {
+		t.Errorf("error should mention dangerous input, got: %v", err)
+	}
+	var ve *errs.ValidationError
+	if !errors.As(err, &ve) {
+		t.Fatalf("want *errs.ValidationError, got %T", err)
+	}
+	if ve.Param != "--event-id" {
+		t.Errorf("param=%q, want --event-id", ve.Param)
+	}
+}
+
+func TestRsvp_DryRun_TrimmedPrimaryCalendar(t *testing.T) {
+	f, stdout, _, _ := cmdutil.TestFactory(t, defaultConfig())
+
+	err := mountAndRun(t, CalendarRsvp, []string{
+		"+rsvp",
+		"--calendar-id", " primary ",
+		"--event-id", "evt_rsvp1",
+		"--rsvp-status", "accept",
+		"--dry-run",
+		"--as", "bot",
+	}, f, stdout)
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(stdout.String(), `"calendar_id": "\u003cprimary\u003e"`) {
+		t.Errorf("dry-run should normalize primary calendar, got: %s", stdout.String())
+	}
+}
+
+func TestSuggestion_Success(t *testing.T) {
+	f, stdout, _, reg := cmdutil.TestFactory(t, defaultConfig())
+	reg.Register(&httpmock.Stub{
+		Method: "POST",
+		URL:    "/open-apis/calendar/v4/freebusy/suggestion",
+		Body: map[string]interface{}{
+			"code": 0, "msg": "ok",
+			"data": map[string]interface{}{
+				"suggestions": []interface{}{
+					map[string]interface{}{
+						"event_start_time": "2025-03-21T10:00:00+08:00",
+						"event_end_time":   "2025-03-21T11:00:00+08:00",
+						"recommend_reason": "everyone is free",
+					},
+				},
+				"ai_action_guidance": "book it",
+			},
+		},
+	})
+
+	// 正常执行
+	err := mountAndRun(t, CalendarSuggestion, []string{
+		"+suggestion",
+		"--start", "2025-03-21",
+		"--end", "2025-03-21",
+		"--attendee-ids", "ou_user1,oc_chat1",
+		"--event-rrule", "FREQ=DAILY;BYDAY=MO",
+		"--duration-minutes", "60",
+		"--timezone", "Asia/Shanghai",
+		"--as", "bot",
+	}, f, stdout)
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	out := stdout.String()
+	if !strings.Contains(out, "2025-03-21T10:00:00+08:00") {
+		t.Errorf("stdout should contain start time, got: %s", out)
+	}
+	if !strings.Contains(out, "everyone is free") {
+		t.Errorf("stdout should contain reason, got: %s", out)
+	}
+	if !strings.Contains(out, `"ai_action_guidance": "book it"`) {
+		t.Errorf("stdout should contain guidance, got: %s", out)
+	}
+}
+
+func TestSuggestion_DryRun(t *testing.T) {
+	f, stdout, _, _ := cmdutil.TestFactory(t, defaultConfig())
+	err := mountAndRun(t, CalendarSuggestion, []string{
+		"+suggestion",
+		"--start", "2025-03-21",
+		"--end", "2025-03-21",
+		"--attendee-ids", "ou_user1,oc_chat1",
+		"--event-rrule", "FREQ=DAILY;BYDAY=MO",
+		"--duration-minutes", "60",
+		"--timezone", "Asia/Shanghai",
+		"--dry-run",
+		"--as", "bot",
+	}, f, stdout)
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestSuggestion_Pretty(t *testing.T) {
+	f, stdout, _, reg := cmdutil.TestFactory(t, defaultConfig())
+	reg.Register(&httpmock.Stub{
+		Method: "POST",
+		URL:    "/open-apis/calendar/v4/freebusy/suggestion",
+		Body: map[string]interface{}{
+			"code": 0, "msg": "ok",
+			"data": map[string]interface{}{
+				"suggestions": []interface{}{
+					map[string]interface{}{
+						"event_start_time": "2025-03-21T10:00:00+08:00",
+						"event_end_time":   "2025-03-21T11:00:00+08:00",
+						"recommend_reason": "everyone is free",
+					},
+				},
+				"ai_action_guidance": "book it",
+			},
+		},
+	})
+
+	err := mountAndRun(t, CalendarSuggestion, []string{
+		"+suggestion",
+		"--start", "2025-03-21",
+		"--end", "2025-03-21",
+		"--attendee-ids", "ou_user1,oc_chat1",
+		"--event-rrule", "FREQ=DAILY;BYDAY=MO",
+		"--duration-minutes", "60",
+		"--timezone", "Asia/Shanghai",
+		"--as", "bot",
+	}, f, stdout)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestSuggestion_DefaultTime(t *testing.T) {
+	f, stdout, _, reg := cmdutil.TestFactory(t, defaultConfig())
+	reg.Register(&httpmock.Stub{
+		Method: "POST",
+		URL:    "/open-apis/calendar/v4/freebusy/suggestion",
+		Body: map[string]interface{}{
+			"code": 0, "msg": "ok",
+			"data": map[string]interface{}{
+				"suggestions": []interface{}{
+					map[string]interface{}{
+						"event_start_time": "2025-03-21T10:00:00+08:00",
+						"event_end_time":   "2025-03-21T11:00:00+08:00",
+						"recommend_reason": "everyone is free",
+					},
+				},
+				"ai_action_guidance": "book it",
+			},
+		},
+	})
+
+	err := mountAndRun(t, CalendarSuggestion, []string{
+		"+suggestion",
+		"--as", "bot",
+	}, f, stdout)
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestSuggestion_ExcludeTime(t *testing.T) {
+	f, stdout, _, reg := cmdutil.TestFactory(t, defaultConfig())
+	reg.Register(&httpmock.Stub{
+		Method: "POST",
+		URL:    "/open-apis/calendar/v4/freebusy/suggestion",
+		Body: map[string]interface{}{
+			"code": 0, "msg": "ok",
+			"data": map[string]interface{}{
+				"suggestions": []interface{}{
+					map[string]interface{}{
+						"event_start_time": "2025-03-21T10:00:00+08:00",
+						"event_end_time":   "2025-03-21T11:00:00+08:00",
+						"recommend_reason": "everyone is free",
+					},
+				},
+				"ai_action_guidance": "book it",
+			},
+		},
+	})
+
+	err := mountAndRun(t, CalendarSuggestion, []string{
+		"+suggestion",
+		"--start", "2025-03-21T14:00:00+08:00",
+		"--end", "2025-03-21T18:00:00+08:00",
+		"--duration-minutes", "30",
+		"--timezone", "Asia/Shanghai",
+		"--exclude", "2025-03-21T14:00:00+08:00~2025-03-21T14:30:00+08:00,2025-03-21T15:00:00+08:00~2025-03-21T15:30:00+08:00",
+		"--as", "bot",
+	}, f, stdout)
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestSuggestion_InvalidAttendee_Fails(t *testing.T) {
+	f, _, _, _ := cmdutil.TestFactory(t, defaultConfig())
+
+	err := mountAndRun(t, CalendarSuggestion, []string{
+		"+suggestion",
+		"--attendee-ids", "invalid_id",
+		"--as", "bot",
+	}, f, nil)
+
+	if err == nil {
+		t.Fatal("expected validation error for invalid attendee id, got nil")
+	}
+	if !strings.Contains(err.Error(), "invalid attendee id format") {
+		t.Errorf("error should mention attendee id format, got: %v", err)
+	}
+	var ve *errs.ValidationError
+	if !errors.As(err, &ve) {
+		t.Fatalf("want *errs.ValidationError, got %T", err)
+	}
+	if ve.Param != "--attendee-ids" {
+		t.Errorf("param=%q, want --attendee-ids", ve.Param)
+	}
+}
+
+func TestSuggestion_HTTPNon2xx_Typed(t *testing.T) {
+	f, _, _, reg := cmdutil.TestFactory(t, defaultConfig())
+	reg.Register(&httpmock.Stub{Method: "POST", URL: suggestionPath, Status: 500, Body: map[string]interface{}{"code": 500, "msg": "server error"}})
+	err := mountAndRun(t, CalendarSuggestion, []string{"+suggestion", "--start", "2025-03-21T10:00:00+08:00", "--end", "2025-03-21T11:00:00+08:00", "--as", "bot"}, f, nil)
+	if err == nil {
+		t.Fatal("want error")
+	}
+	var ae *errs.APIError
+	if !errors.As(err, &ae) {
+		t.Fatalf("want *errs.APIError, got %T", err)
+	}
+	if ae.Code != 500 {
+		t.Errorf("code=%d, want 500", ae.Code)
+	}
+}
+
+func TestSuggestion_UnmarshalFail_Typed(t *testing.T) {
+	f, _, _, reg := cmdutil.TestFactory(t, defaultConfig())
+	reg.Register(&httpmock.Stub{Method: "POST", URL: suggestionPath, Status: 200, RawBody: []byte("not json")})
+	err := mountAndRun(t, CalendarSuggestion, []string{"+suggestion", "--start", "2025-03-21T10:00:00+08:00", "--end", "2025-03-21T11:00:00+08:00", "--as", "bot"}, f, nil)
+	if err == nil {
+		t.Fatal("want error")
+	}
+	var ie *errs.InternalError
+	if !errors.As(err, &ie) {
+		t.Fatalf("want *errs.InternalError, got %T", err)
+	}
+	if ie.Subtype != errs.SubtypeInvalidResponse {
+		t.Errorf("subtype=%q, want invalid_response", ie.Subtype)
+	}
+}
+
+func TestRoomFind_UnmarshalFail_Typed(t *testing.T) {
+	f, _, _, reg := cmdutil.TestFactory(t, defaultConfig())
+	reg.Register(&httpmock.Stub{Method: "POST", URL: roomFindPath, Status: 200, RawBody: []byte("not json")})
+	err := mountAndRun(t, CalendarRoomFind, []string{"+room-find", "--slot", "2025-03-21T10:00:00+08:00~2025-03-21T11:00:00+08:00", "--as", "bot"}, f, nil)
+	if err == nil {
+		t.Fatal("want error")
+	}
+	var ie *errs.InternalError
+	if !errors.As(err, &ie) {
+		t.Fatalf("want *errs.InternalError, got %T", err)
+	}
+	if ie.Subtype != errs.SubtypeInvalidResponse {
+		t.Errorf("subtype=%q, want invalid_response", ie.Subtype)
+	}
+}
+
+func TestSuggestion_InvalidExclude_Fails(t *testing.T) {
+	f, _, _, _ := cmdutil.TestFactory(t, defaultConfig())
+
+	err := mountAndRun(t, CalendarSuggestion, []string{
+		"+suggestion",
+		"--exclude", "2025-03-21", // missing ~
+		"--as", "bot",
+	}, f, nil)
+
+	if err == nil {
+		t.Fatal("expected validation error for invalid exclude format, got nil")
+	}
+	if !strings.Contains(err.Error(), "invalid range format in --exclude") {
+		t.Errorf("error should mention exclude format, got: %v", err)
+	}
+}
+
+func TestSuggestion_APIError(t *testing.T) {
+	f, _, _, reg := cmdutil.TestFactory(t, defaultConfig())
+	reg.Register(&httpmock.Stub{
+		Method: "POST",
+		URL:    "/open-apis/calendar/v4/freebusy/suggestion",
+		Body: map[string]interface{}{
+			"code": 190001,
+			"msg":  "permission denied",
+		},
+	})
+
+	err := mountAndRun(t, CalendarSuggestion, []string{
+		"+suggestion",
+		"--start", "2025-03-21",
+		"--end", "2025-03-21",
+		"--as", "bot",
+	}, f, nil)
+
+	if err == nil {
+		t.Fatal("expected error for API failure, got nil")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// CalendarRoomFind tests
+// ---------------------------------------------------------------------------
+
+func TestRoomFind_MultiSlot_NewEventContext(t *testing.T) {
+	f, stdout, _, reg := cmdutil.TestFactory(t, defaultConfig())
+
+	for range 2 {
+		reg.Register(&httpmock.Stub{
+			Method: "POST",
+			URL:    "/open-apis/calendar/v4/freebusy/room_find",
+			Body: map[string]interface{}{
+				"code": 0,
+				"msg":  "ok",
+				"data": map[string]interface{}{
+					"available_rooms": []interface{}{
+						map[string]interface{}{
+							"room_id":            "omm_room1",
+							"room_name":          "F2-02",
+							"capacity":           7,
+							"reserve_until_time": "2026-04-01T00:00:00Z",
+						},
+					},
+				},
+			},
+		})
+	}
+
+	err := mountAndRun(t, CalendarRoomFind, []string{
+		"+room-find",
+		"--slot", "2026-03-27T14:00:00+08:00~2026-03-27T15:00:00+08:00",
+		"--slot", "2026-03-27T16:00:00+08:00~2026-03-27T17:00:00+08:00",
+		"--attendee-ids", "ou_user1,ou_user2",
+		"--format", "json",
+		"--as", "bot",
+	}, f, stdout)
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(stdout.String(), "\"time_slots\"") {
+		t.Fatalf("expected aggregated time_slots output, got: %s", stdout.String())
+	}
+}
+
+func TestRoomFind_RejectsDangerousChars(t *testing.T) {
+	f, _, _, _ := cmdutil.TestFactory(t, defaultConfig())
+
+	err := mountAndRun(t, CalendarRoomFind, []string{
+		"+room-find",
+		"--slot", "2026-03-27T14:00:00+08:00~2026-03-27T15:00:00+08:00",
+		"--room-name", "F2-02\x7f",
+		"--as", "bot",
+	}, f, nil)
+
+	if err == nil {
+		t.Fatal("expected validation error for dangerous characters")
+	}
+	if !strings.Contains(err.Error(), "--room-name") {
+		t.Fatalf("expected dangerous char error for --room-name, got: %v", err)
+	}
+	var ve *errs.ValidationError
+	if !errors.As(err, &ve) {
+		t.Fatalf("want *errs.ValidationError, got %T", err)
+	}
+	if ve.Param != "--room-name" {
+		t.Errorf("param=%q, want --room-name", ve.Param)
+	}
+}
+
+func TestRoomFind_DryRun_SplitsUserAndChatAttendees(t *testing.T) {
+	f, stdout, _, _ := cmdutil.TestFactory(t, defaultConfig())
+
+	err := mountAndRun(t, CalendarRoomFind, []string{
+		"+room-find",
+		"--slot", "2026-03-27T14:00:00+08:00~2026-03-27T15:00:00+08:00",
+		"--attendee-ids", "ou_user1,oc_group1",
+		"--dry-run",
+		"--as", "bot",
+	}, f, stdout)
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	out := stdout.String()
+	if !strings.Contains(out, `"attendee_user_ids"`) || !strings.Contains(out, `"ou_user1"`) || !strings.Contains(out, `"attendee_chat_ids"`) || !strings.Contains(out, `"oc_group1"`) {
+		t.Fatalf("dry-run should split attendee IDs by prefix, got: %s", out)
+	}
+}
+
+func TestRoomFind_DryRun_IncludesStructuredLocationFields(t *testing.T) {
+	f, stdout, _, _ := cmdutil.TestFactory(t, defaultConfig())
+
+	err := mountAndRun(t, CalendarRoomFind, []string{
+		"+room-find",
+		"--slot", "2026-03-27T14:00:00+08:00~2026-03-27T15:00:00+08:00",
+		"--city", "北京",
+		"--building", "学清嘉创大厦B座",
+		"--floor", "F2",
+		"--room-name", "木星",
+		"--dry-run",
+		"--as", "bot",
+	}, f, stdout)
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	out := stdout.String()
+	for _, want := range []string{`"city": "北京"`, `"building": "学清嘉创大厦B座"`, `"floor": "F2"`, `"room_name": "木星"`} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("dry-run should include %s, got: %s", want, out)
+		}
+	}
+}
+
+func TestRoomFind_RequestIncludesStructuredLocationFields(t *testing.T) {
+	f, _, _, reg := cmdutil.TestFactory(t, defaultConfig())
+
+	stub := &httpmock.Stub{
+		Method: "POST",
+		URL:    "/open-apis/calendar/v4/freebusy/room_find",
+		Body: map[string]interface{}{
+			"code": 0,
+			"msg":  "ok",
+			"data": map[string]interface{}{
+				"available_rooms": []interface{}{},
+			},
+		},
+	}
+	reg.Register(stub)
+
+	err := mountAndRun(t, CalendarRoomFind, []string{
+		"+room-find",
+		"--slot", "2026-03-27T14:00:00+08:00~2026-03-27T15:00:00+08:00",
+		"--city", "北京",
+		"--building", "学清嘉创大厦B座",
+		"--floor", "F2",
+		"--room-name", "木星",
+		"--as", "bot",
+	}, f, nil)
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var got map[string]interface{}
+	if err := json.Unmarshal(stub.CapturedBody, &got); err != nil {
+		t.Fatalf("unmarshal captured request: %v", err)
+	}
+	for key, want := range map[string]string{
+		"city":      "北京",
+		"building":  "学清嘉创大厦B座",
+		"floor":     "F2",
+		"room_name": "木星",
+	} {
+		if got[key] != want {
+			t.Fatalf("expected %s=%q, got %#v", key, want, got[key])
+		}
+	}
+}
+
+func TestRoomFind_RejectsInvertedOrZeroLengthSlots(t *testing.T) {
+	cases := []struct {
+		name string
+		slot string
+	}{
+		{
+			name: "inverted",
+			slot: "2026-03-27T15:00:00+08:00~2026-03-27T14:00:00+08:00",
+		},
+		{
+			name: "zero-length",
+			slot: "2026-03-27T15:00:00+08:00~2026-03-27T15:00:00+08:00",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f, _, _, _ := cmdutil.TestFactory(t, defaultConfig())
+
+			err := mountAndRun(t, CalendarRoomFind, []string{
+				"+room-find",
+				"--slot", tc.slot,
+				"--as", "bot",
+			}, f, nil)
+			if err == nil {
+				t.Fatal("expected slot validation error")
+			}
+			if !strings.Contains(err.Error(), "--slot end time must be after start time") {
+				t.Fatalf("expected invalid slot range error, got: %v", err)
+			}
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// helpers unit tests
+// ---------------------------------------------------------------------------
+
+func TestDedupeAndSortItems(t *testing.T) {
+	items := []map[string]interface{}{
+		{"event_id": "e1", "start_time": map[string]interface{}{"timestamp": "200"}, "end_time": map[string]interface{}{"timestamp": "300"}},
+		{"event_id": "e2", "start_time": map[string]interface{}{"timestamp": "100"}, "end_time": map[string]interface{}{"timestamp": "150"}},
+		// duplicate of e1
+		{"event_id": "e1", "start_time": map[string]interface{}{"timestamp": "200"}, "end_time": map[string]interface{}{"timestamp": "300"}},
+	}
+
+	result := dedupeAndSortItems(items)
+
+	if len(result) != 2 {
+		t.Fatalf("expected 2 items after dedup, got %d", len(result))
+	}
+	id0, _ := result[0]["event_id"].(string)
+	id1, _ := result[1]["event_id"].(string)
+	if id0 != "e2" || id1 != "e1" {
+		t.Errorf("expected order [e2, e1], got [%s, %s]", id0, id1)
+	}
+}
+
+func TestResolveStartEnd_Defaults(t *testing.T) {
+	cmd := &cobra.Command{Use: "test"}
+	cmd.Flags().String("start", "", "")
+	cmd.Flags().String("end", "", "")
+	cmd.ParseFlags(nil)
+
+	rt := &common.RuntimeContext{Cmd: cmd}
+	start, end := resolveStartEnd(rt)
+
+	if start == "" {
+		t.Error("start should not be empty")
+	}
+	if end != start {
+		t.Errorf("end should equal start when both unset, got start=%q end=%q", start, end)
+	}
+}
+
+func TestResolveStartEnd_ExplicitValues(t *testing.T) {
+	cmd := &cobra.Command{Use: "test"}
+	cmd.Flags().String("start", "", "")
+	cmd.Flags().String("end", "", "")
+	cmd.ParseFlags(nil)
+	cmd.Flags().Set("start", "2025-03-01")
+	cmd.Flags().Set("end", "2025-03-15")
+
+	rt := &common.RuntimeContext{Cmd: cmd}
+	start, end := resolveStartEnd(rt)
+
+	if start != "2025-03-01" {
+		t.Errorf("start = %q, want 2025-03-01", start)
+	}
+	if end != "2025-03-15" {
+		t.Errorf("end = %q, want 2025-03-15", end)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Shortcuts() registration test
+// ---------------------------------------------------------------------------
+
+func TestShortcuts_Returns14(t *testing.T) {
+	shortcuts := Shortcuts()
+	if len(shortcuts) != 14 {
+		t.Fatalf("expected 14 shortcuts, got %d", len(shortcuts))
+	}
+
+	names := map[string]bool{}
+	for _, s := range shortcuts {
+		names[s.Command] = true
+	}
+	for _, want := range []string{"+agenda", "+create", "+update", "+delete", "+freebusy", "+room-find", "+rsvp", "+suggestion", "+get", "+transfer", "+join-event", "+list-attendees", "+meeting", "+search-event"} {
+		if !names[want] {
+			t.Errorf("missing shortcut %s", want)
+		}
+	}
+}
+
+func TestShortcuts_AllHaveScopes(t *testing.T) {
+	for _, s := range Shortcuts() {
+		if s.Scopes == nil {
+			t.Errorf("shortcut %s: Scopes is nil", s.Command)
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Typed error shape tests (typed-errs migration pass 1)
+// ---------------------------------------------------------------------------
+
+// Task 1: calendar_agenda.go
+func TestAgenda_ParseTimeRange_InvalidStart_Typed(t *testing.T) {
+	f, _, _, _ := cmdutil.TestFactory(t, defaultConfig())
+	err := mountAndRun(t, CalendarAgenda, []string{"+agenda", "--start", "not-a-time", "--as", "bot"}, f, nil)
+	if err == nil {
+		t.Fatal("want error")
+	}
+	var ve *errs.ValidationError
+	if !errors.As(err, &ve) {
+		t.Fatalf("want *errs.ValidationError, got %T", err)
+	}
+	if ve.Subtype != errs.SubtypeInvalidArgument {
+		t.Errorf("subtype=%q", ve.Subtype)
+	}
+	if ve.Param != "--start" {
+		t.Errorf("param=%q, want --start", ve.Param)
+	}
+}
+
+// Task 2: calendar_create.go
+func TestCreate_InvalidAttendeeID_Typed(t *testing.T) {
+	f, _, _, _ := cmdutil.TestFactory(t, defaultConfig())
+	err := mountAndRun(t, CalendarCreate, []string{"+create", "--summary", "x", "--start", "2025-03-21T10:00:00+08:00", "--end", "2025-03-21T11:00:00+08:00", "--calendar-id", "cal_test123", "--attendee-ids", "bad_id", "--as", "bot"}, f, nil)
+	if err == nil {
+		t.Fatal("want error")
+	}
+	var ve *errs.ValidationError
+	if !errors.As(err, &ve) {
+		t.Fatalf("want *errs.ValidationError, got %T", err)
+	}
+	if ve.Subtype != errs.SubtypeInvalidArgument {
+		t.Errorf("subtype=%q", ve.Subtype)
+	}
+}
+
+func TestCreate_NoEventID_TypedInternal(t *testing.T) {
+	f, _, _, reg := cmdutil.TestFactory(t, defaultConfig())
+	reg.Register(&httpmock.Stub{Method: "POST", URL: "/open-apis/calendar/v4/calendars/cal_test123/events", Body: map[string]interface{}{"code": 0, "data": map[string]interface{}{"event": map[string]interface{}{}}}})
+	err := mountAndRun(t, CalendarCreate, []string{"+create", "--summary", "x", "--start", "2025-03-21T10:00:00+08:00", "--end", "2025-03-21T11:00:00+08:00", "--calendar-id", "cal_test123", "--as", "bot"}, f, nil)
+	if err == nil {
+		t.Fatal("want error")
+	}
+	var ie *errs.InternalError
+	if !errors.As(err, &ie) {
+		t.Fatalf("want *errs.InternalError, got %T", err)
+	}
+	if ie.Subtype != errs.SubtypeInvalidResponse {
+		t.Errorf("subtype=%q", ie.Subtype)
+	}
+}
+
+// Task 3: calendar_freebusy.go
+func TestFreebusy_InvalidStart_Typed(t *testing.T) {
+	f, _, _, _ := cmdutil.TestFactory(t, defaultConfig())
+	err := mountAndRun(t, CalendarFreebusy, []string{"+freebusy", "--start", "not-a-time", "--user-id", "ou_someone", "--as", "bot"}, f, nil)
+	if err == nil {
+		t.Fatal("want error")
+	}
+	var ve *errs.ValidationError
+	if !errors.As(err, &ve) {
+		t.Fatalf("want *errs.ValidationError, got %T", err)
+	}
+	if ve.Subtype != errs.SubtypeInvalidArgument {
+		t.Errorf("subtype=%q", ve.Subtype)
+	}
+	if ve.Param != "--start" {
+		t.Errorf("param=%q, want --start", ve.Param)
+	}
+}
+
+// Task 4: calendar_rsvp.go
+func TestRsvp_EmptyEventID_Typed(t *testing.T) {
+	f, _, _, _ := cmdutil.TestFactory(t, defaultConfig())
+	err := mountAndRun(t, CalendarRsvp, []string{"+rsvp", "--event-id", "   ", "--rsvp-status", "accept", "--as", "bot"}, f, nil)
+	if err == nil {
+		t.Fatal("want error")
+	}
+	var ve *errs.ValidationError
+	if !errors.As(err, &ve) {
+		t.Fatalf("want *errs.ValidationError, got %T", err)
+	}
+	if ve.Subtype != errs.SubtypeInvalidArgument {
+		t.Errorf("subtype=%q", ve.Subtype)
+	}
+	if ve.Param != "--event-id" {
+		t.Errorf("param=%q, want --event-id", ve.Param)
+	}
+}
+
+// Task 5: calendar_room_find.go
+func TestRoomFind_MissingSlot_Typed(t *testing.T) {
+	f, _, _, _ := cmdutil.TestFactory(t, defaultConfig())
+	err := mountAndRun(t, CalendarRoomFind, []string{"+room-find", "--as", "bot"}, f, nil)
+	if err == nil {
+		t.Fatal("want error")
+	}
+	var ve *errs.ValidationError
+	if !errors.As(err, &ve) {
+		t.Fatalf("want *errs.ValidationError, got %T", err)
+	}
+	if ve.Subtype != errs.SubtypeInvalidArgument {
+		t.Errorf("subtype=%q", ve.Subtype)
+	}
+	if ve.Param != "--slot" {
+		t.Errorf("param=%q, want --slot", ve.Param)
+	}
+}
+
+func TestRoomFind_APICodeError_Typed(t *testing.T) {
+	f, _, _, reg := cmdutil.TestFactory(t, defaultConfig())
+	reg.Register(&httpmock.Stub{Method: "POST", URL: roomFindPath, Body: map[string]interface{}{"code": 99991, "msg": "boom"}})
+	err := mountAndRun(t, CalendarRoomFind, []string{"+room-find", "--slot", "2025-03-21T10:00:00+08:00~2025-03-21T11:00:00+08:00", "--as", "bot"}, f, nil)
+	if err == nil {
+		t.Fatal("want error")
+	}
+	var ae *errs.APIError
+	if !errors.As(err, &ae) {
+		t.Fatalf("want *errs.APIError, got %T", err)
+	}
+	if ae.Subtype != errs.SubtypeUnknown {
+		t.Errorf("subtype=%q, want unknown", ae.Subtype)
+	}
+	if ae.Code != 99991 {
+		t.Errorf("code=%d, want 99991", ae.Code)
+	}
+	if output.ExitCodeOf(err) != output.ExitAPI {
+		t.Errorf("exit=%d want ExitAPI", output.ExitCodeOf(err))
+	}
+}
+
+func TestRoomFind_APICodeError_PreservesEnvelopeDetails(t *testing.T) {
+	f, _, _, reg := cmdutil.TestFactory(t, defaultConfig())
+	reg.Register(&httpmock.Stub{
+		Method: "POST",
+		URL:    roomFindPath,
+		Headers: http.Header{
+			"Content-Type": []string{"application/json"},
+			"X-Tt-Logid":   []string{"log-room-find"},
+		},
+		Body: map[string]interface{}{
+			"code": codeInvalidParamsWithDetail,
+			"msg":  "invalid params",
+			"error": map[string]interface{}{
+				"details": []interface{}{
+					map[string]interface{}{"value": "event_start_time is required"},
+				},
+			},
+		},
+	})
+	err := mountAndRun(t, CalendarRoomFind, []string{"+room-find", "--slot", "2025-03-21T10:00:00+08:00~2025-03-21T11:00:00+08:00", "--as", "bot"}, f, nil)
+	if err == nil {
+		t.Fatal("want error")
+	}
+	var ae *errs.APIError
+	if !errors.As(err, &ae) {
+		t.Fatalf("want *errs.APIError, got %T", err)
+	}
+	if ae.Code != codeInvalidParamsWithDetail {
+		t.Errorf("code=%d, want %d", ae.Code, codeInvalidParamsWithDetail)
+	}
+	if !strings.Contains(ae.Hint, "event_start_time is required") {
+		t.Errorf("expected server detail in hint, got %q", ae.Hint)
+	}
+	if ae.LogID != "log-room-find" {
+		t.Errorf("log_id=%q, want log-room-find", ae.LogID)
+	}
+}
+
+func TestRoomFind_HTTPNon2xx_Typed(t *testing.T) {
+	f, _, _, reg := cmdutil.TestFactory(t, defaultConfig())
+	reg.Register(&httpmock.Stub{Method: "POST", URL: roomFindPath, Status: 500, Body: map[string]interface{}{"code": 500, "msg": "server error"}})
+	err := mountAndRun(t, CalendarRoomFind, []string{"+room-find", "--slot", "2025-03-21T10:00:00+08:00~2025-03-21T11:00:00+08:00", "--as", "bot"}, f, nil)
+	if err == nil {
+		t.Fatal("want error")
+	}
+	var ae *errs.APIError
+	if !errors.As(err, &ae) {
+		t.Fatalf("want *errs.APIError, got %T", err)
+	}
+	if ae.Subtype != errs.SubtypeUnknown {
+		t.Errorf("subtype=%q, want unknown", ae.Subtype)
+	}
+	if ae.Code != 500 {
+		t.Errorf("code=%d, want 500", ae.Code)
+	}
+	if output.ExitCodeOf(err) != output.ExitAPI {
+		t.Errorf("exit=%d want ExitAPI", output.ExitCodeOf(err))
+	}
+}
+
+// Task 6: calendar_suggestion.go
+func TestSuggestion_InvalidExclude_Typed(t *testing.T) {
+	f, _, _, _ := cmdutil.TestFactory(t, defaultConfig())
+	err := mountAndRun(t, CalendarSuggestion, []string{"+suggestion", "--exclude", "not-a-range", "--as", "bot"}, f, nil)
+	if err == nil {
+		t.Fatal("want error")
+	}
+	var ve *errs.ValidationError
+	if !errors.As(err, &ve) {
+		t.Fatalf("want *errs.ValidationError, got %T", err)
+	}
+	if ve.Subtype != errs.SubtypeInvalidArgument {
+		t.Errorf("subtype=%q", ve.Subtype)
+	}
+	if ve.Param != "--exclude" {
+		t.Errorf("param=%q, want --exclude", ve.Param)
+	}
+}
+
+func TestSuggestion_APICodeError_Typed(t *testing.T) {
+	f, _, _, reg := cmdutil.TestFactory(t, defaultConfig())
+	reg.Register(&httpmock.Stub{Method: "POST", URL: suggestionPath, Body: map[string]interface{}{"code": 99991, "msg": "boom"}})
+	err := mountAndRun(t, CalendarSuggestion, []string{"+suggestion", "--start", "2025-03-21T10:00:00+08:00", "--end", "2025-03-21T11:00:00+08:00", "--as", "bot"}, f, nil)
+	if err == nil {
+		t.Fatal("want error")
+	}
+	var ae *errs.APIError
+	if !errors.As(err, &ae) {
+		t.Fatalf("want *errs.APIError, got %T", err)
+	}
+	if ae.Subtype != errs.SubtypeUnknown {
+		t.Errorf("subtype=%q, want unknown", ae.Subtype)
+	}
+	if ae.Code != 99991 {
+		t.Errorf("code=%d, want 99991", ae.Code)
+	}
+	if output.ExitCodeOf(err) != output.ExitAPI {
+		t.Errorf("exit=%d want ExitAPI", output.ExitCodeOf(err))
+	}
+}
+
+func TestSuggestion_APICodeError_PreservesEnvelopeDetails(t *testing.T) {
+	f, _, _, reg := cmdutil.TestFactory(t, defaultConfig())
+	reg.Register(&httpmock.Stub{
+		Method: "POST",
+		URL:    suggestionPath,
+		Headers: http.Header{
+			"Content-Type": []string{"application/json"},
+			"X-Tt-Logid":   []string{"log-suggestion"},
+		},
+		Body: map[string]interface{}{
+			"code": codeInvalidParamsWithDetail,
+			"msg":  "invalid params",
+			"error": map[string]interface{}{
+				"details": []interface{}{
+					map[string]interface{}{"value": "search_end_time must be after search_start_time"},
+				},
+			},
+		},
+	})
+	err := mountAndRun(t, CalendarSuggestion, []string{"+suggestion", "--start", "2025-03-21T10:00:00+08:00", "--end", "2025-03-21T11:00:00+08:00", "--as", "bot"}, f, nil)
+	if err == nil {
+		t.Fatal("want error")
+	}
+	var ae *errs.APIError
+	if !errors.As(err, &ae) {
+		t.Fatalf("want *errs.APIError, got %T", err)
+	}
+	if ae.Code != codeInvalidParamsWithDetail {
+		t.Errorf("code=%d, want %d", ae.Code, codeInvalidParamsWithDetail)
+	}
+	if !strings.Contains(ae.Hint, "search_end_time must be after search_start_time") {
+		t.Errorf("expected server detail in hint, got %q", ae.Hint)
+	}
+	if ae.LogID != "log-suggestion" {
+		t.Errorf("log_id=%q, want log-suggestion", ae.LogID)
+	}
+}
+
+// Task 7: calendar_update.go
+func TestUpdate_AttendeeConflict_Typed(t *testing.T) {
+	f, _, _, _ := cmdutil.TestFactory(t, defaultConfig())
+	err := mountAndRun(t, CalendarUpdate, []string{"+update", "--event-id", "evt_1", "--add-attendee-ids", "ou_dup", "--remove-attendee-ids", "ou_dup", "--as", "bot"}, f, nil)
+	if err == nil {
+		t.Fatal("want error")
+	}
+	var ve *errs.ValidationError
+	if !errors.As(err, &ve) {
+		t.Fatalf("want *errs.ValidationError, got %T", err)
+	}
+	if ve.Subtype != errs.SubtypeInvalidArgument {
+		t.Errorf("subtype=%q", ve.Subtype)
+	}
+	if ve.Param != "" {
+		t.Errorf("param=%q, want empty (cross-flag)", ve.Param)
+	}
+}
+
+// The empty-event-id guard at executeCalendarUpdate is defensive: the Validate
+// hook (validateCalendarUpdate) rejects an empty --event-id before Execute runs,
+// so the :283 guard is unreachable through the normal CLI flow. Exercise it
+// directly to pin the migrated typed shape (ValidationError / invalid_argument /
+// --event-id).
+func TestUpdate_EmptyEventID_Typed(t *testing.T) {
+	cmd := &cobra.Command{Use: "test"}
+	cmd.Flags().String("calendar-id", "", "")
+	cmd.Flags().String("event-id", "", "")
+	runtime := common.TestNewRuntimeContextWithCtx(context.Background(), cmd, defaultConfig())
+	err := executeCalendarUpdate(context.Background(), runtime)
+	if err == nil {
+		t.Fatal("want error")
+	}
+	var ve *errs.ValidationError
+	if !errors.As(err, &ve) {
+		t.Fatalf("want *errs.ValidationError, got %T", err)
+	}
+	if ve.Subtype != errs.SubtypeInvalidArgument {
+		t.Errorf("subtype=%q, want invalid_argument", ve.Subtype)
+	}
+	if ve.Param != "--event-id" {
+		t.Errorf("param=%q, want --event-id", ve.Param)
+	}
+}
+
+// Round-1 completeness: FlagErrorf call sites migrated to typed errs.
+
+// calendar_create.go start/end validation block.
+func TestCreate_MissingStart_TypedFlag(t *testing.T) {
+	f, _, _, _ := cmdutil.TestFactory(t, defaultConfig())
+	// --start is a Required flag; pass it empty to satisfy cobra's required-flag
+	// check and reach the in-builder empty-value guard.
+	err := mountAndRun(t, CalendarCreate, []string{"+create", "--summary", "x", "--calendar-id", "cal_test123", "--start", "", "--end", "2025-03-21T11:00:00+08:00", "--as", "bot"}, f, nil)
+	if err == nil {
+		t.Fatal("want error")
+	}
+	var ve *errs.ValidationError
+	if !errors.As(err, &ve) {
+		t.Fatalf("want *errs.ValidationError, got %T", err)
+	}
+	if ve.Subtype != errs.SubtypeInvalidArgument {
+		t.Errorf("subtype=%q, want invalid_argument", ve.Subtype)
+	}
+	if ve.Param != "--start" {
+		t.Errorf("param=%q, want --start", ve.Param)
+	}
+}
+
+// calendar_freebusy.go bot-identity guard.
+func TestFreebusy_BotMissingUserID_TypedFlag(t *testing.T) {
+	f, _, _, _ := cmdutil.TestFactory(t, defaultConfig())
+	err := mountAndRun(t, CalendarFreebusy, []string{"+freebusy", "--start", "2025-03-21T10:00:00+08:00", "--end", "2025-03-21T11:00:00+08:00", "--as", "bot"}, f, nil)
+	if err == nil {
+		t.Fatal("want error")
+	}
+	var ve *errs.ValidationError
+	if !errors.As(err, &ve) {
+		t.Fatalf("want *errs.ValidationError, got %T", err)
+	}
+	if ve.Subtype != errs.SubtypeInvalidArgument {
+		t.Errorf("subtype=%q, want invalid_argument", ve.Subtype)
+	}
+	if ve.Param != "--user-id" {
+		t.Errorf("param=%q, want --user-id", ve.Param)
+	}
+}
+
+// calendar_update.go buildCalendarUpdateEventData time-pairing guard.
+func TestUpdate_StartWithoutEnd_TypedFlag(t *testing.T) {
+	f, _, _, _ := cmdutil.TestFactory(t, defaultConfig())
+	err := mountAndRun(t, CalendarUpdate, []string{"+update", "--event-id", "evt_1", "--start", "2025-03-21T10:00:00+08:00", "--as", "bot"}, f, nil)
+	if err == nil {
+		t.Fatal("want error")
+	}
+	var ve *errs.ValidationError
+	if !errors.As(err, &ve) {
+		t.Fatalf("want *errs.ValidationError, got %T", err)
+	}
+	if ve.Subtype != errs.SubtypeInvalidArgument {
+		t.Errorf("subtype=%q, want invalid_argument", ve.Subtype)
+	}
+}
+
+// calendar_update.go invalid start-time guard carries the offending flag.
+func TestUpdate_InvalidStartTime_TypedFlag(t *testing.T) {
+	f, _, _, _ := cmdutil.TestFactory(t, defaultConfig())
+	err := mountAndRun(t, CalendarUpdate, []string{"+update", "--event-id", "evt_1", "--start", "not-a-time", "--end", "2025-03-21T11:00:00+08:00", "--as", "bot"}, f, nil)
+	if err == nil {
+		t.Fatal("want error")
+	}
+	var ve *errs.ValidationError
+	if !errors.As(err, &ve) {
+		t.Fatalf("want *errs.ValidationError, got %T", err)
+	}
+	if ve.Param != "--start" {
+		t.Errorf("param=%q, want --start", ve.Param)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Additional success / branch coverage for the migrated command paths.
+// ---------------------------------------------------------------------------
+
+// TestAgenda_TooManyInstances_SplitSucceeds pins the 193104 recovery path: the
+// full range trips the too-many-instances limit, the window is halved via
+// fetchInstanceViewSplit, and both sub-ranges succeed and aggregate.
+func TestAgenda_TooManyInstances_SplitSucceeds(t *testing.T) {
+	f, stdout, _, reg := cmdutil.TestFactory(t, defaultConfig())
+
+	reg.Register(&httpmock.Stub{
+		Method: "GET",
+		URL:    "/events/instance_view",
+		Body:   map[string]interface{}{"code": 193104, "msg": "too many instances"},
+	})
+	reg.Register(&httpmock.Stub{
+		Method: "GET",
+		URL:    "/events/instance_view",
+		Body: map[string]interface{}{
+			"code": 0, "msg": "ok",
+			"data": map[string]interface{}{
+				"items": []interface{}{
+					map[string]interface{}{
+						"event_id":   "evt_left",
+						"summary":    "Left",
+						"status":     "confirmed",
+						"start_time": map[string]interface{}{"timestamp": "1742515200"},
+						"end_time":   map[string]interface{}{"timestamp": "1742518800"},
+					},
+				},
+			},
+		},
+	})
+	reg.Register(&httpmock.Stub{
+		Method: "GET",
+		URL:    "/events/instance_view",
+		Body: map[string]interface{}{
+			"code": 0, "msg": "ok",
+			"data": map[string]interface{}{
+				"items": []interface{}{
+					map[string]interface{}{
+						"event_id":   "evt_right",
+						"summary":    "Right",
+						"status":     "confirmed",
+						"start_time": map[string]interface{}{"timestamp": "1745193600"},
+						"end_time":   map[string]interface{}{"timestamp": "1745197200"},
+					},
+				},
+			},
+		},
+	})
+
+	// A 30-day span is above minSplitWindowSeconds (2h), so the 193104 branch
+	// halves the window and aggregates the two successful sub-ranges.
+	err := mountAndRun(t, CalendarAgenda, []string{
+		"+agenda",
+		"--start", "2025-03-21T00:00:00+08:00",
+		"--end", "2025-04-20T00:00:00+08:00",
+		"--as", "bot",
+	}, f, stdout)
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	out := stdout.String()
+	if !strings.Contains(out, "evt_left") || !strings.Contains(out, "evt_right") {
+		t.Errorf("expected aggregated events from both halves, got: %s", out)
+	}
+}
+
+// TestAgenda_TimeRangeExceeded_CannotSplit pins the 193103 guard where the
+// window is a single point (mid <= startTime), so the range cannot be narrowed
+// further and the typed error surfaces.
+func TestAgenda_TimeRangeExceeded_CannotSplit(t *testing.T) {
+	f, _, _, reg := cmdutil.TestFactory(t, defaultConfig())
+
+	reg.Register(&httpmock.Stub{
+		Method:   "GET",
+		URL:      "/events/instance_view",
+		Reusable: true,
+		Body:     map[string]interface{}{"code": 193103, "msg": "time range exceeds limit"},
+	})
+
+	// start == end gives a zero-length span; the 193103 branch computes
+	// mid == startTime and bails with the typed "narrow the range" error.
+	err := mountAndRun(t, CalendarAgenda, []string{
+		"+agenda",
+		"--start", "2025-03-21T00:00:00+08:00",
+		"--end", "2025-03-21T00:00:00+08:00",
+		"--as", "bot",
+	}, f, nil)
+
+	if err == nil {
+		t.Fatal("expected typed error when 193103 range cannot be split, got nil")
+	}
+	var ae *errs.APIError
+	if !errors.As(err, &ae) {
+		t.Fatalf("expected *errs.APIError, got %T", err)
+	}
+	if ae.Code != 193103 {
+		t.Errorf("code=%d, want 193103", ae.Code)
+	}
+	if !strings.Contains(ae.Error(), "narrow the range") {
+		t.Errorf("expected narrow-the-range guidance, got: %q", ae.Error())
+	}
+}
+
+// TestUpdate_PatchStepFails_TypedError pins that a failed event PATCH surfaces
+// the typed API error wrapped with completed-step context.
+func TestUpdate_PatchStepFails_TypedError(t *testing.T) {
+	f, _, _, reg := cmdutil.TestFactory(t, defaultConfig())
+	reg.Register(plainEventStub("cal_test123", "evt_patchfail_0"))
+	reg.Register(&httpmock.Stub{
+		Method: "PATCH",
+		URL:    "/open-apis/calendar/v4/calendars/cal_test123/events/evt_patchfail_0",
+		Body:   map[string]interface{}{"code": 190001, "msg": "permission denied"},
+	})
+
+	err := mountAndRun(t, CalendarUpdate, []string{
+		"+update",
+		"--event-id", "evt_patchfail_0",
+		"--calendar-id", "cal_test123",
+		"--summary", "New title",
+		"--as", "bot",
+	}, f, nil)
+
+	if err == nil {
+		t.Fatal("expected error when PATCH step fails, got nil")
+	}
+	var ae *errs.APIError
+	if !errors.As(err, &ae) {
+		t.Fatalf("expected *errs.APIError, got %T", err)
+	}
+}
+
+// TestUpdate_RemoveStepFails_TypedError pins the batch_delete failure path.
+func TestUpdate_RemoveStepFails_TypedError(t *testing.T) {
+	f, _, _, reg := cmdutil.TestFactory(t, defaultConfig())
+	reg.Register(plainEventStub("primary", "evt_removefail_0"))
+	reg.Register(&httpmock.Stub{
+		Method: "POST",
+		URL:    "/events/evt_removefail_0/attendees/batch_delete",
+		Body:   map[string]interface{}{"code": 190001, "msg": "permission denied"},
+	})
+
+	err := mountAndRun(t, CalendarUpdate, []string{
+		"+update",
+		"--event-id", "evt_removefail_0",
+		"--remove-attendee-ids", "ou_user1",
+		"--as", "bot",
+	}, f, nil)
+
+	if err == nil {
+		t.Fatal("expected error when remove step fails, got nil")
+	}
+	var ae *errs.APIError
+	if !errors.As(err, &ae) {
+		t.Fatalf("expected *errs.APIError, got %T", err)
+	}
+}
+
+// TestUpdate_AddStepFails_TypedError pins the add-attendees failure path.
+func TestUpdate_AddStepFails_TypedError(t *testing.T) {
+	f, _, _, reg := cmdutil.TestFactory(t, defaultConfig())
+	reg.Register(plainEventStub("primary", "evt_addfail_0"))
+	reg.Register(&httpmock.Stub{
+		Method: "POST",
+		URL:    "/events/evt_addfail_0/attendees",
+		Body:   map[string]interface{}{"code": 190001, "msg": "permission denied"},
+	})
+
+	err := mountAndRun(t, CalendarUpdate, []string{
+		"+update",
+		"--event-id", "evt_addfail_0",
+		"--add-attendee-ids", "ou_user1",
+		"--as", "bot",
+	}, f, nil)
+
+	if err == nil {
+		t.Fatal("expected error when add step fails, got nil")
+	}
+	var ae *errs.APIError
+	if !errors.As(err, &ae) {
+		t.Fatalf("expected *errs.APIError, got %T", err)
+	}
+}
+
+// TestUpdate_InvalidEndTime_TypedFlag pins the --end parse error inside
+// buildCalendarUpdateEventData (start valid, end malformed).
+func TestUpdate_InvalidEndTime_TypedFlag(t *testing.T) {
+	f, _, _, _ := cmdutil.TestFactory(t, defaultConfig())
+	err := mountAndRun(t, CalendarUpdate, []string{
+		"+update", "--event-id", "evt_1",
+		"--start", "2025-03-21T10:00:00+08:00", "--end", "not-a-time", "--as", "bot",
+	}, f, nil)
+	if err == nil {
+		t.Fatal("want error")
+	}
+	var ve *errs.ValidationError
+	if !errors.As(err, &ve) {
+		t.Fatalf("want *errs.ValidationError, got %T", err)
+	}
+	if ve.Param != "--end" {
+		t.Errorf("param=%q, want --end", ve.Param)
+	}
+}
+
+// TestUpdate_RejectsDangerousChars pins the dangerous-character guard.
+func TestUpdate_RejectsDangerousChars(t *testing.T) {
+	f, _, _, _ := cmdutil.TestFactory(t, defaultConfig())
+	err := mountAndRun(t, CalendarUpdate, []string{
+		"+update", "--event-id", "evt_1", "--summary", "bad\x7ftitle", "--as", "bot",
+	}, f, nil)
+	if err == nil {
+		t.Fatal("expected error for dangerous chars, got nil")
+	}
+	var ve *errs.ValidationError
+	if !errors.As(err, &ve) {
+		t.Fatalf("want *errs.ValidationError, got %T", err)
+	}
+	if ve.Param != "--summary" {
+		t.Errorf("param=%q, want --summary", ve.Param)
+	}
+}
+
+// TestCreate_InvalidEndTime_TypedFlag pins the --end parse error in Validate.
+func TestCreate_InvalidEndTime_TypedFlag(t *testing.T) {
+	f, _, _, _ := cmdutil.TestFactory(t, defaultConfig())
+	err := mountAndRun(t, CalendarCreate, []string{
+		"+create", "--summary", "X",
+		"--start", "2025-03-21T10:00:00+08:00", "--end", "not-a-time", "--as", "bot",
+	}, f, nil)
+	if err == nil {
+		t.Fatal("want error")
+	}
+	var ve *errs.ValidationError
+	if !errors.As(err, &ve) {
+		t.Fatalf("want *errs.ValidationError, got %T", err)
+	}
+	if ve.Param != "--end" {
+		t.Errorf("param=%q, want --end", ve.Param)
+	}
+}
+
+// TestCreate_RejectsDangerousChars pins the dangerous-character guard on
+// --summary.
+func TestCreate_RejectsDangerousChars(t *testing.T) {
+	f, _, _, _ := cmdutil.TestFactory(t, defaultConfig())
+	err := mountAndRun(t, CalendarCreate, []string{
+		"+create", "--summary", "bad\x7ftitle",
+		"--start", "2025-03-21T10:00:00+08:00", "--end", "2025-03-21T11:00:00+08:00", "--as", "bot",
+	}, f, nil)
+	if err == nil {
+		t.Fatal("expected error for dangerous chars, got nil")
+	}
+	var ve *errs.ValidationError
+	if !errors.As(err, &ve) {
+		t.Fatalf("want *errs.ValidationError, got %T", err)
+	}
+	if ve.Param != "--summary" {
+		t.Errorf("param=%q, want --summary", ve.Param)
+	}
+}
+
+// TestFreebusy_InvalidEnd_TypedFlag pins the --end parse error in
+// parseFreebusyTimeRange.
+func TestFreebusy_InvalidEnd_TypedFlag(t *testing.T) {
+	f, _, _, _ := cmdutil.TestFactory(t, defaultConfig())
+	err := mountAndRun(t, CalendarFreebusy, []string{
+		"+freebusy", "--start", "2025-03-21", "--end", "not-a-time",
+		"--user-id", "ou_someone", "--as", "bot",
+	}, f, nil)
+	if err == nil {
+		t.Fatal("want error")
+	}
+	var ve *errs.ValidationError
+	if !errors.As(err, &ve) {
+		t.Fatalf("want *errs.ValidationError, got %T", err)
+	}
+	if ve.Param != "--end" {
+		t.Errorf("param=%q, want --end", ve.Param)
+	}
+}
+
+// TestFreebusy_InvalidUserID_TypedFlag pins the --user-id format guard.
+func TestFreebusy_InvalidUserID_TypedFlag(t *testing.T) {
+	f, _, _, _ := cmdutil.TestFactory(t, defaultConfig())
+	err := mountAndRun(t, CalendarFreebusy, []string{
+		"+freebusy", "--start", "2025-03-21", "--end", "2025-03-21",
+		"--user-id", "not-an-open-id", "--as", "bot",
+	}, f, nil)
+	if err == nil {
+		t.Fatal("want error")
+	}
+	var ve *errs.ValidationError
+	if !errors.As(err, &ve) {
+		t.Fatalf("want *errs.ValidationError, got %T", err)
+	}
+	if ve.Param != "--user-id" {
+		t.Errorf("param=%q, want --user-id", ve.Param)
+	}
+}
+
+// TestRoomFind_InvalidCapacity_TypedFlag pins the --min-capacity / --max-capacity
+// ordering guard.
+func TestRoomFind_InvalidCapacity_TypedFlag(t *testing.T) {
+	f, _, _, _ := cmdutil.TestFactory(t, defaultConfig())
+	err := mountAndRun(t, CalendarRoomFind, []string{
+		"+room-find",
+		"--slot", "2025-03-21T10:00:00+08:00~2025-03-21T11:00:00+08:00",
+		"--min-capacity", "10", "--max-capacity", "5", "--as", "bot",
+	}, f, nil)
+	if err == nil {
+		t.Fatal("want error")
+	}
+	var ve *errs.ValidationError
+	if !errors.As(err, &ve) {
+		t.Fatalf("want *errs.ValidationError, got %T", err)
+	}
+	if ve.Param != "--min-capacity" {
+		t.Errorf("param=%q, want --min-capacity", ve.Param)
+	}
+}
+
+// TestFreebusy_NoLoginNoUserID_TypedFlag pins the "cannot determine user ID"
+// guard: no --user-id, not bot, and no logged-in user.
+func TestFreebusy_NoLoginNoUserID_TypedFlag(t *testing.T) {
+	f, _, _, _ := cmdutil.TestFactory(t, noLoginConfig())
+	err := mountAndRun(t, CalendarFreebusy, []string{
+		"+freebusy", "--start", "2025-03-21", "--end", "2025-03-21",
+	}, f, nil)
+	if err == nil {
+		t.Fatal("want error")
+	}
+	// May surface as a login/identity guard or the --user-id validation guard;
+	// either way it must be a typed error, never a panic or nil.
+	if _, ok := errs.ProblemOf(err); !ok {
+		t.Fatalf("expected a typed problem error, got %T: %v", err, err)
+	}
+}
+
+// TestSuggestion_DurationOutOfRange_TypedFlag pins the --duration-minutes range
+// guard (must be 1..1440).
+func TestSuggestion_DurationOutOfRange_TypedFlag(t *testing.T) {
+	f, _, _, _ := cmdutil.TestFactory(t, defaultConfig())
+	err := mountAndRun(t, CalendarSuggestion, []string{
+		"+suggestion",
+		"--start", "2025-03-21T10:00:00+08:00", "--end", "2025-03-21T11:00:00+08:00",
+		"--duration-minutes", "5000", "--as", "bot",
+	}, f, nil)
+	if err == nil {
+		t.Fatal("want error")
+	}
+	var ve *errs.ValidationError
+	if !errors.As(err, &ve) {
+		t.Fatalf("want *errs.ValidationError, got %T", err)
+	}
+	if ve.Param != "--duration-minutes" {
+		t.Errorf("param=%q, want --duration-minutes", ve.Param)
+	}
+}
+
+// TestSuggestion_InvalidStart_TypedFlag pins the --start parse guard in Validate.
+func TestSuggestion_InvalidStart_TypedFlag(t *testing.T) {
+	f, _, _, _ := cmdutil.TestFactory(t, defaultConfig())
+	err := mountAndRun(t, CalendarSuggestion, []string{
+		"+suggestion", "--start", "not-a-time", "--as", "bot",
+	}, f, nil)
+	if err == nil {
+		t.Fatal("want error")
+	}
+	var ve *errs.ValidationError
+	if !errors.As(err, &ve) {
+		t.Fatalf("want *errs.ValidationError, got %T", err)
+	}
+	if ve.Param != "--start" {
+		t.Errorf("param=%q, want --start", ve.Param)
+	}
+}
+
+// TestSuggestion_InvalidEnd_TypedFlag pins the --end parse guard in Validate.
+func TestSuggestion_InvalidEnd_TypedFlag(t *testing.T) {
+	f, _, _, _ := cmdutil.TestFactory(t, defaultConfig())
+	err := mountAndRun(t, CalendarSuggestion, []string{
+		"+suggestion", "--start", "2025-03-21T10:00:00+08:00", "--end", "not-a-time", "--as", "bot",
+	}, f, nil)
+	if err == nil {
+		t.Fatal("want error")
+	}
+	var ve *errs.ValidationError
+	if !errors.As(err, &ve) {
+		t.Fatalf("want *errs.ValidationError, got %T", err)
+	}
+	if ve.Param != "--end" {
+		t.Errorf("param=%q, want --end", ve.Param)
+	}
+}
+
+// TestSuggestion_InvalidExcludeStart_TypedFlag pins the malformed --exclude
+// start-time guard in Validate.
+func TestSuggestion_InvalidExcludeStart_TypedFlag(t *testing.T) {
+	f, _, _, _ := cmdutil.TestFactory(t, defaultConfig())
+	err := mountAndRun(t, CalendarSuggestion, []string{
+		"+suggestion",
+		"--start", "2025-03-21T10:00:00+08:00", "--end", "2025-03-21T18:00:00+08:00",
+		"--exclude", "not-a-time~2025-03-21T12:00:00+08:00", "--as", "bot",
+	}, f, nil)
+	if err == nil {
+		t.Fatal("want error")
+	}
+	var ve *errs.ValidationError
+	if !errors.As(err, &ve) {
+		t.Fatalf("want *errs.ValidationError, got %T", err)
+	}
+	if ve.Param != "--exclude" {
+		t.Errorf("param=%q, want --exclude", ve.Param)
+	}
+}
+
+// TestSuggestion_InvalidExcludeEnd_TypedFlag pins the malformed --exclude
+// end-time guard in Validate.
+func TestSuggestion_InvalidExcludeEnd_TypedFlag(t *testing.T) {
+	f, _, _, _ := cmdutil.TestFactory(t, defaultConfig())
+	err := mountAndRun(t, CalendarSuggestion, []string{
+		"+suggestion",
+		"--start", "2025-03-21T10:00:00+08:00", "--end", "2025-03-21T18:00:00+08:00",
+		"--exclude", "2025-03-21T11:00:00+08:00~not-a-time", "--as", "bot",
+	}, f, nil)
+	if err == nil {
+		t.Fatal("want error")
+	}
+	var ve *errs.ValidationError
+	if !errors.As(err, &ve) {
+		t.Fatalf("want *errs.ValidationError, got %T", err)
+	}
+	if ve.Param != "--exclude" {
+		t.Errorf("param=%q, want --exclude", ve.Param)
+	}
+}
+
+// TestSuggestion_RejectsDangerousTimezone_Typed pins the dangerous-character
+// guard on --timezone.
+func TestSuggestion_RejectsDangerousTimezone_Typed(t *testing.T) {
+	f, _, _, _ := cmdutil.TestFactory(t, defaultConfig())
+	err := mountAndRun(t, CalendarSuggestion, []string{
+		"+suggestion",
+		"--start", "2025-03-21T10:00:00+08:00", "--end", "2025-03-21T11:00:00+08:00",
+		"--timezone", "Asia/Shanghai\x7f", "--as", "bot",
+	}, f, nil)
+	if err == nil {
+		t.Fatal("want error")
+	}
+	var ve *errs.ValidationError
+	if !errors.As(err, &ve) {
+		t.Fatalf("want *errs.ValidationError, got %T", err)
+	}
+	if ve.Param != "--timezone" {
+		t.Errorf("param=%q, want --timezone", ve.Param)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// CalendarGet tests
+// ---------------------------------------------------------------------------
+
+func TestGet_Success_FlattensAndConvertsTimes(t *testing.T) {
+	f, stdout, _, reg := cmdutil.TestFactory(t, defaultConfig())
+
+	reg.Register(&httpmock.Stub{
+		Method: "GET",
+		URL:    "/open-apis/calendar/v4/calendars/cal_test123/events/evt_001",
+		Body: map[string]interface{}{
+			"code": 0, "msg": "success",
+			"data": map[string]interface{}{
+				"event": map[string]interface{}{
+					"event_id":    "evt_001",
+					"summary":     "Daily Sync",
+					"create_time": "1602504000",
+					"start_time": map[string]interface{}{
+						"timestamp": "1742515200",
+						"timezone":  "Asia/Shanghai",
+					},
+					"end_time": map[string]interface{}{
+						"timestamp": "1742518800",
+						"timezone":  "Asia/Shanghai",
+					},
+					"status": "confirmed",
+				},
+			},
+		},
+	})
+
+	err := mountAndRun(t, CalendarGet, []string{
+		"+get",
+		"--calendar-id", "cal_test123",
+		"--event-id", "evt_001",
+		"--as", "bot",
+	}, f, stdout)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	out := stdout.String()
+	// Expect flattened — fields appear directly under "data", not under "data.event"
+	if strings.Contains(out, "\"event\": {") {
+		t.Errorf("payload should be flattened (no event wrapper), got: %s", out)
+	}
+	if !strings.Contains(out, "\"event_id\": \"evt_001\"") {
+		t.Errorf("expected event_id in output, got: %s", out)
+	}
+	// status=confirmed should be dropped
+	if strings.Contains(out, "\"status\": \"confirmed\"") {
+		t.Errorf("status should be dropped when not cancelled, got: %s", out)
+	}
+	// timestamp must be replaced with datetime
+	if strings.Contains(out, "\"timestamp\":") {
+		t.Errorf("timestamp should be replaced with datetime, got: %s", out)
+	}
+	if !strings.Contains(out, "\"datetime\":") {
+		t.Errorf("expected datetime in output, got: %s", out)
+	}
+	// create_time must be RFC3339 (contain 'T' and timezone)
+	if !strings.Contains(out, "\"create_time\": \"2020-10-12T") {
+		t.Errorf("expected RFC3339 create_time, got: %s", out)
+	}
+}
+
+func TestGet_UnifiesDescriptionRich(t *testing.T) {
+	// Read exposes a single unified description field carrying the rich value
+	// when present, and the plain text otherwise; description_rich is dropped.
+	t.Run("rich present", func(t *testing.T) {
+		f, stdout, _, reg := cmdutil.TestFactory(t, defaultConfig())
+		reg.Register(&httpmock.Stub{
+			Method: "GET",
+			URL:    "/open-apis/calendar/v4/calendars/cal_test123/events/evt_rich_0",
+			Body: map[string]interface{}{
+				"code": 0, "msg": "success",
+				"data": map[string]interface{}{
+					"event": map[string]interface{}{
+						"event_id":         "evt_rich_0",
+						"summary":          "Rich",
+						"description":      "[表格]",
+						"description_rich": "| a | b |\n| --- | --- |\n| c | d |",
+						"start_time":       map[string]interface{}{"timestamp": "1742515200", "timezone": "Asia/Shanghai"},
+						"end_time":         map[string]interface{}{"timestamp": "1742518800", "timezone": "Asia/Shanghai"},
+					},
+				},
+			},
+		})
+		if err := mountAndRun(t, CalendarGet, []string{"+get", "--calendar-id", "cal_test123", "--event-id", "evt_rich_0", "--as", "bot"}, f, stdout); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		out := stdout.String()
+		if !strings.Contains(out, "| a | b |") {
+			t.Errorf("expected rich value surfaced under description, got: %s", out)
+		}
+		if strings.Contains(out, "description_rich") {
+			t.Errorf("description_rich must not appear in output, got: %s", out)
+		}
+	})
+
+	// When only a plain description exists, it is surfaced under description.
+	t.Run("only plain surfaces under description", func(t *testing.T) {
+		f, stdout, _, reg := cmdutil.TestFactory(t, defaultConfig())
+		reg.Register(&httpmock.Stub{
+			Method: "GET",
+			URL:    "/open-apis/calendar/v4/calendars/cal_test123/events/evt_plain_0",
+			Body: map[string]interface{}{
+				"code": 0, "msg": "success",
+				"data": map[string]interface{}{
+					"event": map[string]interface{}{
+						"event_id":    "evt_plain_0",
+						"summary":     "Plain",
+						"description": "just text",
+						"start_time":  map[string]interface{}{"timestamp": "1742515200", "timezone": "Asia/Shanghai"},
+						"end_time":    map[string]interface{}{"timestamp": "1742518800", "timezone": "Asia/Shanghai"},
+					},
+				},
+			},
+		})
+		if err := mountAndRun(t, CalendarGet, []string{"+get", "--calendar-id", "cal_test123", "--event-id", "evt_plain_0", "--as", "bot"}, f, stdout); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		out := stdout.String()
+		if !strings.Contains(out, "\"description\": \"just text\"") {
+			t.Errorf("expected plain description surfaced, got: %s", out)
+		}
+		if strings.Contains(out, "description_rich") {
+			t.Errorf("description_rich must not appear in output, got: %s", out)
+		}
+	})
+}
+
+func TestGet_CancelledStatus_PreservesStatus(t *testing.T) {
+	f, stdout, _, reg := cmdutil.TestFactory(t, defaultConfig())
+
+	reg.Register(&httpmock.Stub{
+		Method: "GET",
+		URL:    "/open-apis/calendar/v4/calendars/cal_test123/events/evt_002",
+		Body: map[string]interface{}{
+			"code": 0, "msg": "success",
+			"data": map[string]interface{}{
+				"event": map[string]interface{}{
+					"event_id":    "evt_002",
+					"summary":     "Cancelled Meeting",
+					"create_time": "1602504000",
+					"start_time":  map[string]interface{}{"timestamp": "1742515200"},
+					"end_time":    map[string]interface{}{"timestamp": "1742518800"},
+					"status":      "cancelled",
+				},
+			},
+		},
+	})
+
+	err := mountAndRun(t, CalendarGet, []string{
+		"+get",
+		"--calendar-id", "cal_test123",
+		"--event-id", "evt_002",
+		"--as", "bot",
+	}, f, stdout)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	out := stdout.String()
+	if !strings.Contains(out, "\"status\": \"cancelled\"") {
+		t.Errorf("status should be preserved when cancelled, got: %s", out)
+	}
+}
+
+func TestGet_AllDayEvent_AdjustsEndDate(t *testing.T) {
+	f, stdout, _, reg := cmdutil.TestFactory(t, defaultConfig())
+
+	// All-day event: start 2025-03-21, end 2025-03-22 (exclusive in API).
+	reg.Register(&httpmock.Stub{
+		Method: "GET",
+		URL:    "/open-apis/calendar/v4/calendars/cal_test123/events/evt_003",
+		Body: map[string]interface{}{
+			"code": 0, "msg": "success",
+			"data": map[string]interface{}{
+				"event": map[string]interface{}{
+					"event_id":   "evt_003",
+					"summary":    "All-day",
+					"start_time": map[string]interface{}{"date": "2025-03-21"},
+					"end_time":   map[string]interface{}{"date": "2025-03-22"},
+					"status":     "confirmed",
+				},
+			},
+		},
+	})
+
+	err := mountAndRun(t, CalendarGet, []string{
+		"+get",
+		"--calendar-id", "cal_test123",
+		"--event-id", "evt_003",
+		"--as", "bot",
+	}, f, stdout)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	out := stdout.String()
+	// end date 2025-03-22 should rewind by 1s -> 2025-03-21
+	if !strings.Contains(out, "\"date\": \"2025-03-21\"") {
+		t.Errorf("expected end date adjusted to 2025-03-21, got: %s", out)
+	}
+}
+
+func TestGet_EmptyEventID_Typed(t *testing.T) {
+	f, _, _, _ := cmdutil.TestFactory(t, defaultConfig())
+	err := mountAndRun(t, CalendarGet, []string{
+		"+get",
+		"--event-id", "   ",
+		"--as", "bot",
+	}, f, nil)
+	if err == nil {
+		t.Fatal("want error for empty event-id")
+	}
+	var ve *errs.ValidationError
+	if !errors.As(err, &ve) {
+		t.Fatalf("want *errs.ValidationError, got %T", err)
+	}
+	if ve.Param != "--event-id" {
+		t.Errorf("param=%q, want --event-id", ve.Param)
+	}
+}
+
+func TestGet_MissingEventField_TypedInternal(t *testing.T) {
+	f, _, _, reg := cmdutil.TestFactory(t, defaultConfig())
+
+	reg.Register(&httpmock.Stub{
+		Method: "GET",
+		URL:    "/open-apis/calendar/v4/calendars/cal_test123/events/evt_404_0",
+		Body: map[string]interface{}{
+			"code": 0, "msg": "success",
+			"data": map[string]interface{}{},
+		},
+	})
+
+	err := mountAndRun(t, CalendarGet, []string{
+		"+get",
+		"--calendar-id", "cal_test123",
+		"--event-id", "evt_404_0",
+		"--as", "bot",
+	}, f, nil)
+	if err == nil {
+		t.Fatal("want error when event field is missing")
+	}
+	var ie *errs.InternalError
+	if !errors.As(err, &ie) {
+		t.Fatalf("want *errs.InternalError, got %T", err)
+	}
+	if ie.Subtype != errs.SubtypeInvalidResponse {
+		t.Errorf("subtype=%q, want invalid_response", ie.Subtype)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// CalendarUpdate room-availability precheck tests
+// ---------------------------------------------------------------------------
+
+// eventSnapshotStub builds a GET-event fixture with the given rooms + window
+// so room-check helpers can read a plausible snapshot.
+func eventSnapshotStub(calendarID, eventID, startTs, endTs string, roomIDs ...string) *httpmock.Stub {
+	attendees := make([]interface{}, 0, len(roomIDs))
+	for _, id := range roomIDs {
+		attendees = append(attendees, map[string]interface{}{
+			"type":    "resource",
+			"room_id": id,
+		})
+	}
+	return &httpmock.Stub{
+		Method: "GET",
+		URL:    "/open-apis/calendar/v4/calendars/" + calendarID + "/events/" + eventID,
+		Body: map[string]interface{}{
+			"code": 0, "msg": "ok",
+			"data": map[string]interface{}{
+				"event": map[string]interface{}{
+					"event_id":   eventID,
+					"summary":    "Existing",
+					"start_time": map[string]interface{}{"timestamp": startTs, "timezone": "Asia/Shanghai"},
+					"end_time":   map[string]interface{}{"timestamp": endTs, "timezone": "Asia/Shanghai"},
+					"attendees":  attendees,
+				},
+			},
+		},
+		Reusable: true,
+	}
+}
+
+// plainEventStub returns a GET-event fixture for a non-recurring event. +update
+// resolves the event first (see resolveCalendarEventOrMaster) to route to the
+// single / recurring branch; tests that only assert on the PATCH / attendee
+// payload still need this fixture to satisfy the classifier fetch.
+func plainEventStub(calendarID, eventID string) *httpmock.Stub {
+	return &httpmock.Stub{
+		Method: "GET",
+		URL:    "/open-apis/calendar/v4/calendars/" + calendarID + "/events/" + eventID,
+		Body: map[string]interface{}{
+			"code": 0, "msg": "ok",
+			"data": map[string]interface{}{
+				"event": map[string]interface{}{
+					"event_id": eventID,
+					"summary":  "Existing",
+				},
+			},
+		},
+		Reusable: true,
+	}
+}
+
+func TestUpdate_RoomCheck_SkipFlag_BypassesAPI(t *testing.T) {
+	f, _, _, reg := cmdutil.TestFactory(t, defaultConfig())
+
+	// The event snapshot GET is unavoidable — +update resolves the event first
+	// to classify recurring vs. single. The test asserts that no room-check
+	// call is made once --skip-room-check is set.
+	reg.Register(plainEventStub("cal_rc", "evt_rc1_0"))
+	patchStub := &httpmock.Stub{
+		Method: "PATCH",
+		URL:    "/open-apis/calendar/v4/calendars/cal_rc/events/evt_rc1_0",
+		Body: map[string]interface{}{
+			"code": 0, "msg": "ok",
+			"data": map[string]interface{}{"event": map[string]interface{}{"event_id": "evt_rc1_0"}},
+		},
+	}
+	reg.Register(patchStub)
+
+	err := mountAndRun(t, CalendarUpdate, []string{
+		"+update",
+		"--event-id", "evt_rc1_0",
+		"--calendar-id", "cal_rc",
+		"--summary", "Skip",
+		"--start", "2025-03-21T00:00:00+08:00",
+		"--end", "2025-03-21T01:00:00+08:00",
+		"--skip-room-check",
+		"--as", "bot",
+	}, f, nil)
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(patchStub.CapturedBody) == 0 {
+		t.Fatalf("expected PATCH to be captured")
+	}
+}
+
+func TestUpdate_RoomCheck_TitleOnly_SkipsCheck(t *testing.T) {
+	f, _, _, reg := cmdutil.TestFactory(t, defaultConfig())
+
+	// The event snapshot GET is unavoidable — +update resolves the event first
+	// to classify recurring vs. single. The test asserts that title-only changes
+	// never trigger the additional room-availability check.
+	reg.Register(plainEventStub("cal_rc", "evt_rc2_0"))
+	patchStub := &httpmock.Stub{
+		Method: "PATCH",
+		URL:    "/open-apis/calendar/v4/calendars/cal_rc/events/evt_rc2_0",
+		Body: map[string]interface{}{
+			"code": 0, "msg": "ok",
+			"data": map[string]interface{}{"event": map[string]interface{}{"event_id": "evt_rc2_0"}},
+		},
+	}
+	reg.Register(patchStub)
+
+	err := mountAndRun(t, CalendarUpdate, []string{
+		"+update",
+		"--event-id", "evt_rc2_0",
+		"--calendar-id", "cal_rc",
+		"--summary", "New title only",
+		"--as", "bot",
+	}, f, nil)
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(patchStub.CapturedBody) == 0 {
+		t.Fatalf("expected PATCH to be captured")
+	}
+}
+
+func TestUpdate_RoomCheck_NewRoomAvailable_Allows(t *testing.T) {
+	f, _, _, reg := cmdutil.TestFactory(t, defaultConfig())
+
+	// Snapshot has no existing rooms; we're adding omm_new.
+	reg.Register(eventSnapshotStub("cal_rc", "evt_rc3_0", "1742515200", "1742518800"))
+
+	checkStub := &httpmock.Stub{
+		Method: "POST",
+		URL:    "/open-apis/calendar/v4/freebusy/room_availability_check",
+		Body: map[string]interface{}{
+			"code": 0, "msg": "ok",
+			"data": map[string]interface{}{
+				"room_availabilitys": []interface{}{
+					map[string]interface{}{"room_id": "omm_new", "status": "available"},
+				},
+			},
+		},
+	}
+	reg.Register(checkStub)
+
+	addStub := &httpmock.Stub{
+		Method: "POST",
+		URL:    "/open-apis/calendar/v4/calendars/cal_rc/events/evt_rc3_0/attendees",
+		Body:   map[string]interface{}{"code": 0, "msg": "ok", "data": map[string]interface{}{}},
+	}
+	reg.Register(addStub)
+
+	err := mountAndRun(t, CalendarUpdate, []string{
+		"+update",
+		"--event-id", "evt_rc3_0",
+		"--calendar-id", "cal_rc",
+		"--add-attendee-ids", "omm_new",
+		"--as", "bot",
+	}, f, nil)
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(checkStub.CapturedBody) == 0 {
+		t.Fatalf("expected room-availability-check to be called")
+	}
+	body := decodeCalendarCapturedBody(t, checkStub)
+	rooms, _ := body["room_ids"].([]interface{})
+	if len(rooms) != 1 || rooms[0] != "omm_new" {
+		t.Fatalf("room_ids should be [omm_new], got %#v", rooms)
+	}
+	if body["calendar_id"] != "cal_rc" || body["event_id"] != "evt_rc3_0" {
+		t.Fatalf("room-check body missing ids: %#v", body)
+	}
+	if body["start_timezone"] != "Asia/Shanghai" {
+		t.Fatalf("start_timezone should carry snapshot value, got %#v", body["start_timezone"])
+	}
+	if body["start_time"] != "2025-03-21T08:00:00+08:00" {
+		t.Fatalf("start_time should be RFC3339 in event tz, got %#v", body["start_time"])
+	}
+	if body["end_time"] != "2025-03-21T09:00:00+08:00" {
+		t.Fatalf("end_time should be RFC3339 in event tz, got %#v", body["end_time"])
+	}
+	if len(addStub.CapturedBody) == 0 {
+		t.Fatalf("expected add-attendees POST to run")
+	}
+}
+
+func TestUpdate_RoomCheck_NewRoomUnavailable_Blocks(t *testing.T) {
+	f, _, _, reg := cmdutil.TestFactory(t, defaultConfig())
+
+	reg.Register(eventSnapshotStub("cal_rc", "evt_rc4_0", "1742515200", "1742518800"))
+	reg.Register(&httpmock.Stub{
+		Method: "POST",
+		URL:    "/open-apis/calendar/v4/freebusy/room_availability_check",
+		Body: map[string]interface{}{
+			"code": 0, "msg": "ok",
+			"data": map[string]interface{}{
+				"room_availabilitys": []interface{}{
+					map[string]interface{}{
+						"room_id":                 "omm_busy",
+						"status":                  "unavailable",
+						"unavailable_reason_type": "reserved_by_other_event",
+					},
+				},
+			},
+		},
+	})
+
+	err := mountAndRun(t, CalendarUpdate, []string{
+		"+update",
+		"--event-id", "evt_rc4_0",
+		"--calendar-id", "cal_rc",
+		"--add-attendee-ids", "omm_busy",
+		"--as", "bot",
+	}, f, nil)
+
+	if err == nil {
+		t.Fatal("expected block error when room is unavailable")
+	}
+	var ve *errs.ValidationError
+	if !errors.As(err, &ve) {
+		t.Fatalf("want *errs.ValidationError, got %T (%v)", err, err)
+	}
+	if ve.Subtype != errs.SubtypeFailedPrecondition {
+		t.Errorf("subtype=%q, want failed_precondition", ve.Subtype)
+	}
+	if !strings.Contains(ve.Message, "omm_busy") {
+		t.Errorf("message should list blocked room id, got: %q", ve.Message)
+	}
+	if !strings.Contains(ve.Hint, "--skip-room-check") {
+		t.Errorf("hint should mention --skip-room-check, got: %q", ve.Hint)
+	}
+}
+
+func TestUpdate_RoomCheck_TimeChanged_ChecksExistingRoom(t *testing.T) {
+	f, _, _, reg := cmdutil.TestFactory(t, defaultConfig())
+
+	// Existing event already has omm_existing booked.
+	reg.Register(eventSnapshotStub("cal_rc", "evt_rc5_0", "1742515200", "1742518800", "omm_existing"))
+
+	checkStub := &httpmock.Stub{
+		Method: "POST",
+		URL:    "/open-apis/calendar/v4/freebusy/room_availability_check",
+		Body: map[string]interface{}{
+			"code": 0, "msg": "ok",
+			"data": map[string]interface{}{
+				"room_availabilitys": []interface{}{
+					map[string]interface{}{"room_id": "omm_existing", "status": "available"},
+				},
+			},
+		},
+	}
+	reg.Register(checkStub)
+
+	patchStub := &httpmock.Stub{
+		Method: "PATCH",
+		URL:    "/open-apis/calendar/v4/calendars/cal_rc/events/evt_rc5_0",
+		Body: map[string]interface{}{
+			"code": 0, "msg": "ok",
+			"data": map[string]interface{}{"event": map[string]interface{}{"event_id": "evt_rc5_0"}},
+		},
+	}
+	reg.Register(patchStub)
+
+	err := mountAndRun(t, CalendarUpdate, []string{
+		"+update",
+		"--event-id", "evt_rc5_0",
+		"--calendar-id", "cal_rc",
+		"--start", "2025-03-21T02:00:00+08:00",
+		"--end", "2025-03-21T03:00:00+08:00",
+		"--as", "bot",
+	}, f, nil)
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(checkStub.CapturedBody) == 0 {
+		t.Fatalf("expected room-check to run for existing room on time change")
+	}
+	body := decodeCalendarCapturedBody(t, checkStub)
+	rooms, _ := body["room_ids"].([]interface{})
+	if len(rooms) != 1 || rooms[0] != "omm_existing" {
+		t.Fatalf("room_ids should be [omm_existing], got %#v", rooms)
+	}
+	if len(patchStub.CapturedBody) == 0 {
+		t.Fatalf("expected PATCH to run after check passes")
+	}
+}
+
+func TestUpdate_RoomCheck_APIFailure_DegradesGracefully(t *testing.T) {
+	f, _, stderr, reg := cmdutil.TestFactory(t, defaultConfig())
+
+	reg.Register(eventSnapshotStub("cal_rc", "evt_rc6_0", "1742515200", "1742518800"))
+	// Simulate room-check API failure (e.g., not yet rolled out) so the CLI
+	// degrades gracefully instead of blocking the update.
+	reg.Register(&httpmock.Stub{
+		Method: "POST",
+		URL:    "/open-apis/calendar/v4/freebusy/room_availability_check",
+		Body: map[string]interface{}{
+			"code": 190001,
+			"msg":  "permission denied",
+		},
+	})
+	addStub := &httpmock.Stub{
+		Method: "POST",
+		URL:    "/open-apis/calendar/v4/calendars/cal_rc/events/evt_rc6_0/attendees",
+		Body:   map[string]interface{}{"code": 0, "msg": "ok", "data": map[string]interface{}{}},
+	}
+	reg.Register(addStub)
+
+	err := mountAndRun(t, CalendarUpdate, []string{
+		"+update",
+		"--event-id", "evt_rc6_0",
+		"--calendar-id", "cal_rc",
+		"--add-attendee-ids", "omm_new",
+		"--as", "bot",
+	}, f, nil)
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(addStub.CapturedBody) == 0 {
+		t.Fatalf("expected add-attendees POST to run despite check failure")
+	}
+	if !strings.Contains(stderr.String(), "room availability check failed") {
+		t.Errorf("stderr should warn about degraded check, got: %q", stderr.String())
+	}
+}
+
+func TestUpdate_RoomCheck_DryRun_IncludesPrecheckStep(t *testing.T) {
+	f, stdout, _, _ := cmdutil.TestFactory(t, defaultConfig())
+
+	err := mountAndRun(t, CalendarUpdate, []string{
+		"+update",
+		"--event-id", "evt_rc7_0",
+		"--calendar-id", "cal_rc",
+		"--add-attendee-ids", "omm_dryrun",
+		"--start", "2025-03-21T00:00:00+08:00",
+		"--end", "2025-03-21T01:00:00+08:00",
+		"--dry-run",
+		"--as", "bot",
+	}, f, stdout)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	out := stdout.String()
+	if !strings.Contains(out, "room_availability_check") {
+		t.Fatalf("dry-run should preview room_availability_check, got: %s", out)
+	}
+	if !strings.Contains(out, "Pre-check meeting room availability") {
+		t.Fatalf("dry-run should describe pre-check step, got: %s", out)
+	}
+}
+
+func TestUpdate_RoomCheck_DryRun_SkipFlagOmitsStep(t *testing.T) {
+	f, stdout, _, _ := cmdutil.TestFactory(t, defaultConfig())
+
+	err := mountAndRun(t, CalendarUpdate, []string{
+		"+update",
+		"--event-id", "evt_rc8_0",
+		"--calendar-id", "cal_rc",
+		"--add-attendee-ids", "omm_dryrun2",
+		"--start", "2025-03-21T00:00:00+08:00",
+		"--end", "2025-03-21T01:00:00+08:00",
+		"--skip-room-check",
+		"--dry-run",
+		"--as", "bot",
+	}, f, stdout)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	out := stdout.String()
+	if strings.Contains(out, "room_availability_check") {
+		t.Fatalf("dry-run with --skip-room-check should not preview room_availability_check, got: %s", out)
+	}
+}
+
+// TestStrategyDetail_ByReason exercises the human-readable strategy suffix
+// appended to each blocked-room line. Timezone-anchored fields use a fixed
+// IANA name so the offset ("GMT+8") is deterministic across machines.
+func TestStrategyDetail_ByReason(t *testing.T) {
+	tests := []struct {
+		name     string
+		reason   string
+		strategy *roomStrategy
+		want     string
+	}{
+		{
+			name:     "over_max_duration renders as hours",
+			reason:   "over_max_duration",
+			strategy: &roomStrategy{SingleMaxDuration: "10800"},
+			want:     "the max single-booking duration is 3 hours",
+		},
+		{
+			name:     "over_max_duration mixed hours and minutes",
+			reason:   "over_max_duration",
+			strategy: &roomStrategy{SingleMaxDuration: "5400"},
+			want:     "the max single-booking duration is 1 hours 30 minutes",
+		},
+		{
+			name:     "beyond_advance_booking_window surfaces rfc3339 verbatim",
+			reason:   "beyond_advance_booking_window",
+			strategy: &roomStrategy{MaxAdvanceBookingTime: "2026-07-13T18:00:00+08:00", Timezone: "Asia/Shanghai"},
+			want:     "the latest bookable end time is 2026-07-13T18:00:00+08:00",
+		},
+		{
+			name:     "not_in_usable_time renders day-seconds and zone",
+			reason:   "not_in_usable_time",
+			strategy: &roomStrategy{DailyStartTime: "36000", DailyEndTime: "72000", Timezone: "Asia/Shanghai"},
+			want:     "the daily bookable window is 10:00 - 20:00 (GMT+8)",
+		},
+		{
+			name:     "before_daily_advance_window_release renders unlock time and zone",
+			reason:   "before_daily_advance_window_release",
+			strategy: &roomStrategy{DailyAdvanceWindowReleaseTime: "28800", Timezone: "Asia/Shanghai"},
+			want:     "the next unlock happens today at 08:00 (GMT+8), which advances the window by one day",
+		},
+		{
+			name:     "past_time has no strategy suffix",
+			reason:   "past_time",
+			strategy: &roomStrategy{SingleMaxDuration: "10800"},
+			want:     "",
+		},
+		{
+			name:     "nil strategy returns empty",
+			reason:   "over_max_duration",
+			strategy: nil,
+			want:     "",
+		},
+		{
+			name:     "invalid duration returns empty",
+			reason:   "over_max_duration",
+			strategy: &roomStrategy{SingleMaxDuration: "not-a-number"},
+			want:     "",
+		},
+		{
+			name:     "day-seconds out of range returns empty",
+			reason:   "not_in_usable_time",
+			strategy: &roomStrategy{DailyStartTime: "-1", DailyEndTime: "999999", Timezone: "Asia/Shanghai"},
+			want:     "",
+		},
+		{
+			name:     "unresolvable timezone falls back to iana name",
+			reason:   "before_daily_advance_window_release",
+			strategy: &roomStrategy{DailyAdvanceWindowReleaseTime: "28800", Timezone: "Not/AReal_Zone"},
+			want:     "the next unlock happens today at 08:00 (Not/AReal_Zone), which advances the window by one day",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := strategyDetail(tt.reason, tt.strategy)
+			if got != tt.want {
+				t.Errorf("strategyDetail(%q) = %q, want %q", tt.reason, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestUpdate_RoomCheck_StrategyDetailInMessage pins that when the API returns a
+// room_strategy alongside the unavailable_reason_type, blockOnUnavailableRooms
+// surfaces the specific limit inline so agents can relay it to the user
+// without an extra round trip.
+func TestUpdate_RoomCheck_StrategyDetailInMessage(t *testing.T) {
+	f, _, _, reg := cmdutil.TestFactory(t, defaultConfig())
+
+	reg.Register(eventSnapshotStub("cal_rc", "evt_rc_strategy_0", "1742515200", "1742525200"))
+	reg.Register(&httpmock.Stub{
+		Method: "POST",
+		URL:    "/open-apis/calendar/v4/freebusy/room_availability_check",
+		Body: map[string]interface{}{
+			"code": 0, "msg": "ok",
+			"data": map[string]interface{}{
+				"room_availabilitys": []interface{}{
+					map[string]interface{}{
+						"room_id":                 "omm_toolong",
+						"status":                  "unavailable",
+						"unavailable_reason_type": "over_max_duration",
+						"room_strategy": map[string]interface{}{
+							"single_max_duration": "10800",
+							"timezone":            "Asia/Shanghai",
+						},
+					},
+				},
+			},
+		},
+	})
+
+	err := mountAndRun(t, CalendarUpdate, []string{
+		"+update",
+		"--event-id", "evt_rc_strategy_0",
+		"--calendar-id", "cal_rc",
+		"--add-attendee-ids", "omm_toolong",
+		"--as", "bot",
+	}, f, nil)
+	if err == nil {
+		t.Fatal("expected block error when strategy limit is hit")
+	}
+	var ve *errs.ValidationError
+	if !errors.As(err, &ve) {
+		t.Fatalf("want *errs.ValidationError, got %T (%v)", err, err)
+	}
+	if !strings.Contains(ve.Message, "the max single-booking duration is 3 hours") {
+		t.Errorf("message should surface the max-duration limit, got: %q", ve.Message)
+	}
+	if !strings.Contains(ve.Message, "omm_toolong") {
+		t.Errorf("message should still list the room id, got: %q", ve.Message)
+	}
+}
+
+// TestRequisitionDetail_ByBounds pins the human-readable suffix rendered for a
+// `during_requisition` block. Every variant (both bounds, start only, end
+// only, none, nil requisition, non-matching reason) must degrade coherently.
+func TestRequisitionDetail_ByBounds(t *testing.T) {
+	tests := []struct {
+		name string
+		req  *roomRequisition
+		want string
+	}{
+		{
+			name: "both bounds surface as verbatim rfc3339 range",
+			req:  &roomRequisition{StartTime: "2026-07-13T09:00:00+08:00", EndTime: "2026-07-13T18:00:00+08:00"},
+			want: "the disabled period is 2026-07-13T09:00:00+08:00 to 2026-07-13T18:00:00+08:00",
+		},
+		{
+			name: "start only",
+			req:  &roomRequisition{StartTime: "2026-07-13T09:00:00+08:00"},
+			want: "the disabled period starts at 2026-07-13T09:00:00+08:00",
+		},
+		{
+			name: "end only",
+			req:  &roomRequisition{EndTime: "2026-07-13T18:00:00+08:00"},
+			want: "the disabled period ends at 2026-07-13T18:00:00+08:00",
+		},
+		{
+			name: "empty bounds return no detail",
+			req:  &roomRequisition{},
+			want: "",
+		},
+		{
+			name: "nil requisition returns empty",
+			req:  nil,
+			want: "",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := requisitionDetail("during_requisition", tt.req)
+			if got != tt.want {
+				t.Errorf("requisitionDetail(during_requisition) = %q, want %q", got, tt.want)
+			}
+		})
+	}
+
+	// Non-matching reason should always short-circuit even with a full payload.
+	if got := requisitionDetail("reserved_by_other_event", &roomRequisition{StartTime: "x", EndTime: "y"}); got != "" {
+		t.Errorf("requisitionDetail should ignore requisition for non-during_requisition reasons, got %q", got)
+	}
+}
+
+// TestUpdate_RoomCheck_RequisitionDetailInMessage pins that when the API
+// returns room_requisition alongside a during_requisition block, the disabled
+// period is surfaced inline and the recovery clause is always present.
+func TestUpdate_RoomCheck_RequisitionDetailInMessage(t *testing.T) {
+	f, _, _, reg := cmdutil.TestFactory(t, defaultConfig())
+
+	reg.Register(eventSnapshotStub("cal_rc", "evt_rc_req_0", "1742515200", "1742525200"))
+	reg.Register(&httpmock.Stub{
+		Method: "POST",
+		URL:    "/open-apis/calendar/v4/freebusy/room_availability_check",
+		Body: map[string]interface{}{
+			"code": 0, "msg": "ok",
+			"data": map[string]interface{}{
+				"room_availabilitys": []interface{}{
+					map[string]interface{}{
+						"room_id":                 "omm_req",
+						"room_name":               "Meeting Room A",
+						"status":                  "unavailable",
+						"unavailable_reason_type": "during_requisition",
+						"room_requisition": map[string]interface{}{
+							"start_time": "2026-07-13T09:00:00+08:00",
+							"end_time":   "2026-07-13T18:00:00+08:00",
+						},
+					},
+				},
+			},
+		},
+	})
+
+	err := mountAndRun(t, CalendarUpdate, []string{
+		"+update",
+		"--event-id", "evt_rc_req_0",
+		"--calendar-id", "cal_rc",
+		"--add-attendee-ids", "omm_req",
+		"--as", "bot",
+	}, f, nil)
+	if err == nil {
+		t.Fatal("expected block error for during_requisition")
+	}
+	var ve *errs.ValidationError
+	if !errors.As(err, &ve) {
+		t.Fatalf("want *errs.ValidationError, got %T (%v)", err, err)
+	}
+	if !strings.Contains(ve.Message, "the disabled period is 2026-07-13T09:00:00+08:00 to 2026-07-13T18:00:00+08:00") {
+		t.Errorf("message should surface the disabled period, got: %q", ve.Message)
+	}
+	if !strings.Contains(ve.Message, "pick a different time or a different room") {
+		t.Errorf("message should always include recovery hint, got: %q", ve.Message)
+	}
+	if !strings.Contains(ve.Message, "omm_req[Meeting Room A]") {
+		t.Errorf("message should render room id with human-readable name, got: %q", ve.Message)
+	}
+}
+
+// TestRoomLabel_ByFields pins the room identifier rendering used in the block
+// message. `<room_id>(<room_name>)` when both are present; degrades to
+// whichever is non-empty when the other is missing.
+func TestRoomLabel_ByFields(t *testing.T) {
+	tests := []struct {
+		name string
+		id   string
+		room string
+		want string
+	}{
+		{name: "both present", id: "omm_1", room: "Meeting Room A", want: "omm_1[Meeting Room A]"},
+		{name: "id only", id: "omm_2", room: "", want: "omm_2"},
+		{name: "id only with whitespace name", id: "omm_3", room: "   ", want: "omm_3"},
+		{name: "name only degrades to name", id: "", room: "Room B", want: "Room B"},
+		{name: "both blank returns empty", id: "", room: "", want: ""},
+		{name: "name with parens does not create ambiguous nesting", id: "omm_4", room: "Room A (west wing)", want: "omm_4[Room A (west wing)]"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := roomLabel(tt.id, tt.room); got != tt.want {
+				t.Errorf("roomLabel(%q, %q) = %q, want %q", tt.id, tt.room, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestRecurringMasterEventID_Shapes pins the recurringMasterEventID contract:
+// only `{uid}_{positive int}` collapses to `{uid}_0`; everything else opts out.
+func TestRecurringMasterEventID_Shapes(t *testing.T) {
+	tests := []struct {
+		in       string
+		wantID   string
+		wantOK   bool
+		scenario string
+	}{
+		{in: "abc_1742515200", wantID: "abc_0", wantOK: true, scenario: "positive suffix collapses to master"},
+		{in: "abc_1", wantID: "abc_0", wantOK: true, scenario: "positive one collapses to master"},
+		{in: "abc_0", wantID: "", wantOK: false, scenario: "already master"},
+		{in: "abc", wantID: "", wantOK: false, scenario: "no underscore"},
+		{in: "_1742515200", wantID: "", wantOK: false, scenario: "empty uid"},
+		{in: "abc_", wantID: "", wantOK: false, scenario: "empty suffix"},
+		{in: "abc_-1", wantID: "", wantOK: false, scenario: "negative suffix"},
+		{in: "abc_xyz", wantID: "", wantOK: false, scenario: "non-numeric suffix"},
+		{in: "abc_def_1742515200", wantID: "abc_def_0", wantOK: true, scenario: "uid may contain underscore"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.scenario, func(t *testing.T) {
+			gotID, gotOK := recurringMasterEventID(tt.in)
+			if gotID != tt.wantID || gotOK != tt.wantOK {
+				t.Errorf("recurringMasterEventID(%q) = (%q, %v), want (%q, %v)", tt.in, gotID, gotOK, tt.wantID, tt.wantOK)
+			}
+		})
+	}
+}
+
+// TestApprovalReasonHint_ByMode pins the copy for each supported approval
+// mode, including the over_duration current-vs-threshold branches. The exact
+// phrase matters because agents parse it to decide next steps (relay to user,
+// shorten the meeting, pick another room).
+func TestApprovalReasonHint_ByMode(t *testing.T) {
+	tests := []struct {
+		name           string
+		info           *roomApprovalInfo
+		duration       int64
+		mustContain    []string
+		mustNotContain []string
+	}{
+		{
+			name:     "all mode always needs approval",
+			info:     &roomApprovalInfo{ApprovalMode: "all"},
+			duration: 3600,
+			mustContain: []string{
+				"requires approval for every reservation",
+			},
+			mustNotContain: []string{
+				"the CLI cannot submit approvals",
+				"lark-cli calendar event.attendees create",
+			},
+		},
+		{
+			name:     "over_duration with current above threshold cites both",
+			info:     &roomApprovalInfo{ApprovalMode: "over_duration", ApprovalDurationThreshold: "3600"},
+			duration: 7200,
+			mustContain: []string{
+				"exceeds 1 hours",
+				"current duration is 2 hours",
+			},
+			mustNotContain: []string{
+				"lark-cli calendar event.attendees create",
+			},
+		},
+		{
+			name:     "over_duration with current exactly at threshold treated as over",
+			info:     &roomApprovalInfo{ApprovalMode: "over_duration", ApprovalDurationThreshold: "3600"},
+			duration: 3600,
+			mustContain: []string{
+				"exceeds 1 hours",
+				"current duration is 1 hours",
+			},
+		},
+		{
+			name:     "over_duration with current below threshold surfaces reconciliation",
+			info:     &roomApprovalInfo{ApprovalMode: "over_duration", ApprovalDurationThreshold: "3600"},
+			duration: 1800,
+			mustContain: []string{
+				"exceeds 1 hours",
+				"current duration reads as 30 minutes",
+				"server still flagged approval",
+			},
+		},
+		{
+			name:     "over_duration without threshold keeps mode label",
+			info:     &roomApprovalInfo{ApprovalMode: "over_duration"},
+			duration: 3600,
+			mustContain: []string{
+				"exceeds a duration threshold",
+			},
+			mustNotContain: []string{
+				"the CLI cannot submit approvals",
+			},
+		},
+		{
+			name:     "unknown mode falls back to generic reminder",
+			info:     &roomApprovalInfo{ApprovalMode: "future_mode"},
+			duration: 3600,
+			mustContain: []string{
+				"requires approval before it can be booked",
+			},
+		},
+		{
+			name:     "nil approval info still yields a reminder",
+			info:     nil,
+			duration: 3600,
+			mustContain: []string{
+				"requires approval before it can be booked",
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := approvalReasonHint(tt.info, tt.duration)
+			for _, needle := range tt.mustContain {
+				if !strings.Contains(got, needle) {
+					t.Errorf("approvalReasonHint(%+v, %d) missing %q, got: %q", tt.info, tt.duration, needle, got)
+				}
+			}
+			for _, needle := range tt.mustNotContain {
+				if strings.Contains(got, needle) {
+					t.Errorf("approvalReasonHint(%+v, %d) should not contain %q (that clause belongs in the hint, not the per-line reason), got: %q", tt.info, tt.duration, needle, got)
+				}
+			}
+		})
+	}
+}
+
+// TestUpdate_RoomCheck_NeedApproval_Blocks pins that a status=="need_approval"
+// result blocks the update with a friendly, structured message: mode,
+// threshold, current duration comparison, and the "CLI can't approve" clause.
+// The block error also carries the same retry hint as the unavailable branch
+// so agents don't auto-retry with --skip-room-check.
+func TestUpdate_RoomCheck_NeedApproval_Blocks(t *testing.T) {
+	f, _, _, reg := cmdutil.TestFactory(t, defaultConfig())
+
+	// Snapshot window: 1742515200 -> 1742522400 (2h). Threshold is 1h, so the
+	// current duration is over threshold.
+	reg.Register(eventSnapshotStub("cal_rc", "evt_rc_approval_0", "1742515200", "1742522400"))
+	reg.Register(&httpmock.Stub{
+		Method: "POST",
+		URL:    "/open-apis/calendar/v4/freebusy/room_availability_check",
+		Body: map[string]interface{}{
+			"code": 0, "msg": "ok",
+			"data": map[string]interface{}{
+				"room_availabilitys": []interface{}{
+					map[string]interface{}{
+						"room_id":   "omm_approval",
+						"room_name": "Executive Room",
+						"status":    "need_approval",
+						"room_approval_info": map[string]interface{}{
+							"approval_mode":               "over_duration",
+							"approval_duration_threshold": "3600",
+						},
+					},
+				},
+			},
+		},
+	})
+
+	err := mountAndRun(t, CalendarUpdate, []string{
+		"+update",
+		"--event-id", "evt_rc_approval_0",
+		"--calendar-id", "cal_rc",
+		"--add-attendee-ids", "omm_approval",
+		"--as", "bot",
+	}, f, nil)
+	if err == nil {
+		t.Fatal("expected need_approval to block the update")
+	}
+	var ve *errs.ValidationError
+	if !errors.As(err, &ve) {
+		t.Fatalf("want *errs.ValidationError, got %T (%v)", err, err)
+	}
+	if !strings.Contains(ve.Message, "omm_approval[Executive Room]") {
+		t.Errorf("message should render room label, got: %q", ve.Message)
+	}
+	if !strings.Contains(ve.Message, "requires approval when the booking exceeds 1 hours") {
+		t.Errorf("message should carry approval threshold, got: %q", ve.Message)
+	}
+	if !strings.Contains(ve.Message, "current duration is 2 hours") {
+		t.Errorf("message should carry current-vs-threshold comparison, got: %q", ve.Message)
+	}
+	if strings.Contains(ve.Message, "the CLI cannot submit approvals inline") {
+		t.Errorf("recovery clause should live in the hint (not repeated per line in the message), got message: %q", ve.Message)
+	}
+	if strings.Contains(ve.Message, "lark-cli calendar event.attendees create --as user") {
+		t.Errorf("attendees-create recovery clause should live in the hint (not per line), got message: %q", ve.Message)
+	}
+	if !strings.Contains(ve.Hint, "the CLI cannot submit approvals") {
+		t.Errorf("hint should carry the approval recovery clause once, got: %q", ve.Hint)
+	}
+	if !strings.Contains(ve.Hint, "DO NOT auto-run") {
+		t.Errorf("hint should forbid auto-running any approval recovery path without user confirmation, got: %q", ve.Hint)
+	}
+	if !strings.Contains(ve.Hint, "ask the user first") {
+		t.Errorf("hint should require asking the user before picking a recovery path, got: %q", ve.Hint)
+	}
+	if !strings.Contains(ve.Hint, "lark-cli calendar event.attendees create --as user") {
+		t.Errorf("hint should point at the attendees-create recovery path, got: %q", ve.Hint)
+	}
+	if !strings.Contains(ve.Hint, "update through the client") {
+		t.Errorf("hint should mention the client-side fallback for re-approval on existing rooms, got: %q", ve.Hint)
+	}
+	if !strings.Contains(ve.Hint, flagSkipRoomCheck) {
+		t.Errorf("hint should still mention --%s, got: %q", flagSkipRoomCheck, ve.Hint)
+	}
+}
+
+// TestUpdate_RoomCheck_RequisitionMissingBoundsStillCoherent pins that when
+// the API returns during_requisition without room_requisition, the recovery
+// hint keeps the line coherent on its own.
+func TestUpdate_RoomCheck_RequisitionMissingBoundsStillCoherent(t *testing.T) {
+	f, _, _, reg := cmdutil.TestFactory(t, defaultConfig())
+
+	reg.Register(eventSnapshotStub("cal_rc", "evt_rc_req2_0", "1742515200", "1742525200"))
+	reg.Register(&httpmock.Stub{
+		Method: "POST",
+		URL:    "/open-apis/calendar/v4/freebusy/room_availability_check",
+		Body: map[string]interface{}{
+			"code": 0, "msg": "ok",
+			"data": map[string]interface{}{
+				"room_availabilitys": []interface{}{
+					map[string]interface{}{
+						"room_id":                 "omm_req_nobounds",
+						"status":                  "unavailable",
+						"unavailable_reason_type": "during_requisition",
+					},
+				},
+			},
+		},
+	})
+
+	err := mountAndRun(t, CalendarUpdate, []string{
+		"+update",
+		"--event-id", "evt_rc_req2_0",
+		"--calendar-id", "cal_rc",
+		"--add-attendee-ids", "omm_req_nobounds",
+		"--as", "bot",
+	}, f, nil)
+	if err == nil {
+		t.Fatal("expected block error for during_requisition without bounds")
+	}
+	var ve *errs.ValidationError
+	if !errors.As(err, &ve) {
+		t.Fatalf("want *errs.ValidationError, got %T (%v)", err, err)
+	}
+	if strings.Contains(ve.Message, "the disabled period") {
+		t.Errorf("message should not fabricate a disabled period, got: %q", ve.Message)
+	}
+	if !strings.Contains(ve.Message, "pick a different time or a different room") {
+		t.Errorf("message should always include recovery hint, got: %q", ve.Message)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// CalendarJoinEvent tests
+// ---------------------------------------------------------------------------
+
+func TestJoinEvent_Success(t *testing.T) {
+	f, stdout, _, reg := cmdutil.TestFactory(t, defaultConfig())
+
+	reg.Register(&httpmock.Stub{
+		Method: "POST",
+		URL:    "/open-apis/calendar/v4/calendars/join_event",
+		Body:   map[string]interface{}{"code": 0, "msg": "ok"},
+	})
+
+	err := mountAndRun(t, CalendarJoinEvent, []string{
+		"+join-event",
+		"--token", "md5tok_abc",
+		"--as", "bot",
+	}, f, stdout)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(stdout.String(), `"joined": true`) {
+		t.Errorf("stdout should confirm join, got: %s", stdout.String())
+	}
+}
+
+// The share_token is the only body field, and the endpoint carries no path
+// params — assert the request body so a regression to per-field joins fails.
+func TestJoinEvent_SendsShareTokenBody(t *testing.T) {
+	f, stdout, _, reg := cmdutil.TestFactory(t, defaultConfig())
+
+	stub := &httpmock.Stub{
+		Method: "POST",
+		URL:    "/open-apis/calendar/v4/calendars/join_event",
+		Body:   map[string]interface{}{"code": 0, "msg": "ok"},
+	}
+	reg.Register(stub)
+
+	err := mountAndRun(t, CalendarJoinEvent, []string{
+		"+join-event",
+		"--token", "  md5tok_trim  ",
+		"--as", "user",
+	}, f, stdout)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var gotBody map[string]interface{}
+	if err := json.Unmarshal(stub.CapturedBody, &gotBody); err != nil {
+		t.Fatalf("unmarshal request body: %v", err)
+	}
+	if got := gotBody["share_token"]; got != "md5tok_trim" {
+		t.Errorf("share_token=%v, want trimmed md5tok_trim", got)
+	}
+	if _, extra := gotBody["event_id"]; extra {
+		t.Error("body must not carry event_id; join is share-token only")
+	}
+}
+
+// Alias --share-token maps to the same canonical --token flag.
+func TestJoinEvent_ShareTokenAlias(t *testing.T) {
+	f, stdout, _, reg := cmdutil.TestFactory(t, defaultConfig())
+
+	reg.Register(&httpmock.Stub{
+		Method: "POST",
+		URL:    "/open-apis/calendar/v4/calendars/join_event",
+		Body:   map[string]interface{}{"code": 0, "msg": "ok"},
+	})
+
+	err := mountAndRun(t, CalendarJoinEvent, []string{
+		"+join-event",
+		"--share-token", "enc_msgid_xyz",
+		"--as", "bot",
+	}, f, stdout)
+	if err != nil {
+		t.Fatalf("unexpected error with --share-token alias: %v", err)
+	}
+	if !strings.Contains(stdout.String(), `"joined": true`) {
+		t.Errorf("stdout should confirm join, got: %s", stdout.String())
+	}
+}
+
+func TestJoinEvent_DryRun(t *testing.T) {
+	f, stdout, _, _ := cmdutil.TestFactory(t, defaultConfig())
+
+	err := mountAndRun(t, CalendarJoinEvent, []string{
+		"+join-event",
+		"--token", "md5tok_dry",
+		"--dry-run",
+		"--as", "bot",
+	}, f, stdout)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	for _, want := range []string{
+		"/open-apis/calendar/v4/calendars/join_event",
+		`"share_token": "md5tok_dry"`,
+	} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Errorf("dry-run output should contain %q, got: %s", want, stdout.String())
+		}
+	}
+}
+
+func TestJoinEvent_EmptyToken_Typed(t *testing.T) {
+	f, _, _, _ := cmdutil.TestFactory(t, defaultConfig())
+
+	err := mountAndRun(t, CalendarJoinEvent, []string{
+		"+join-event",
+		"--token", "   ",
+		"--as", "bot",
+	}, f, nil)
+	if err == nil {
+		t.Fatal("expected validation error for empty token, got nil")
+	}
+	var ve *errs.ValidationError
+	if !errors.As(err, &ve) {
+		t.Fatalf("want *errs.ValidationError, got %T", err)
+	}
+	if ve.Subtype != errs.SubtypeInvalidArgument {
+		t.Errorf("subtype=%q, want invalid_argument", ve.Subtype)
+	}
+	if ve.Param != "--token" {
+		t.Errorf("param=%q, want --token", ve.Param)
+	}
+}
+
+func TestJoinEvent_RejectsDangerousChars(t *testing.T) {
+	f, _, _, _ := cmdutil.TestFactory(t, defaultConfig())
+
+	err := mountAndRun(t, CalendarJoinEvent, []string{
+		"+join-event",
+		"--token", "md5tok\u202e",
+		"--as", "bot",
+	}, f, nil)
+	if err == nil {
+		t.Fatal("expected validation error for dangerous characters, got nil")
+	}
+	var ve *errs.ValidationError
+	if !errors.As(err, &ve) {
+		t.Fatalf("want *errs.ValidationError, got %T", err)
+	}
+	if ve.Param != "--token" {
+		t.Errorf("param=%q, want --token", ve.Param)
+	}
+}
+
+func TestJoinEvent_APIError(t *testing.T) {
+	f, _, _, reg := cmdutil.TestFactory(t, defaultConfig())
+
+	reg.Register(&httpmock.Stub{
+		Method: "POST",
+		URL:    "/open-apis/calendar/v4/calendars/join_event",
+		Body:   map[string]interface{}{"code": 3201, "msg": "no permission to join event"},
+	})
+
+	err := mountAndRun(t, CalendarJoinEvent, []string{
+		"+join-event",
+		"--token", "md5tok_denied",
+		"--as", "bot",
+	}, f, nil)
+	if err == nil {
+		t.Fatal("expected error for API failure, got nil")
+	}
+}

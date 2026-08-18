@@ -1,0 +1,119 @@
+// Copyright (c) 2026 Lark Technologies Pte. Ltd.
+// SPDX-License-Identifier: MIT
+
+package vc
+
+import (
+	"context"
+	"encoding/json"
+
+	"github.com/larksuite/cli/internal/event"
+	"github.com/larksuite/cli/internal/event/processing"
+)
+
+// VCRecordingTranscriptItemOutput is one flattened transcript item for recording events.
+type VCRecordingTranscriptItemOutput struct {
+	SpeakerName string `json:"speaker_name,omitempty" desc:"Speaker display name"`
+	Text        string `json:"text,omitempty"         desc:"Transcript text"`
+	StartTime   string `json:"start_time,omitempty"   desc:"Transcript item start time in RFC3339 / ISO 8601 with the current system timezone"`
+	EndTime     string `json:"end_time,omitempty"     desc:"Transcript item end time in RFC3339 / ISO 8601 with the current system timezone"`
+	SentenceID  string `json:"sentence_id,omitempty"  desc:"Transcript sentence ID"`
+}
+
+// VCRecordingTranscriptGeneratedOutput is the flattened shape for vc.recording.recording_transcript_generated_v1.
+type VCRecordingTranscriptGeneratedOutput struct {
+	Type            string                            `json:"type"                       desc:"Event type; always vc.recording.recording_transcript_generated_v1"`
+	EventID         string                            `json:"event_id,omitempty"         desc:"Globally unique event ID; safe for deduplication"`
+	EventTime       string                            `json:"event_time,omitempty"       desc:"Time when this batch of transcript items was generated, in RFC3339 / ISO 8601 with the current system timezone"`
+	UniqueKey       string                            `json:"unique_key,omitempty"       desc:"Unique key generated for one recording_bean recording session"`
+	Source          string                            `json:"source,omitempty"           desc:"Recording source; always recording_bean"`
+	TranscriptItems []VCRecordingTranscriptItemOutput `json:"transcript_items,omitempty" desc:"Generated transcript items"`
+}
+
+type recordingTranscriptGeneratedEvent struct {
+	UniqueKey       string                               `json:"unique_key"`
+	Source          string                               `json:"source"`
+	TranscriptItems []recordingTranscriptGeneratedItemIn `json:"transcript_items"`
+}
+
+type recordingTranscriptGeneratedItemIn struct {
+	Speaker     *recordingTranscriptGeneratedSpeakerIn `json:"speaker"`
+	Text        string                                 `json:"text"`
+	StartTimeMs recordingTranscriptGeneratedString     `json:"start_time_ms"`
+	EndTimeMs   recordingTranscriptGeneratedString     `json:"end_time_ms"`
+	SentenceID  string                                 `json:"sentence_id"`
+}
+
+type recordingTranscriptGeneratedSpeakerIn struct {
+	UserName string `json:"user_name"`
+}
+
+type recordingTranscriptGeneratedString string
+
+func processVCRecordingTranscriptGenerated(_ context.Context, _ event.APIClient, raw *event.RawEvent, _ map[string]string) (json.RawMessage, error) {
+	body, ok := decodeEventBody[recordingTranscriptGeneratedEvent](raw)
+	if !ok {
+		return nil, processing.DropMalformed(raw.EventType)
+	}
+	if body.Source != recordingBeanSource {
+		return nil, nil
+	}
+	out := &VCRecordingTranscriptGeneratedOutput{
+		Type:            raw.EventType,
+		EventID:         raw.EventID,
+		EventTime:       millisToLocalRFC3339(raw.SourceTime),
+		UniqueKey:       body.UniqueKey,
+		Source:          body.Source,
+		TranscriptItems: recordingTranscriptItems(body.TranscriptItems),
+	}
+	return json.Marshal(out)
+}
+
+func recordingTranscriptItems(items []recordingTranscriptGeneratedItemIn) []VCRecordingTranscriptItemOutput {
+	if len(items) == 0 {
+		return nil
+	}
+	out := make([]VCRecordingTranscriptItemOutput, 0, len(items))
+	for _, item := range items {
+		out = append(out, recordingTranscriptItem(item))
+	}
+	return out
+}
+
+func recordingTranscriptItem(item recordingTranscriptGeneratedItemIn) VCRecordingTranscriptItemOutput {
+	return VCRecordingTranscriptItemOutput{
+		SpeakerName: recordingSpeakerName(item.Speaker),
+		Text:        item.Text,
+		StartTime:   millisToLocalRFC3339(item.StartTimeMs.String()),
+		EndTime:     millisToLocalRFC3339(item.EndTimeMs.String()),
+		SentenceID:  item.SentenceID,
+	}
+}
+
+func recordingSpeakerName(speaker *recordingTranscriptGeneratedSpeakerIn) string {
+	if speaker == nil {
+		return ""
+	}
+	return speaker.UserName
+}
+
+func (s *recordingTranscriptGeneratedString) UnmarshalJSON(data []byte) error {
+	if string(data) == "null" {
+		return nil
+	}
+	var str string
+	if err := json.Unmarshal(data, &str); err == nil {
+		*s = recordingTranscriptGeneratedString(str)
+		return nil
+	}
+	var num json.Number
+	if err := json.Unmarshal(data, &num); err != nil {
+		return err
+	}
+	*s = recordingTranscriptGeneratedString(num.String())
+	return nil
+}
+
+func (s recordingTranscriptGeneratedString) String() string {
+	return string(s)
+}

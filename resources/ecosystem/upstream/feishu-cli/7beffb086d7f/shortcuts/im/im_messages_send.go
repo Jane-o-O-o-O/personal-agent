@@ -1,0 +1,292 @@
+// Copyright (c) 2026 Lark Technologies Pte. Ltd.
+// SPDX-License-Identifier: MIT
+
+package im
+
+import (
+	"context"
+	"net/http"
+	"os"
+	"strings"
+
+	"github.com/larksuite/cli/errs"
+	"github.com/larksuite/cli/extension/fileio"
+	"github.com/larksuite/cli/shortcuts/common"
+	larkcore "github.com/larksuite/oapi-sdk-go/v3/core"
+)
+
+var ImMessagesSend = common.Shortcut{
+	Service:     "im",
+	Command:     "+messages-send",
+	Description: "Send a message to a chat or direct message; user/bot; sends to chat-id or user-id with text/markdown/post/media, supports idempotency key",
+	Risk:        "write",
+	Scopes:      []string{"im:message:send_as_bot"},
+	UserScopes:  []string{"im:message.send_as_user", "im:message"},
+	BotScopes:   []string{"im:message:send_as_bot"},
+	AuthTypes:   []string{"bot", "user"},
+	Flags: []common.Flag{
+		{Name: "chat-id", Desc: "(required, mutually exclusive with --user-id) chat ID (oc_xxx)"},
+		{Name: "user-id", Desc: "(required, mutually exclusive with --chat-id) user open_id (ou_xxx)"},
+		{Name: "msg-type", Default: "text", Desc: "message type for --content JSON; when using --text/--markdown/--image/--file/--video/--audio, the effective type is inferred automatically", Enum: []string{"text", "post", "image", "file", "audio", "media", "interactive", "share_chat", "share_user"}},
+		{Name: "content", Desc: "(one of --content/--text/--markdown/--image/--file/--video/--audio required) message content JSON", Input: []string{common.File, common.Stdin}},
+		{Name: "text", Desc: "plain text message (auto-wrapped as JSON)", Input: []string{common.File, common.Stdin}},
+		{Name: "markdown", Desc: "markdown text (auto-wrapped as post format with style optimization; image URLs auto-resolved)", Input: []string{common.File, common.Stdin}},
+		{Name: "idempotency-key", Desc: "idempotency key, max 50 characters (prevents duplicate sends)"},
+		{Name: "image", Desc: "image key (img_xxx), URL, or cwd-relative local path (absolute paths and .. are rejected)"},
+		{Name: "file", Desc: "file key (file_xxx), URL, or cwd-relative local path (absolute paths and .. are rejected)"},
+		{Name: "video", Desc: "video file key (file_xxx), URL, or cwd-relative local path (absolute paths and .. are rejected); must be used together with --video-cover"},
+		{Name: "video-cover", Desc: "video cover image key (img_xxx), URL, or cwd-relative local path (absolute paths and .. are rejected); required when using --video"},
+		{Name: "audio", Desc: audioMessageInputDesc},
+		{Name: "attachment", Type: "string_slice", Desc: "file/folder key (file_xxx), repeatable; attaches to the post message's attachment zone (requires --markdown or --msg-type post)"},
+	},
+	DryRun: func(ctx context.Context, runtime *common.RuntimeContext) *common.DryRunAPI {
+		chatFlag := runtime.Str("chat-id")
+		userFlag := runtime.Str("user-id")
+		msgType := runtime.Str("msg-type")
+		content := runtime.Str("content")
+		desc := ""
+		text := runtime.Str("text")
+		markdown := runtime.Str("markdown")
+		idempotencyKey := runtime.Str("idempotency-key")
+		imageKey := runtime.Str("image")
+		fileKey := runtime.Str("file")
+		videoKey := runtime.Str("video")
+		videoCoverKey := runtime.Str("video-cover")
+		audioKey := runtime.Str("audio")
+
+		if markdown != "" {
+			msgType = "post"
+			content, desc = wrapMarkdownAsPostForDryRun(markdown)
+		} else if mt, c, d := buildMediaContentFromKey(text, imageKey, fileKey, videoKey, videoCoverKey, audioKey); mt != "" {
+			msgType, content, desc = mt, c, d
+		}
+
+		// Attachment zone: merge --attachment files into the post content.
+		if attachments := runtime.StrSlice("attachment"); len(attachments) > 0 {
+			msgType = "post"
+			if items, err := parseAttachments(attachments, "--attachment"); err == nil {
+				if content == "" {
+					content = `{"zh_cn":{"content":[]}}`
+				}
+				if merged, err := mergeAttachmentsIntoPostContent(content, items); err == nil {
+					content = merged
+				}
+			}
+			if desc != "" {
+				desc += "; "
+			}
+			desc += "--attachment adds files to the post attachment zone"
+		}
+
+		receiveIdType := "chat_id"
+		receiveId := chatFlag
+		if userFlag != "" {
+			receiveIdType = "open_id"
+			receiveId = userFlag
+		}
+
+		if msgType == "text" || msgType == "post" {
+			content = normalizeAtMentions(content)
+		}
+
+		body := map[string]interface{}{"receive_id": receiveId, "msg_type": msgType, "content": content}
+		if idempotencyKey != "" {
+			body["uuid"] = idempotencyKey
+		}
+
+		d := common.NewDryRunAPI()
+		if desc != "" {
+			d.Desc(desc)
+		}
+		d.
+			POST("/open-apis/im/v1/messages").
+			Params(map[string]interface{}{"receive_id_type": receiveIdType}).
+			Body(body)
+		if chatFlag != "" {
+			d.Desc("NOTE: dry-run validates request shape only. Bot/user membership in the target chat is not verified; the real send may fail with `Bot/User can NOT be out of the chat`.")
+		}
+		return d
+	},
+	Validate: func(ctx context.Context, runtime *common.RuntimeContext) error {
+		chatFlag := runtime.Str("chat-id")
+		userFlag := runtime.Str("user-id")
+		msgType := runtime.Str("msg-type")
+		content := runtime.Str("content")
+		text := runtime.Str("text")
+		markdown := runtime.Str("markdown")
+		idempotencyKey := runtime.Str("idempotency-key")
+		imageKey := runtime.Str("image")
+		fileKey := runtime.Str("file")
+		videoKey := runtime.Str("video")
+		videoCoverKey := runtime.Str("video-cover")
+		audioKey := runtime.Str("audio")
+
+		fio := runtime.FileIO()
+		for _, mf := range []struct{ flag, val string }{
+			{"--image", imageKey}, {"--file", fileKey}, {"--video", videoKey},
+			{"--video-cover", videoCoverKey}, {"--audio", audioKey},
+		} {
+			if err := validateMediaFlagPath(fio, mf.flag, mf.val); err != nil {
+				return err
+			}
+		}
+		if err := validateAudioMessageInput("--audio", audioKey); err != nil {
+			return err
+		}
+
+		if err := common.ExactlyOneTyped(runtime, "chat-id", "user-id"); err != nil {
+			return err
+		}
+
+		// Validate ID formats
+		if chatFlag != "" {
+			if _, err := common.ValidateChatIDTyped("--chat-id", chatFlag); err != nil {
+				return err
+			}
+		}
+		if userFlag != "" {
+			if _, err := common.ValidateUserIDTyped("--user-id", userFlag); err != nil {
+				return err
+			}
+		}
+
+		attachments, err := validateAttachmentFlags(runtime.StrSlice("attachment"), msgType, markdown, "--attachment", runtime.Cmd != nil && runtime.Cmd.Flags().Changed("msg-type"), text)
+		if err != nil {
+			return err
+		}
+
+		if hasContentFiles(content) && len(attachments) > 0 {
+			return errs.NewValidationError(errs.SubtypeInvalidArgument, "--attachment cannot be used with --content that already contains a files array; either declare files via --content or via --attachment, not both").WithParam("--attachment")
+		}
+		if hasAnyContentSource(text, markdown, content, imageKey, fileKey, videoKey, videoCoverKey, audioKey) {
+			// When another content source is present, every mutual-exclusion and
+			// media-integrity error from validateContentFlags must still fail —
+			// --attachment must not silently swallow a conflicting --text/
+			// --markdown/--image etc. (P1: attachments bypass content validation).
+			if msg := validateContentFlags(text, markdown, content, imageKey, fileKey, videoKey, videoCoverKey, audioKey); msg != "" {
+				return errs.NewValidationError(errs.SubtypeInvalidArgument, msg)
+			}
+		} else if len(attachments) == 0 {
+			// No content source at all (and no attachment) — nothing to send.
+			return errs.NewValidationError(errs.SubtypeInvalidArgument, "specify --content <json>, --text <plain text>, --markdown <markdown text>, a media flag (--image/--file/--video/--audio), or --attachment <file_key>")
+		}
+		if err := validateIdempotencyKey(idempotencyKey); err != nil {
+			return err
+		}
+		if content != "" {
+			if err := validateMessageContentJSON(content); err != nil {
+				return err
+			}
+		}
+		if msg := validateExplicitMsgType(runtime.Cmd, msgType, text, markdown, imageKey, fileKey, videoKey, audioKey); msg != "" {
+			return errs.NewValidationError(errs.SubtypeInvalidArgument, msg).WithParam("--msg-type")
+		}
+
+		return nil
+	},
+	Execute: func(ctx context.Context, runtime *common.RuntimeContext) error {
+		chatFlag := runtime.Str("chat-id")
+		userFlag := runtime.Str("user-id")
+		msgType := runtime.Str("msg-type")
+		content := runtime.Str("content")
+		text := runtime.Str("text")
+		markdown := runtime.Str("markdown")
+		idempotencyKey := runtime.Str("idempotency-key")
+		imageVal := runtime.Str("image")
+		fileVal := runtime.Str("file")
+		videoVal := runtime.Str("video")
+		videoCoverVal := runtime.Str("video-cover")
+		audioVal := runtime.Str("audio")
+		fio := runtime.FileIO()
+		for _, mf := range []struct{ flag, val string }{
+			{"--image", imageVal}, {"--file", fileVal}, {"--video", videoVal},
+			{"--video-cover", videoCoverVal}, {"--audio", audioVal},
+		} {
+			if err := validateMediaFlagPath(fio, mf.flag, mf.val); err != nil {
+				return err
+			}
+		}
+		// Resolve content type
+		if markdown != "" {
+			msgType, content = "post", resolveMarkdownAsPost(ctx, runtime, markdown)
+		} else if mt, c, err := resolveMediaContent(ctx, runtime, text, imageVal, fileVal, videoVal, videoCoverVal, audioVal); err != nil {
+			return err
+		} else if mt != "" {
+			msgType, content = mt, c
+		}
+
+		// Attachment zone: merge --attachment files into the post content.
+		// Validate has already enforced the post-only constraint.
+		if items, err := parseAttachments(runtime.StrSlice("attachment"), "--attachment"); err == nil && len(items) > 0 {
+			msgType = "post"
+			if content == "" {
+				content = `{"zh_cn":{"content":[]}}`
+			}
+			merged, err := mergeAttachmentsIntoPostContent(content, items)
+			if err != nil {
+				return errs.NewValidationError(errs.SubtypeInvalidArgument, "--attachment: %v", err).WithParam("--attachment")
+			}
+			content = merged
+		}
+
+		receiveIdType := "chat_id"
+		receiveId := chatFlag
+		if userFlag != "" {
+			receiveIdType = "open_id"
+			receiveId = userFlag
+		}
+
+		normalizedContent := content
+		if msgType == "text" || msgType == "post" {
+			normalizedContent = normalizeAtMentions(content)
+		}
+
+		data := map[string]interface{}{
+			"receive_id": receiveId,
+			"msg_type":   msgType,
+			"content":    normalizedContent,
+		}
+		if idempotencyKey != "" {
+			data["uuid"] = idempotencyKey
+		}
+
+		resData, err := runtime.DoAPIJSONTyped(http.MethodPost, "/open-apis/im/v1/messages",
+			larkcore.QueryParams{"receive_id_type": []string{receiveIdType}}, data)
+		if err != nil {
+			return err
+		}
+
+		runtime.Out(map[string]interface{}{
+			"message_id":  resData["message_id"],
+			"chat_id":     resData["chat_id"],
+			"create_time": common.FormatTimeWithSeconds(resData["create_time"]),
+		}, nil)
+		return nil
+	},
+}
+
+const maxIdempotencyKeyChars = 50
+
+func validateIdempotencyKey(value string) error {
+	if chars := len([]rune(value)); chars > maxIdempotencyKeyChars {
+		return errs.NewValidationError(errs.SubtypeInvalidArgument, "--idempotency-key exceeds the maximum of %d characters (got %d)", maxIdempotencyKeyChars, chars).WithParam("--idempotency-key")
+	}
+	return nil
+}
+
+// isMediaKey returns true if the value looks like an existing API key rather than a local file path.
+func isMediaKey(value string) bool {
+	return strings.HasPrefix(value, "img_") || strings.HasPrefix(value, "file_")
+}
+
+// validateMediaFlagPath validates a media flag value as a local file path via FileIO.
+// Empty values, URLs, and media keys are skipped (not local files).
+func validateMediaFlagPath(fio fileio.FileIO, flagName, value string) error {
+	if value == "" || strings.HasPrefix(value, "http://") || strings.HasPrefix(value, "https://") || isMediaKey(value) {
+		return nil
+	}
+	if _, err := fio.Stat(value); err != nil && !os.IsNotExist(err) {
+		return errs.NewValidationError(errs.SubtypeInvalidArgument, "%s: %v", flagName, err).WithParam(flagName)
+	}
+	return nil
+}

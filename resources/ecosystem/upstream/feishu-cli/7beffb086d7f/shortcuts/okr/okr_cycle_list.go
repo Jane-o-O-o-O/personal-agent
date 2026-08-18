@@ -1,0 +1,232 @@
+// Copyright (c) 2026 Lark Technologies Pte. Ltd.
+// SPDX-License-Identifier: MIT
+
+package okr
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/larksuite/cli/errs"
+	"github.com/larksuite/cli/shortcuts/common"
+)
+
+// parseTimeRange parses a "YYYY-MM--YYYY-MM" string into two time.Time values.
+// The start is the first moment of the start month; the end is the last moment of the end month.
+func parseTimeRange(s string) (start, end time.Time, err error) {
+	parts := strings.SplitN(s, "--", 2)
+	if len(parts) != 2 {
+		return time.Time{}, time.Time{}, errs.NewValidationError(errs.SubtypeInvalidArgument, "invalid --time-range format %q, expected YYYY-MM--YYYY-MM", s).WithParam("--time-range")
+	}
+	start, err = time.Parse("2006-01", strings.TrimSpace(parts[0]))
+	if err != nil {
+		return time.Time{}, time.Time{}, errs.NewValidationError(errs.SubtypeInvalidArgument, "invalid --time-range start month %q: %v", parts[0], err).WithParam("--time-range").WithCause(err)
+	}
+	end, err = time.Parse("2006-01", strings.TrimSpace(parts[1]))
+	if err != nil {
+		return time.Time{}, time.Time{}, errs.NewValidationError(errs.SubtypeInvalidArgument, "invalid --time-range end month %q: %v", parts[1], err).WithParam("--time-range").WithCause(err)
+	}
+	// end is the last moment of the end month
+	end = end.AddDate(0, 1, 0).Add(-time.Millisecond)
+	if start.After(end) {
+		return time.Time{}, time.Time{}, errs.NewValidationError(errs.SubtypeInvalidArgument, "invalid --time-range: start month %s is after end month %s", parts[0], parts[1]).WithParam("--time-range")
+	}
+	return start, end, nil
+}
+
+// cycleOverlaps checks whether a cycle's [startMs, endMs] overlaps with [rangeStart, rangeEnd].
+func cycleOverlaps(cycle *Cycle, rangeStart, rangeEnd time.Time) bool {
+	startMs, err1 := strconv.ParseInt(cycle.StartTime, 10, 64)
+	endMs, err2 := strconv.ParseInt(cycle.EndTime, 10, 64)
+	if err1 != nil || err2 != nil {
+		return false
+	}
+	cycleStart := time.UnixMilli(startMs).UTC()
+	cycleEnd := time.UnixMilli(endMs).UTC()
+	// Two ranges overlap iff one starts before the other ends
+	return !cycleStart.After(rangeEnd) && !cycleEnd.Before(rangeStart)
+}
+
+// isCurrentActiveCycle checks whether a cycle is currently active:
+// - current time is within the cycle's start and end time
+// - cycle status is default (0) or normal (1)
+func isCurrentActiveCycle(cycle *Cycle, now time.Time) bool {
+	startMs, err1 := strconv.ParseInt(cycle.StartTime, 10, 64)
+	endMs, err2 := strconv.ParseInt(cycle.EndTime, 10, 64)
+	if err1 != nil || err2 != nil {
+		return false
+	}
+	cycleStart := time.UnixMilli(startMs).UTC()
+	cycleEnd := time.UnixMilli(endMs).UTC()
+	nowUTC := now.UTC()
+	// Month cycles only
+	if cycleStart.AddDate(1, 0, -1) == cycleEnd {
+		return false
+	}
+
+	// Check time range: now must be >= start and <= end
+	if nowUTC.Before(cycleStart) || nowUTC.After(cycleEnd) {
+		return false
+	}
+
+	// Check status: must be default or normal
+	if cycle.CycleStatus == nil {
+		return false
+	}
+	status := *cycle.CycleStatus
+	return status == CycleStatusDefault || status == CycleStatusNormal
+}
+
+// OKRListCycles
+var OKRListCycles = common.Shortcut{
+	Service:     "okr",
+	Command:     "+cycle-list",
+	Description: "List okr cycles of a certain user",
+	Risk:        "read",
+	Scopes:      []string{"okr:okr.period:readonly"},
+	AuthTypes:   []string{"user", "bot"},
+	HasFormat:   true,
+	Flags: []common.Flag{
+		{Name: "user-id", Desc: "user ID", Required: true},
+		{Name: "user-id-type", Default: "open_id", Desc: "user ID type: open_id | union_id | user_id"},
+		{Name: "time-range", Desc: "local post-filter applied after the requested page is fetched. Format: YYYY-MM--YYYY-MM. Leave empty to keep the page unfiltered."},
+		{Name: "page-size", Type: "int", Default: "100", Desc: "page size, range 1-100"},
+		{Name: "page-token", Desc: "pagination token from previous response"},
+	},
+	Validate: func(ctx context.Context, runtime *common.RuntimeContext) error {
+		idType := runtime.Str("user-id-type")
+		if idType != "open_id" && idType != "union_id" && idType != "user_id" {
+			return errs.NewValidationError(errs.SubtypeInvalidArgument, "--user-id-type must be one of: open_id | union_id | user_id").WithParam("--user-id-type")
+		}
+		userID := runtime.Str("user-id")
+		if err := common.RejectDangerousCharsTyped("--user-id", userID); err != nil {
+			return err
+		}
+
+		tr := runtime.Str("time-range")
+		if tr != "" {
+			if err := common.RejectDangerousCharsTyped("--time-range", tr); err != nil {
+				return err
+			}
+			if _, _, err := parseTimeRange(tr); err != nil {
+				return err
+			}
+		}
+		if _, err := common.ValidatePageSizeTyped(runtime, "page-size", 100, 1, 100); err != nil {
+			return err
+		}
+		if pageToken := runtime.Str("page-token"); pageToken != "" {
+			if err := common.RejectDangerousCharsTyped("--page-token", pageToken); err != nil {
+				return err
+			}
+		}
+		return nil
+	},
+	DryRun: func(ctx context.Context, runtime *common.RuntimeContext) *common.DryRunAPI {
+		params := map[string]interface{}{
+			"user_id":      runtime.Str("user-id"),
+			"user_id_type": runtime.Str("user-id-type"),
+			"page_size":    runtime.Int("page-size"),
+		}
+		if pageToken := runtime.Str("page-token"); pageToken != "" {
+			params["page_token"] = pageToken
+		}
+		return common.NewDryRunAPI().
+			GET("/open-apis/okr/v2/cycles").
+			Params(params).
+			Desc("List one page of OKR cycles for user; --time-range is a local post-filter on the returned page")
+	},
+	Execute: func(ctx context.Context, runtime *common.RuntimeContext) error {
+		userID := runtime.Str("user-id")
+		userIDType := runtime.Str("user-id-type")
+		timeRange := runtime.Str("time-range")
+
+		// Parse time range for filtering
+		var rangeStart, rangeEnd time.Time
+		var hasRange bool
+		if timeRange != "" {
+			var err error
+			rangeStart, rangeEnd, err = parseTimeRange(timeRange)
+			if err != nil {
+				return err
+			}
+			hasRange = true
+		}
+
+		queryParams := map[string]interface{}{
+			"user_id":      userID,
+			"user_id_type": userIDType,
+			"page_size":    runtime.Int("page-size"),
+		}
+		if pageToken := runtime.Str("page-token"); pageToken != "" {
+			queryParams["page_token"] = pageToken
+		}
+
+		var allCycles []Cycle
+		data, err := runtime.CallAPITyped("GET", "/open-apis/okr/v2/cycles", queryParams, nil)
+		if err != nil {
+			return err
+		}
+
+		itemsRaw, _ := data["items"].([]interface{})
+		for _, item := range itemsRaw {
+			raw, err := json.Marshal(item)
+			if err != nil {
+				continue
+			}
+			var cycle Cycle
+			if err := json.Unmarshal(raw, &cycle); err != nil {
+				continue
+			}
+			allCycles = append(allCycles, cycle)
+		}
+		hasMore, nextPageToken := common.PaginationMeta(data)
+
+		// Filter by time-range overlap
+		var filtered []Cycle
+		for i := range allCycles {
+			if !hasRange || cycleOverlaps(&allCycles[i], rangeStart, rangeEnd) {
+				filtered = append(filtered, allCycles[i])
+			}
+		}
+
+		// Convert to response format
+		respCycles := make([]*RespCycle, 0, len(filtered))
+		for i := range filtered {
+			respCycles = append(respCycles, filtered[i].ToResp())
+		}
+
+		// Filter current active cycles
+		now := time.Now()
+		currentActiveCycles := make([]*RespCycle, 0)
+		for i := range filtered {
+			if isCurrentActiveCycle(&filtered[i], now) {
+				currentActiveCycles = append(currentActiveCycles, filtered[i].ToResp())
+			}
+		}
+
+		runtime.OutFormat(map[string]interface{}{
+			"cycles":                respCycles,
+			"has_more":              hasMore,
+			"page_token":            nextPageToken,
+			"current_active_cycles": currentActiveCycles,
+		}, nil, func(w io.Writer) {
+			fmt.Fprintf(w, "Found %d cycle(s)\n", len(respCycles))
+			for _, c := range respCycles {
+				fmt.Fprintf(w, "  [%s] %s ~ %s (status: %s)\n", c.ID, c.StartTime, c.EndTime, ptrStr(c.CycleStatus))
+			}
+			if len(currentActiveCycles) > 0 {
+				fmt.Fprintf(w, "\nCurrent active cycle(s):\n")
+				for _, c := range currentActiveCycles {
+					fmt.Fprintf(w, "  [%s] %s ~ %s\n", c.ID, c.StartTime, c.EndTime)
+				}
+			}
+		})
+		return nil
+	},
+}

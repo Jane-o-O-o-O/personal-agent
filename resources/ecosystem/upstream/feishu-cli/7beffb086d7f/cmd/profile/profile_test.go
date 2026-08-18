@@ -1,0 +1,949 @@
+// Copyright (c) 2026 Lark Technologies Pte. Ltd.
+// SPDX-License-Identifier: MIT
+
+package profile
+
+import (
+	"encoding/json"
+	"errors"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/larksuite/cli/errs"
+	"github.com/larksuite/cli/internal/cmdutil"
+	"github.com/larksuite/cli/internal/core"
+	"github.com/larksuite/cli/internal/i18n"
+	"github.com/larksuite/cli/internal/keychain"
+	"github.com/larksuite/cli/internal/output"
+	"github.com/larksuite/cli/internal/recovery"
+	"github.com/larksuite/cli/internal/surface"
+	"github.com/larksuite/cli/internal/vfs"
+	"github.com/zalando/go-keyring"
+)
+
+type failRenameFS struct {
+	vfs.OsFs
+	err error
+}
+
+func (fs *failRenameFS) Rename(oldpath, newpath string) error {
+	return fs.err
+}
+
+func setupProfileConfigDir(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	t.Setenv("LARKSUITE_CLI_CONFIG_DIR", dir)
+	return dir
+}
+
+func TestProfileAddRun_InvalidExistingConfigReturnsError(t *testing.T) {
+	dir := setupProfileConfigDir(t)
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte("{invalid json"), 0600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	f, _, _, _ := cmdutil.TestFactory(t, nil)
+	f.IOStreams.In = strings.NewReader("secret\n")
+
+	err := profileAddRun(f, "test", "app-test", true, "feishu", "zh", false)
+	if err == nil {
+		t.Fatal("expected error for invalid existing config")
+	}
+	if !strings.Contains(err.Error(), "failed to load config") {
+		t.Fatalf("error = %v, want failed to load config", err)
+	}
+	var internalErr *errs.InternalError
+	if !errors.As(err, &internalErr) {
+		t.Fatalf("error type = %T, want *errs.InternalError; err=%v", err, err)
+	}
+	if internalErr.Subtype != errs.SubtypeFileIO {
+		t.Fatalf("subtype = %q, want %q", internalErr.Subtype, errs.SubtypeFileIO)
+	}
+	if code := output.ExitCodeOf(err); code != output.ExitInternal {
+		t.Fatalf("exit code = %d, want %d (ExitInternal)", code, output.ExitInternal)
+	}
+}
+
+// TestProfileAddRun_Lang covers the unified --lang contract on profile add:
+// short codes and Feishu locales both canonicalize to the same stored locale,
+// empty stores no preference, and an unrecognized value errors.
+func TestProfileAddRun_Lang(t *testing.T) {
+	t.Run("short and locale canonicalize and persist alike", func(t *testing.T) {
+		for _, in := range []string{"ja", "ja_jp"} {
+			setupProfileConfigDir(t)
+			f, _, _, _ := cmdutil.TestFactory(t, nil)
+			f.IOStreams.In = strings.NewReader("secret\n")
+			if err := profileAddRun(f, "p", "app-p", true, "feishu", in, false); err != nil {
+				t.Fatalf("--lang %q: profileAddRun() error = %v", in, err)
+			}
+			saved, err := core.LoadMultiAppConfig()
+			if err != nil {
+				t.Fatalf("LoadMultiAppConfig() error = %v", err)
+			}
+			if app := saved.FindApp("p"); app == nil || app.Lang != i18n.LangJaJP {
+				t.Errorf("--lang %q: stored Lang = %v, want %q", in, app, i18n.LangJaJP)
+			}
+		}
+	})
+
+	t.Run("empty stores no preference", func(t *testing.T) {
+		setupProfileConfigDir(t)
+		f, _, _, _ := cmdutil.TestFactory(t, nil)
+		f.IOStreams.In = strings.NewReader("secret\n")
+		if err := profileAddRun(f, "p", "app-p", true, "feishu", "", false); err != nil {
+			t.Fatalf("profileAddRun() error = %v", err)
+		}
+		saved, _ := core.LoadMultiAppConfig()
+		if app := saved.FindApp("p"); app == nil || app.Lang != "" {
+			t.Errorf("stored Lang = %v, want \"\" (unset)", app)
+		}
+	})
+
+	t.Run("invalid lang errors", func(t *testing.T) {
+		setupProfileConfigDir(t)
+		f, _, _, _ := cmdutil.TestFactory(t, nil)
+		f.IOStreams.In = strings.NewReader("secret\n")
+		err := profileAddRun(f, "p", "app-p", true, "feishu", "ZH", false)
+		if err == nil {
+			t.Fatal("expected validation error for --lang ZH, got nil")
+		}
+		var valErr *errs.ValidationError
+		if !errors.As(err, &valErr) || output.ExitCodeOf(err) != output.ExitValidation {
+			t.Fatalf("expected typed validation error with ExitValidation, got %T: %v", err, err)
+		}
+	})
+}
+
+func TestProfileAddRun_UseAfterUpdatesCurrentAndPrevious(t *testing.T) {
+	setupProfileConfigDir(t)
+	multi := &core.MultiAppConfig{
+		CurrentApp: "default",
+		Apps: []core.AppConfig{
+			{Name: "default", AppId: "app-default", AppSecret: core.PlainSecret("secret-default"), Brand: core.BrandFeishu},
+		},
+	}
+	if err := core.SaveMultiAppConfig(multi); err != nil {
+		t.Fatalf("SaveMultiAppConfig() error = %v", err)
+	}
+
+	f, _, _, _ := cmdutil.TestFactory(t, nil)
+	f.IOStreams.In = strings.NewReader("secret-new\n")
+
+	if err := profileAddRun(f, "target", "app-target", true, "lark", "en", true); err != nil {
+		t.Fatalf("profileAddRun() error = %v", err)
+	}
+
+	saved, err := core.LoadMultiAppConfig()
+	if err != nil {
+		t.Fatalf("LoadMultiAppConfig() error = %v", err)
+	}
+	if saved.CurrentApp != "target" {
+		t.Fatalf("CurrentApp = %q, want %q", saved.CurrentApp, "target")
+	}
+	if saved.PreviousApp != "default" {
+		t.Fatalf("PreviousApp = %q, want %q", saved.PreviousApp, "default")
+	}
+	if len(saved.Apps) != 2 {
+		t.Fatalf("len(Apps) = %d, want 2", len(saved.Apps))
+	}
+}
+
+func TestProfileRemoveRun_RemovesCurrentProfileAndSwitchesToFirstRemaining(t *testing.T) {
+	setupProfileConfigDir(t)
+	multi := &core.MultiAppConfig{
+		CurrentApp:  "target",
+		PreviousApp: "default",
+		Apps: []core.AppConfig{
+			{Name: "default", AppId: "app-default", AppSecret: core.PlainSecret("secret-default"), Brand: core.BrandFeishu},
+			{Name: "target", AppId: "app-target", AppSecret: core.PlainSecret("secret-target"), Brand: core.BrandLark},
+		},
+	}
+	if err := core.SaveMultiAppConfig(multi); err != nil {
+		t.Fatalf("SaveMultiAppConfig() error = %v", err)
+	}
+
+	f, _, _, _ := cmdutil.TestFactory(t, nil)
+	if err := profileRemoveRun(f, "target"); err != nil {
+		t.Fatalf("profileRemoveRun() error = %v", err)
+	}
+
+	saved, err := core.LoadMultiAppConfig()
+	if err != nil {
+		t.Fatalf("LoadMultiAppConfig() error = %v", err)
+	}
+	if saved.CurrentApp != "default" {
+		t.Fatalf("CurrentApp = %q, want %q", saved.CurrentApp, "default")
+	}
+	if saved.PreviousApp != "default" {
+		t.Fatalf("PreviousApp = %q, want %q", saved.PreviousApp, "default")
+	}
+	if len(saved.Apps) != 1 || saved.Apps[0].ProfileName() != "default" {
+		t.Fatalf("remaining apps = %#v, want only default", saved.Apps)
+	}
+}
+
+func TestProfileRemoveRun_AddRecoveryUsesBuildLocalSurface(t *testing.T) {
+	setupProfileConfigDir(t)
+	multi := &core.MultiAppConfig{
+		CurrentApp: "only",
+		Apps: []core.AppConfig{{
+			Name:      "only",
+			AppId:     "app-only",
+			AppSecret: core.PlainSecret("secret-only"),
+			Brand:     core.BrandFeishu,
+		}},
+	}
+	if err := core.SaveMultiAppConfig(multi); err != nil {
+		t.Fatalf("SaveMultiAppConfig() error = %v", err)
+	}
+
+	source := profileRemoveRun(nil, "only")
+	var original *errs.ValidationError
+	if !errors.As(source, &original) {
+		t.Fatalf("profileRemoveRun() error = %T, want *errs.ValidationError", source)
+	}
+	const visibleHint = "add another profile first: lark-cli profile add"
+	if original.Hint != visibleHint {
+		t.Fatalf("producer hint = %q, want %q", original.Hint, visibleHint)
+	}
+
+	plan := surface.NewPlan(map[surface.CommandID]surface.CommandState{
+		surface.CommandProfileAdd: surface.CommandConcealed,
+	})
+	var concealed *errs.ValidationError
+	if rendered := recovery.Render(source, plan); !errors.As(rendered, &concealed) {
+		t.Fatalf("rendered error = %T, want *errs.ValidationError", rendered)
+	}
+	const fallback = "configure another profile through this distribution before removing the only profile"
+	if concealed.Hint != fallback {
+		t.Errorf("concealed hint = %q, want %q", concealed.Hint, fallback)
+	}
+	if original.Hint != visibleHint {
+		t.Errorf("concealed render mutated producer hint: %q", original.Hint)
+	}
+}
+
+func TestProfileRenameRun_UpdatesCurrentAndPreviousReferences(t *testing.T) {
+	setupProfileConfigDir(t)
+	multi := &core.MultiAppConfig{
+		CurrentApp:  "old",
+		PreviousApp: "old",
+		Apps: []core.AppConfig{{
+			Name:      "old",
+			AppId:     "app-old",
+			AppSecret: core.PlainSecret("secret-old"),
+			Brand:     core.BrandFeishu,
+		}},
+	}
+	if err := core.SaveMultiAppConfig(multi); err != nil {
+		t.Fatalf("SaveMultiAppConfig() error = %v", err)
+	}
+
+	f, _, _, _ := cmdutil.TestFactory(t, nil)
+	if err := profileRenameRun(f, "old", "new"); err != nil {
+		t.Fatalf("profileRenameRun() error = %v", err)
+	}
+
+	saved, err := core.LoadMultiAppConfig()
+	if err != nil {
+		t.Fatalf("LoadMultiAppConfig() error = %v", err)
+	}
+	if saved.CurrentApp != "new" {
+		t.Fatalf("CurrentApp = %q, want %q", saved.CurrentApp, "new")
+	}
+	if saved.PreviousApp != "new" {
+		t.Fatalf("PreviousApp = %q, want %q", saved.PreviousApp, "new")
+	}
+	if saved.Apps[0].ProfileName() != "new" {
+		t.Fatalf("ProfileName() = %q, want %q", saved.Apps[0].ProfileName(), "new")
+	}
+}
+
+func TestProfileRenameRun_AllowsRenameToOwnAppID(t *testing.T) {
+	setupProfileConfigDir(t)
+	multi := &core.MultiAppConfig{
+		CurrentApp:  "old",
+		PreviousApp: "old",
+		Apps: []core.AppConfig{{
+			Name:      "old",
+			AppId:     "app-old",
+			AppSecret: core.PlainSecret("secret-old"),
+			Brand:     core.BrandFeishu,
+		}},
+	}
+	if err := core.SaveMultiAppConfig(multi); err != nil {
+		t.Fatalf("SaveMultiAppConfig() error = %v", err)
+	}
+
+	f, _, _, _ := cmdutil.TestFactory(t, nil)
+	if err := profileRenameRun(f, "old", "app-old"); err != nil {
+		t.Fatalf("profileRenameRun() error = %v", err)
+	}
+
+	saved, err := core.LoadMultiAppConfig()
+	if err != nil {
+		t.Fatalf("LoadMultiAppConfig() error = %v", err)
+	}
+	if saved.CurrentApp != "app-old" {
+		t.Fatalf("CurrentApp = %q, want %q", saved.CurrentApp, "app-old")
+	}
+	if saved.PreviousApp != "app-old" {
+		t.Fatalf("PreviousApp = %q, want %q", saved.PreviousApp, "app-old")
+	}
+	if saved.Apps[0].Name != "app-old" {
+		t.Fatalf("Name = %q, want %q", saved.Apps[0].Name, "app-old")
+	}
+}
+
+func TestProfileUseRun_ToggleBackUsesPreviousProfile(t *testing.T) {
+	setupProfileConfigDir(t)
+	multi := &core.MultiAppConfig{
+		CurrentApp:  "default",
+		PreviousApp: "target",
+		Apps: []core.AppConfig{
+			{Name: "default", AppId: "app-default", AppSecret: core.PlainSecret("secret-default"), Brand: core.BrandFeishu},
+			{Name: "target", AppId: "app-target", AppSecret: core.PlainSecret("secret-target"), Brand: core.BrandLark},
+		},
+	}
+	if err := core.SaveMultiAppConfig(multi); err != nil {
+		t.Fatalf("SaveMultiAppConfig() error = %v", err)
+	}
+
+	f, _, _, _ := cmdutil.TestFactory(t, nil)
+	if err := profileUseRun(f, "-"); err != nil {
+		t.Fatalf("profileUseRun() error = %v", err)
+	}
+
+	saved, err := core.LoadMultiAppConfig()
+	if err != nil {
+		t.Fatalf("LoadMultiAppConfig() error = %v", err)
+	}
+	if saved.CurrentApp != "target" {
+		t.Fatalf("CurrentApp = %q, want %q", saved.CurrentApp, "target")
+	}
+	if saved.PreviousApp != "default" {
+		t.Fatalf("PreviousApp = %q, want %q", saved.PreviousApp, "default")
+	}
+}
+
+func TestProfileListRun_OutputsProfiles(t *testing.T) {
+	setupProfileConfigDir(t)
+	multi := &core.MultiAppConfig{
+		CurrentApp: "default",
+		Apps: []core.AppConfig{
+			{Name: "default", AppId: "app-default", AppSecret: core.PlainSecret("secret-default"), Brand: core.BrandFeishu},
+			{Name: "target", AppId: "app-target", AppSecret: core.PlainSecret("secret-target"), Brand: core.BrandLark},
+		},
+	}
+	if err := core.SaveMultiAppConfig(multi); err != nil {
+		t.Fatalf("SaveMultiAppConfig() error = %v", err)
+	}
+
+	f, stdout, _, _ := cmdutil.TestFactory(t, nil)
+	if err := profileListRun(f); err != nil {
+		t.Fatalf("profileListRun() error = %v", err)
+	}
+
+	var got []profileListItem
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("Unmarshal() error = %v; output=%s", err, stdout.String())
+	}
+	if len(got) != 2 {
+		t.Fatalf("len(got) = %d, want 2", len(got))
+	}
+	if got[0].Name != "default" || !got[0].Active {
+		t.Fatalf("got[0] = %#v, want active default profile", got[0])
+	}
+	if got[1].Name != "target" || got[1].Active {
+		t.Fatalf("got[1] = %#v, want inactive target profile", got[1])
+	}
+}
+
+func TestProfileListRun_NotConfiguredReturnsEmptyList(t *testing.T) {
+	setupProfileConfigDir(t)
+
+	f, stdout, stderr, _ := cmdutil.TestFactory(t, nil)
+	if err := profileListRun(f); err != nil {
+		t.Fatalf("profileListRun() error = %v", err)
+	}
+
+	var got []profileListItem
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("Unmarshal() error = %v; output=%s", err, stdout.String())
+	}
+	if len(got) != 0 {
+		t.Fatalf("len(got) = %d, want 0", len(got))
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+}
+
+func TestProfileListRun_DistinguishesMissingFromCorruptStoredToken(t *testing.T) {
+	keyring.MockInit()
+	setupProfileConfigDir(t)
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("LARKSUITE_CLI_DATA_DIR", t.TempDir())
+
+	multi := &core.MultiAppConfig{
+		CurrentApp: "missing",
+		Apps: []core.AppConfig{
+			{
+				Name: "missing", AppId: "app-missing", AppSecret: core.PlainSecret("secret-missing"), Brand: core.BrandFeishu,
+				Users: []core.AppUser{{UserOpenId: "ou_missing", UserName: "Missing Token"}},
+			},
+			{
+				Name: "corrupt", AppId: "app-corrupt", AppSecret: core.PlainSecret("secret-corrupt"), Brand: core.BrandFeishu,
+				Users: []core.AppUser{{UserOpenId: "ou_corrupt", UserName: "Corrupt Token"}},
+			},
+		},
+	}
+	if err := core.SaveMultiAppConfig(multi); err != nil {
+		t.Fatalf("SaveMultiAppConfig() error = %v", err)
+	}
+
+	if err := keychain.Set(keychain.LarkCliService, "app-corrupt:ou_corrupt", `{"accessToken":`); err != nil {
+		t.Fatalf("keychain.Set() error = %v", err)
+	}
+
+	f, stdout, stderr, _ := cmdutil.TestFactory(t, nil)
+	if err := profileListRun(f); err != nil {
+		t.Fatalf("profileListRun() error = %v; want successful diagnostic list", err)
+	}
+
+	var got []profileListItem
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v\nstdout=%s", err, stdout.String())
+	}
+	if len(got) != 2 {
+		t.Fatalf("len(got) = %d, want 2", len(got))
+	}
+	if got[0].TokenStatus != "" || got[0].Error != nil {
+		t.Fatalf("missing profile = %#v, want historical omitted tokenStatus without error", got[0])
+	}
+	if got[1].TokenStatus != "error" {
+		t.Fatalf("corrupt profile = %#v, want tokenStatus=error", got[1])
+	}
+	if got[1].Error == nil || got[1].Error.Category != errs.CategoryInternal || got[1].Error.Subtype != errs.SubtypeStorage {
+		t.Fatalf("corrupt profile error = %#v, want internal/storage", got[1].Error)
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("stderr = %q, want list diagnostics entirely on stdout", stderr.String())
+	}
+}
+
+func TestProfileRemoveRun_SaveFailureReturnsStructuredError(t *testing.T) {
+	setupProfileConfigDir(t)
+	multi := &core.MultiAppConfig{
+		CurrentApp: "target",
+		Apps: []core.AppConfig{
+			{Name: "default", AppId: "app-default", AppSecret: core.PlainSecret("secret-default"), Brand: core.BrandFeishu},
+			{Name: "target", AppId: "app-target", AppSecret: core.PlainSecret("secret-target"), Brand: core.BrandLark},
+		},
+	}
+	if err := core.SaveMultiAppConfig(multi); err != nil {
+		t.Fatalf("SaveMultiAppConfig() error = %v", err)
+	}
+
+	restoreFS := vfs.DefaultFS
+	vfs.DefaultFS = &failRenameFS{err: errors.New("rename boom")}
+	t.Cleanup(func() { vfs.DefaultFS = restoreFS })
+
+	f, _, _, _ := cmdutil.TestFactory(t, nil)
+	err := profileRemoveRun(f, "target")
+	if err == nil {
+		t.Fatal("expected save error")
+	}
+	assertInternalExitError(t, err, "failed to save config")
+}
+
+func TestProfileRenameRun_SaveFailureReturnsStructuredError(t *testing.T) {
+	setupProfileConfigDir(t)
+	multi := &core.MultiAppConfig{
+		CurrentApp: "old",
+		Apps: []core.AppConfig{{
+			Name:      "old",
+			AppId:     "app-old",
+			AppSecret: core.PlainSecret("secret-old"),
+			Brand:     core.BrandFeishu,
+		}},
+	}
+	if err := core.SaveMultiAppConfig(multi); err != nil {
+		t.Fatalf("SaveMultiAppConfig() error = %v", err)
+	}
+
+	restoreFS := vfs.DefaultFS
+	vfs.DefaultFS = &failRenameFS{err: errors.New("rename boom")}
+	t.Cleanup(func() { vfs.DefaultFS = restoreFS })
+
+	f, _, _, _ := cmdutil.TestFactory(t, nil)
+	err := profileRenameRun(f, "old", "new")
+	if err == nil {
+		t.Fatal("expected save error")
+	}
+	assertInternalExitError(t, err, "failed to save config")
+}
+
+func TestProfileUseRun_SaveFailureReturnsStructuredError(t *testing.T) {
+	setupProfileConfigDir(t)
+	multi := &core.MultiAppConfig{
+		CurrentApp: "default",
+		Apps: []core.AppConfig{
+			{Name: "default", AppId: "app-default", AppSecret: core.PlainSecret("secret-default"), Brand: core.BrandFeishu},
+			{Name: "target", AppId: "app-target", AppSecret: core.PlainSecret("secret-target"), Brand: core.BrandLark},
+		},
+	}
+	if err := core.SaveMultiAppConfig(multi); err != nil {
+		t.Fatalf("SaveMultiAppConfig() error = %v", err)
+	}
+
+	restoreFS := vfs.DefaultFS
+	vfs.DefaultFS = &failRenameFS{err: errors.New("rename boom")}
+	t.Cleanup(func() { vfs.DefaultFS = restoreFS })
+
+	f, _, _, _ := cmdutil.TestFactory(t, nil)
+	err := profileUseRun(f, "target")
+	if err == nil {
+		t.Fatal("expected save error")
+	}
+	assertInternalExitError(t, err, "failed to save config")
+}
+
+func assertInternalExitError(t *testing.T, err error, wantMsg string) {
+	t.Helper()
+
+	var internalErr *errs.InternalError
+	if !errors.As(err, &internalErr) {
+		t.Fatalf("error type = %T, want *errs.InternalError; err=%v", err, err)
+	}
+	if internalErr.Subtype != errs.SubtypeStorage {
+		t.Fatalf("subtype = %q, want %q", internalErr.Subtype, errs.SubtypeStorage)
+	}
+	if internalErr.Cause == nil {
+		t.Fatalf("cause = nil, want wrapped underlying error")
+	}
+	if !strings.Contains(internalErr.Message, wantMsg) {
+		t.Fatalf("message = %q, want contains %q", internalErr.Message, wantMsg)
+	}
+	if code := output.ExitCodeOf(err); code != output.ExitInternal {
+		t.Fatalf("exit code = %d, want %d (ExitInternal)", code, output.ExitInternal)
+	}
+}
+
+// assertValidationError asserts err is a typed *errs.ValidationError with the
+// given subtype, message fragment, and exit code 2.
+func assertValidationError(t *testing.T, err error, wantSubtype errs.Subtype, wantMsg string) *errs.ValidationError {
+	t.Helper()
+
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	var valErr *errs.ValidationError
+	if !errors.As(err, &valErr) {
+		t.Fatalf("error type = %T, want *errs.ValidationError; err=%v", err, err)
+	}
+	if valErr.Subtype != wantSubtype {
+		t.Fatalf("subtype = %q, want %q", valErr.Subtype, wantSubtype)
+	}
+	if !strings.Contains(valErr.Message, wantMsg) {
+		t.Fatalf("message = %q, want contains %q", valErr.Message, wantMsg)
+	}
+	if code := output.ExitCodeOf(err); code != output.ExitValidation {
+		t.Fatalf("exit code = %d, want %d (ExitValidation)", code, output.ExitValidation)
+	}
+	return valErr
+}
+
+func saveTwoProfiles(t *testing.T) {
+	t.Helper()
+	multi := &core.MultiAppConfig{
+		CurrentApp: "default",
+		Apps: []core.AppConfig{
+			{Name: "default", AppId: "app-default", AppSecret: core.PlainSecret("secret-default"), Brand: core.BrandFeishu},
+			{Name: "target", AppId: "app-target", AppSecret: core.PlainSecret("secret-target"), Brand: core.BrandLark},
+		},
+	}
+	if err := core.SaveMultiAppConfig(multi); err != nil {
+		t.Fatalf("SaveMultiAppConfig() error = %v", err)
+	}
+}
+
+func TestProfileAddRun_ValidationErrors(t *testing.T) {
+	t.Run("invalid profile name", func(t *testing.T) {
+		setupProfileConfigDir(t)
+		f, _, _, _ := cmdutil.TestFactory(t, nil)
+		f.IOStreams.In = strings.NewReader("secret\n")
+		err := profileAddRun(f, "bad name!", "app-x", true, "feishu", "", false)
+		valErr := assertValidationError(t, err, errs.SubtypeInvalidArgument, "")
+		if valErr.Param != "--name" {
+			t.Fatalf("param = %q, want %q", valErr.Param, "--name")
+		}
+		if valErr.Cause == nil {
+			t.Fatal("cause = nil, want wrapped validation error")
+		}
+	})
+
+	t.Run("missing app-secret-stdin flag", func(t *testing.T) {
+		setupProfileConfigDir(t)
+		f, _, _, _ := cmdutil.TestFactory(t, nil)
+		err := profileAddRun(f, "p", "app-x", false, "feishu", "", false)
+		valErr := assertValidationError(t, err, errs.SubtypeInvalidArgument, "app secret must be provided via stdin")
+		if valErr.Param != "--app-secret-stdin" {
+			t.Fatalf("param = %q, want %q", valErr.Param, "--app-secret-stdin")
+		}
+		if valErr.Hint == "" {
+			t.Fatal("hint is empty, want actionable hint")
+		}
+	})
+
+	t.Run("empty stdin", func(t *testing.T) {
+		setupProfileConfigDir(t)
+		f, _, _, _ := cmdutil.TestFactory(t, nil)
+		f.IOStreams.In = strings.NewReader("")
+		err := profileAddRun(f, "p", "app-x", true, "feishu", "", false)
+		valErr := assertValidationError(t, err, errs.SubtypeInvalidArgument, "stdin is empty")
+		if valErr.Param != "--app-secret-stdin" {
+			t.Fatalf("param = %q, want %q", valErr.Param, "--app-secret-stdin")
+		}
+	})
+
+	t.Run("blank secret on stdin", func(t *testing.T) {
+		setupProfileConfigDir(t)
+		f, _, _, _ := cmdutil.TestFactory(t, nil)
+		f.IOStreams.In = strings.NewReader("   \n")
+		err := profileAddRun(f, "p", "app-x", true, "feishu", "", false)
+		assertValidationError(t, err, errs.SubtypeInvalidArgument, "app secret read from stdin is empty")
+	})
+
+	t.Run("duplicate profile name", func(t *testing.T) {
+		setupProfileConfigDir(t)
+		saveTwoProfiles(t)
+		f, _, _, _ := cmdutil.TestFactory(t, nil)
+		f.IOStreams.In = strings.NewReader("secret\n")
+		err := profileAddRun(f, "default", "app-new", true, "feishu", "", false)
+		valErr := assertValidationError(t, err, errs.SubtypeFailedPrecondition, `profile "default" already exists`)
+		if valErr.Param != "--name" {
+			t.Fatalf("param = %q, want %q", valErr.Param, "--name")
+		}
+	})
+
+	t.Run("duplicate app-id", func(t *testing.T) {
+		setupProfileConfigDir(t)
+		saveTwoProfiles(t)
+		f, _, _, _ := cmdutil.TestFactory(t, nil)
+		f.IOStreams.In = strings.NewReader("secret\n")
+		err := profileAddRun(f, "fresh", "app-default", true, "feishu", "", false)
+		valErr := assertValidationError(t, err, errs.SubtypeFailedPrecondition, "already used by profile")
+		if valErr.Param != "--app-id" {
+			t.Fatalf("param = %q, want %q", valErr.Param, "--app-id")
+		}
+	})
+}
+
+func TestProfileUseRun_ValidationErrors(t *testing.T) {
+	t.Run("no previous profile for toggle", func(t *testing.T) {
+		setupProfileConfigDir(t)
+		saveTwoProfiles(t)
+		f, _, _, _ := cmdutil.TestFactory(t, nil)
+		err := profileUseRun(f, "-")
+		valErr := assertValidationError(t, err, errs.SubtypeFailedPrecondition, "no previous profile to switch back to")
+		if valErr.Hint == "" {
+			t.Fatal("hint is empty, want actionable hint")
+		}
+	})
+
+	t.Run("profile not found", func(t *testing.T) {
+		setupProfileConfigDir(t)
+		saveTwoProfiles(t)
+		f, _, _, _ := cmdutil.TestFactory(t, nil)
+		err := profileUseRun(f, "ghost")
+		assertValidationError(t, err, errs.SubtypeInvalidArgument, `profile "ghost" not found`)
+	})
+}
+
+func TestProfileRenameRun_ValidationErrors(t *testing.T) {
+	t.Run("invalid new name", func(t *testing.T) {
+		setupProfileConfigDir(t)
+		saveTwoProfiles(t)
+		f, _, _, _ := cmdutil.TestFactory(t, nil)
+		err := profileRenameRun(f, "default", "bad name!")
+		valErr := assertValidationError(t, err, errs.SubtypeInvalidArgument, "")
+		if valErr.Cause == nil {
+			t.Fatal("cause = nil, want wrapped validation error")
+		}
+	})
+
+	t.Run("old profile not found", func(t *testing.T) {
+		setupProfileConfigDir(t)
+		saveTwoProfiles(t)
+		f, _, _, _ := cmdutil.TestFactory(t, nil)
+		err := profileRenameRun(f, "ghost", "fresh")
+		assertValidationError(t, err, errs.SubtypeInvalidArgument, `profile "ghost" not found`)
+	})
+
+	t.Run("new name already exists", func(t *testing.T) {
+		setupProfileConfigDir(t)
+		saveTwoProfiles(t)
+		f, _, _, _ := cmdutil.TestFactory(t, nil)
+		err := profileRenameRun(f, "default", "target")
+		valErr := assertValidationError(t, err, errs.SubtypeFailedPrecondition, `profile "target" already exists`)
+		if valErr.Hint == "" {
+			t.Fatal("hint is empty, want actionable hint")
+		}
+	})
+}
+
+func TestProfileRemoveRun_ValidationErrors(t *testing.T) {
+	t.Run("profile not found", func(t *testing.T) {
+		setupProfileConfigDir(t)
+		saveTwoProfiles(t)
+		f, _, _, _ := cmdutil.TestFactory(t, nil)
+		err := profileRemoveRun(f, "ghost")
+		assertValidationError(t, err, errs.SubtypeInvalidArgument, `profile "ghost" not found`)
+	})
+
+	t.Run("cannot remove the only profile", func(t *testing.T) {
+		setupProfileConfigDir(t)
+		multi := &core.MultiAppConfig{
+			CurrentApp: "solo",
+			Apps: []core.AppConfig{
+				{Name: "solo", AppId: "app-solo", AppSecret: core.PlainSecret("secret-solo"), Brand: core.BrandFeishu},
+			},
+		}
+		if err := core.SaveMultiAppConfig(multi); err != nil {
+			t.Fatalf("SaveMultiAppConfig() error = %v", err)
+		}
+		f, _, _, _ := cmdutil.TestFactory(t, nil)
+		err := profileRemoveRun(f, "solo")
+		valErr := assertValidationError(t, err, errs.SubtypeFailedPrecondition, "cannot remove the only profile")
+		if valErr.Hint == "" {
+			t.Fatal("hint is empty, want actionable hint")
+		}
+	})
+}
+
+func TestProfileListRun_InvalidConfigReturnsValidationError(t *testing.T) {
+	dir := setupProfileConfigDir(t)
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte("{invalid json"), 0600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	f, _, _, _ := cmdutil.TestFactory(t, nil)
+	err := profileListRun(f)
+	valErr := assertValidationError(t, err, errs.SubtypeFailedPrecondition, "failed to load config")
+	if valErr.Cause == nil {
+		t.Fatal("cause = nil, want wrapped load error")
+	}
+}
+
+func TestProfileListRun_MarksEffectiveOverride(t *testing.T) {
+	setupProfileConfigDir(t)
+	multi := &core.MultiAppConfig{
+		CurrentApp: "default",
+		Apps: []core.AppConfig{
+			{Name: "default", AppId: "app-default", AppSecret: core.PlainSecret("s1"), Brand: core.BrandFeishu},
+			{Name: "target", AppId: "app-target", AppSecret: core.PlainSecret("s2"), Brand: core.BrandFeishu},
+		},
+	}
+	if err := core.SaveMultiAppConfig(multi); err != nil {
+		t.Fatalf("SaveMultiAppConfig() error = %v", err)
+	}
+
+	f, stdout, stderr, _ := cmdutil.TestFactory(t, nil)
+	f.Invocation = cmdutil.InvocationContext{Profile: "target", ProfileSource: core.ProfileFromEnvironment}
+	if err := profileListRun(f); err != nil {
+		t.Fatalf("profileListRun() error = %v", err)
+	}
+
+	var got []profileListItem
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("Unmarshal() error = %v; output=%s", err, stdout.String())
+	}
+	// Active stays on the persisted default; Effective moves with the
+	// override. Both dimensions must be visible at once — their disagreement
+	// IS the information.
+	if !got[0].Active || got[0].Effective {
+		t.Fatalf("got[0] = %#v, want persisted default active but not effective", got[0])
+	}
+	if got[1].Active || !got[1].Effective || got[1].EffectiveSource != "environment" {
+		t.Fatalf("got[1] = %#v, want effective via environment", got[1])
+	}
+	if stderr.String() != "" {
+		t.Fatalf("unexpected stderr: %s", stderr.String())
+	}
+}
+
+func TestProfileListRun_MarksEffectiveOverrideFromFlag(t *testing.T) {
+	setupProfileConfigDir(t)
+	multi := &core.MultiAppConfig{
+		CurrentApp: "default",
+		Apps: []core.AppConfig{
+			{Name: "default", AppId: "app-default", AppSecret: core.PlainSecret("s1"), Brand: core.BrandFeishu},
+			{Name: "target", AppId: "app-target", AppSecret: core.PlainSecret("s2"), Brand: core.BrandFeishu},
+		},
+	}
+	if err := core.SaveMultiAppConfig(multi); err != nil {
+		t.Fatalf("SaveMultiAppConfig() error = %v", err)
+	}
+
+	f, stdout, stderr, _ := cmdutil.TestFactory(t, nil)
+	f.Invocation = cmdutil.InvocationContext{Profile: "target", ProfileSource: core.ProfileFromFlag}
+	if err := profileListRun(f); err != nil {
+		t.Fatalf("profileListRun() error = %v", err)
+	}
+
+	var got []profileListItem
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("Unmarshal() error = %v; output=%s", err, stdout.String())
+	}
+	if !got[0].Active || got[0].Effective {
+		t.Fatalf("got[0] = %#v, want persisted default active but not effective", got[0])
+	}
+	if got[1].Active || !got[1].Effective || got[1].EffectiveSource != "flag" {
+		t.Fatalf("got[1] = %#v, want effective via flag", got[1])
+	}
+	if stderr.String() != "" {
+		t.Fatalf("unexpected stderr: %s", stderr.String())
+	}
+}
+
+func TestProfileListRun_EffectiveFollowsPersistedDefault(t *testing.T) {
+	setupProfileConfigDir(t)
+	multi := &core.MultiAppConfig{
+		CurrentApp: "default",
+		Apps: []core.AppConfig{
+			{Name: "default", AppId: "app-default", AppSecret: core.PlainSecret("s1"), Brand: core.BrandFeishu},
+		},
+	}
+	if err := core.SaveMultiAppConfig(multi); err != nil {
+		t.Fatalf("SaveMultiAppConfig() error = %v", err)
+	}
+
+	f, stdout, _, _ := cmdutil.TestFactory(t, nil)
+	if err := profileListRun(f); err != nil {
+		t.Fatalf("profileListRun() error = %v", err)
+	}
+	var got []profileListItem
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	if !got[0].Active || !got[0].Effective || got[0].EffectiveSource != "config" {
+		t.Fatalf("got[0] = %#v, want active and effective via config", got[0])
+	}
+}
+
+func TestProfileListRun_DanglingSelectorWarnsOnStderr(t *testing.T) {
+	setupProfileConfigDir(t)
+	multi := &core.MultiAppConfig{
+		CurrentApp: "default",
+		Apps: []core.AppConfig{
+			{Name: "default", AppId: "app-default", AppSecret: core.PlainSecret("s1"), Brand: core.BrandFeishu},
+		},
+	}
+	if err := core.SaveMultiAppConfig(multi); err != nil {
+		t.Fatalf("SaveMultiAppConfig() error = %v", err)
+	}
+
+	f, stdout, stderr, _ := cmdutil.TestFactory(t, nil)
+	f.Invocation = cmdutil.InvocationContext{Profile: "ghost", ProfileSource: core.ProfileFromEnvironment}
+	// The list is the recovery surface for a dangling selector: it must keep
+	// rendering (exit 0) and explain on stderr why nothing is effective.
+	if err := profileListRun(f); err != nil {
+		t.Fatalf("profileListRun() error = %v", err)
+	}
+	var got []profileListItem
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	for _, item := range got {
+		if item.Effective {
+			t.Fatalf("no entry may be effective under a dangling selector: %#v", item)
+		}
+	}
+	for _, want := range []string{"Warning:", "LARKSUITE_CLI_PROFILE", `"ghost"`, "does not match any profile"} {
+		if !strings.Contains(stderr.String(), want) {
+			t.Errorf("stderr missing %q:\n%s", want, stderr.String())
+		}
+	}
+}
+
+func TestProfileUseRun_WarnsWhenEnvironmentShadows(t *testing.T) {
+	baseConfig := func(t *testing.T) {
+		t.Helper()
+		setupProfileConfigDir(t)
+		multi := &core.MultiAppConfig{
+			CurrentApp: "default",
+			Apps: []core.AppConfig{
+				{Name: "default", AppId: "app-default", AppSecret: core.PlainSecret("s1"), Brand: core.BrandFeishu},
+				{Name: "session", AppId: "app-session", AppSecret: core.PlainSecret("s2"), Brand: core.BrandFeishu},
+				{Name: "other", AppId: "app-other", AppSecret: core.PlainSecret("s3"), Brand: core.BrandFeishu},
+			},
+		}
+		if err := core.SaveMultiAppConfig(multi); err != nil {
+			t.Fatalf("SaveMultiAppConfig() error = %v", err)
+		}
+	}
+	envInvocation := cmdutil.InvocationContext{Profile: "session", ProfileSource: core.ProfileFromEnvironment}
+
+	t.Run("already-on short circuit still warns", func(t *testing.T) {
+		baseConfig(t)
+		f, _, stderr, _ := cmdutil.TestFactory(t, nil)
+		f.Invocation = envInvocation
+		if err := profileUseRun(f, "default"); err != nil {
+			t.Fatalf("profileUseRun() error = %v", err)
+		}
+		// "Already on default" alone would be a lie for this shell: the
+		// session override decides every subsequent command.
+		if !strings.Contains(stderr.String(), `Already on profile "default"`) {
+			t.Fatalf("missing short-circuit line:\n%s", stderr.String())
+		}
+		for _, want := range []string{"Warning:", "LARKSUITE_CLI_PROFILE", `"session"`, "until you unset it"} {
+			if !strings.Contains(stderr.String(), want) {
+				t.Errorf("stderr missing %q:\n%s", want, stderr.String())
+			}
+		}
+	})
+
+	t.Run("successful switch still warns", func(t *testing.T) {
+		baseConfig(t)
+		f, _, stderr, _ := cmdutil.TestFactory(t, nil)
+		f.Invocation = envInvocation
+		if err := profileUseRun(f, "other"); err != nil {
+			t.Fatalf("profileUseRun() error = %v", err)
+		}
+		saved, err := core.LoadMultiAppConfig()
+		if err != nil || saved.CurrentApp != "other" {
+			t.Fatalf("persisted currentApp = %q (%v), want other", saved.CurrentApp, err)
+		}
+		if !strings.Contains(stderr.String(), "Switched to profile") ||
+			!strings.Contains(stderr.String(), "until you unset it") {
+			t.Errorf("switch must persist AND disclose the shadow:\n%s", stderr.String())
+		}
+	})
+
+	t.Run("no warning when environment matches the target", func(t *testing.T) {
+		baseConfig(t)
+		f, _, stderr, _ := cmdutil.TestFactory(t, nil)
+		f.Invocation = envInvocation
+		if err := profileUseRun(f, "session"); err != nil {
+			t.Fatalf("profileUseRun() error = %v", err)
+		}
+		if strings.Contains(stderr.String(), "Warning:") {
+			t.Errorf("no shadow warning expected when env matches target:\n%s", stderr.String())
+		}
+	})
+
+	t.Run("no warning without environment override", func(t *testing.T) {
+		baseConfig(t)
+		f, _, stderr, _ := cmdutil.TestFactory(t, nil)
+		if err := profileUseRun(f, "other"); err != nil {
+			t.Fatalf("profileUseRun() error = %v", err)
+		}
+		if strings.Contains(stderr.String(), "Warning:") {
+			t.Errorf("no warning expected without env override:\n%s", stderr.String())
+		}
+	})
+}

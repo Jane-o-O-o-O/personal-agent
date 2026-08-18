@@ -1,0 +1,340 @@
+// Copyright (c) 2026 Lark Technologies Pte. Ltd.
+// SPDX-License-Identifier: MIT
+
+package drive
+
+import (
+	"context"
+	"fmt"
+	"path/filepath"
+	"strings"
+
+	"github.com/larksuite/cli/errs"
+	"github.com/larksuite/cli/extension/fileio"
+	"github.com/larksuite/cli/internal/fileevent"
+	"github.com/larksuite/cli/shortcuts/common"
+)
+
+// DriveImport uploads a local file, creates an import task, and polls until
+// the imported cloud document is ready or the local polling window expires.
+var DriveImport = common.Shortcut{
+	Service:     "drive",
+	Command:     "+import",
+	Description: "Import a local file to Drive as a cloud document (docx, sheet, bitable, slides)",
+	Risk:        "write",
+	Scopes: []string{
+		"docs:document.media:upload",
+		"docs:document:import",
+	},
+	ConditionalScopes: []string{"wiki:node:retrieve"},
+	AuthTypes:         []string{"user", "bot"},
+	Flags: []common.Flag{
+		{Name: "file", Desc: "local file path (e.g. .docx, .xlsx, .md, .base, .pptx; large files auto use multipart upload; .base is capped at 20MB, .pptx at 500MB)", Required: true},
+		{Name: "type", Desc: "target document type (docx, sheet, bitable, slides)", Required: true},
+		{Name: "folder-token", Desc: "target folder token (omit for root folder; API accepts empty mount_key as root)"},
+		{Name: "name", Desc: "imported file name (default: local file name without extension)"},
+		{Name: "target-token", Desc: "existing token to import data into (only for type=bitable); when set, data is mounted into this bitable instead of creating a new one"},
+	},
+	Validate: func(ctx context.Context, runtime *common.RuntimeContext) error {
+		return ValidateImport(importParamsFromFlags(runtime))
+	},
+	DryRun: func(ctx context.Context, runtime *common.RuntimeContext) *common.DryRunAPI {
+		return PlanImportDryRun(runtime, importParamsFromFlags(runtime))
+	},
+	Execute: func(ctx context.Context, runtime *common.RuntimeContext) error {
+		return RunImport(ctx, runtime, importParamsFromFlags(runtime))
+	},
+}
+
+// ImportParams holds the user-facing inputs for an import flow, decoupled from
+// cobra flags so other command groups (e.g. sheets +workbook-import) can reuse
+// the drive import implementation without taking a dependency on a --type flag.
+type ImportParams struct {
+	File        string
+	DocType     string
+	FolderToken string
+	Name        string
+	TargetToken string
+	// FileExtension optionally overrides the extension inferred from File's
+	// name. Leave empty to infer from File (the default). Callers that have
+	// sniffed the file's real container use this to correct a mislabeled name
+	// so the backend receives the true format.
+	FileExtension string
+	// InputCorrections lets a wrapping shortcut report inputs it rewrote before
+	// handing them over (e.g. sheets +workbook-import correcting a mislabeled
+	// .xls that is really an .xlsx). They land in the result as
+	// input_corrections: the request the backend ran differs from the one the
+	// caller typed, which is a fact the caller may need in order to trust the
+	// outcome — so it belongs in the payload, not on stderr.
+	InputCorrections []ImportInputCorrection
+}
+
+// ImportInputCorrection records one caller input the CLI rewrote before the
+// import ran.
+type ImportInputCorrection struct {
+	Field    string `json:"field"`
+	Declared string `json:"declared"`
+	Actual   string `json:"actual"`
+	Reason   string `json:"reason"`
+}
+
+// spec projects public import parameters into the internal execution model.
+func (p ImportParams) spec() driveImportSpec {
+	return driveImportSpec{
+		FilePath:     p.File,
+		DocType:      strings.ToLower(p.DocType),
+		FolderToken:  p.FolderToken,
+		Name:         p.Name,
+		TargetToken:  p.TargetToken,
+		EffectiveExt: strings.TrimPrefix(strings.ToLower(p.FileExtension), "."),
+	}
+}
+
+// importParamsFromFlags reads the standard drive +import flag set.
+func importParamsFromFlags(runtime *common.RuntimeContext) ImportParams {
+	return ImportParams{
+		File:        runtime.Str("file"),
+		DocType:     runtime.Str("type"),
+		FolderToken: runtime.Str("folder-token"),
+		Name:        runtime.Str("name"),
+		TargetToken: runtime.Str("target-token"),
+	}
+}
+
+// ValidateImport runs the CLI-level compatibility checks for an import.
+func ValidateImport(p ImportParams) error {
+	return validateDriveImportSpec(p.spec())
+}
+
+// PlanImportDryRun builds the dry-run plan (upload -> create task -> poll) for
+// an import without performing any network or file I/O beyond a local stat.
+func PlanImportDryRun(runtime *common.RuntimeContext, p ImportParams) *common.DryRunAPI {
+	spec := p.spec()
+	fileSize, err := preflightDriveImportFile(runtime.FileIO(), &spec)
+	if err != nil {
+		return common.NewDryRunAPI().Set("error", err.Error())
+	}
+	if valErr := validateDriveImportSpec(spec); valErr != nil {
+		return common.NewDryRunAPI().Set("error", valErr.Error())
+	}
+
+	dry := common.NewDryRunAPI()
+	dry.Desc("Upload file (single-part or multipart) -> create import task -> poll status")
+
+	appendDriveImportFolderTokenWikiCheckDryRun(dry, spec)
+	appendDriveImportUploadDryRun(dry, spec, fileSize)
+	appendDriveImportUploadReportDryRun(dry, runtime, fileSize)
+
+	dry.POST("/open-apis/drive/v1/import_tasks").
+		Desc("[2] Create import task").
+		Body(spec.CreateTaskBody("<file_token>"))
+
+	dry.GET("/open-apis/drive/v1/import_tasks/:ticket").
+		Desc("[3] Poll import task result").
+		Set("ticket", "<ticket>")
+	if runtime.IsBot() {
+		dry.Desc("After the import result returns the final cloud document target in bot mode, the CLI will also try to grant the current CLI user full_access on it.")
+	}
+
+	return dry
+}
+
+// RunImport executes the full import flow: upload media -> create import task ->
+// bounded poll, then writes the result envelope to the runtime output. It is
+// the shared core behind both drive +import and sheets +workbook-import.
+func RunImport(ctx context.Context, runtime *common.RuntimeContext, p ImportParams) error {
+	spec := p.spec()
+	if _, err := preflightDriveImportFile(runtime.FileIO(), &spec); err != nil {
+		return err
+	}
+	if err := rejectDriveImportWikiFolderToken(runtime, spec.FolderToken); err != nil {
+		return err
+	}
+
+	// Step 1: Upload file as media
+	fileToken, uploadErr := uploadMediaForImport(ctx, runtime, spec)
+	if uploadErr != nil {
+		return uploadErr
+	}
+
+	// Step 2: Create import task
+	ticket, err := createDriveImportTask(runtime, spec, fileToken)
+	if err != nil {
+		return err
+	}
+
+	// Step 3: Poll task
+	status, ready, pollSummary, err := pollDriveImportTask(runtime, ticket)
+	if err != nil {
+		// The import is already running server-side, so the ticket is the only
+		// handle back to it. It used to be visible because polling narrated
+		// itself on stderr; now it rides on the typed error, which is the one
+		// artifact a caller still gets on this path.
+		return appendDriveExportRecoveryHint(err, fmt.Sprintf(
+			"the import task was already created (ticket=%s)\ncheck its result with: %s",
+			ticket, driveImportTaskResultCommand(runtime, ticket)))
+	}
+
+	// Some intermediate responses omit the final type, so fall back to the
+	// requested type to keep the output shape stable.
+	resultType := status.DocType
+	if resultType == "" {
+		resultType = spec.DocType
+	}
+	out := map[string]interface{}{
+		"ticket":           ticket,
+		"type":             resultType,
+		"ready":            ready,
+		"job_status":       status.JobStatus,
+		"job_status_label": status.StatusLabel(),
+	}
+	if status.Token != "" {
+		out["token"] = status.Token
+	}
+	if statusURL := strings.TrimSpace(status.URL); statusURL != "" {
+		out["url"] = statusURL
+	} else if status.Token != "" {
+		if u := common.BuildResourceURL(runtime.Config.Brand, normalizeDriveImportKindForURL(resultType, spec.DocType), status.Token); u != "" {
+			out["url"] = u
+		}
+	}
+	if status.JobErrorMsg != "" {
+		out["job_error_msg"] = status.JobErrorMsg
+	}
+	if status.Extra != nil {
+		out["extra"] = status.Extra
+	}
+	if len(p.InputCorrections) > 0 {
+		out["input_corrections"] = p.InputCorrections
+	}
+	pollSummary.attach(out)
+	if !ready {
+		// next_command in the payload is the whole resume story; the stderr copy
+		// it used to carry told a caller nothing extra.
+		out["timed_out"] = true
+		out["next_command"] = driveImportTaskResultCommand(runtime, ticket)
+	}
+	if ready {
+		if grant := common.AutoGrantCurrentUserDrivePermission(runtime, common.GetString(out, "token"), resultType); grant != nil {
+			out["permission_grant"] = grant
+		}
+	}
+
+	runtime.Out(out, nil)
+	return nil
+}
+
+// preflightDriveImportFile validates the import source and returns its size.
+func preflightDriveImportFile(fio fileio.FileIO, spec *driveImportSpec) (int64, error) {
+	// Keep dry-run and execution aligned on path normalization, file existence,
+	// and format-specific size limits before planning the upload path.
+	info, err := fio.Stat(spec.FilePath)
+	if err != nil {
+		return 0, driveInputStatError(err)
+	}
+	if !info.Mode().IsRegular() {
+		return 0, errs.NewValidationError(errs.SubtypeInvalidArgument, "file must be a regular file: %s", spec.FilePath).WithParam("--file")
+	}
+	if err = validateDriveImportFileSize(spec.FileExtension(), spec.DocType, info.Size()); err != nil {
+		return 0, err
+	}
+	return info.Size(), nil
+}
+
+// appendDriveImportUploadDryRun adds the selected single-part or multipart upload steps to an import plan.
+func appendDriveImportUploadDryRun(dry *common.DryRunAPI, spec driveImportSpec, fileSize int64) {
+	extra, err := buildImportMediaExtra(spec.FileExtension(), spec.DocType)
+	if err != nil {
+		extra = fmt.Sprintf(`{"obj_type":"%s","file_extension":"%s"}`, spec.DocType, spec.FileExtension())
+	}
+
+	if fileSize > common.MaxDriveMediaUploadSinglePartSize {
+		dry.POST("/open-apis/drive/v1/medias/upload_prepare").
+			Desc("[1a] Initialize multipart upload").
+			Body(map[string]interface{}{
+				"file_name":   spec.SourceFileName(),
+				"parent_type": "ccm_import_open",
+				"parent_node": "",
+				"size":        "<file_size>",
+				"extra":       extra,
+			})
+		dry.POST("/open-apis/drive/v1/medias/upload_part").
+			Desc("[1b] Upload file parts (repeated)").
+			Body(map[string]interface{}{
+				"upload_id": "<upload_id>",
+				"seq":       "<chunk_index>",
+				"size":      "<chunk_size>",
+				"file":      "<chunk_binary>",
+			})
+		dry.POST("/open-apis/drive/v1/medias/upload_finish").
+			Desc("[1c] Finalize multipart upload and get file_token").
+			Body(map[string]interface{}{
+				"upload_id": "<upload_id>",
+				"block_num": "<block_num>",
+			})
+		return
+	}
+
+	dry.POST("/open-apis/drive/v1/medias/upload_all").
+		Desc("[1] Upload file to get file_token").
+		Body(map[string]interface{}{
+			"file_name":   spec.SourceFileName(),
+			"parent_type": "ccm_import_open",
+			"size":        "<file_size>",
+			"extra":       extra,
+			"file":        "@" + spec.FilePath,
+		})
+}
+
+// appendDriveImportUploadReportDryRun adds the best-effort upload report to an
+// import dry-run plan, matching the single-part or multipart upload path.
+func appendDriveImportUploadReportDryRun(dry *common.DryRunAPI, runtime *common.RuntimeContext, fileSize int64) {
+	apiPath := "/open-apis/drive/v1/medias/upload_all"
+	if fileSize > common.MaxDriveMediaUploadSinglePartSize {
+		apiPath = "/open-apis/drive/v1/medias/upload_finish"
+	}
+	fileevent.AppendUploadDryRun(dry, runtime, fileevent.UploadMeta{
+		APIPath:      apiPath,
+		ResourceType: "media",
+		ParentType:   "ccm_import_open",
+		FileToken:    "<file_token from upload response>",
+	})
+}
+
+// normalizeDriveImportKindForURL maps the server's import "type" field to a
+// canonical kind BuildResourceURL recognizes. status.DocType comes straight
+// from the API and isn't normalized; if it ever returns aliases like "sheets"
+// or "sheet_v2" the URL construction would silently fall through. Fall back
+// to the user-supplied --type, which is already validated to docx/sheet/
+// bitable/slides, so out.url stays populated whenever status.Token is set.
+func normalizeDriveImportKindForURL(serverType, fallback string) string {
+	switch strings.ToLower(strings.TrimSpace(serverType)) {
+	case "docx", "sheet", "bitable", "slides":
+		return strings.ToLower(strings.TrimSpace(serverType))
+	}
+	return fallback
+}
+
+// importTargetFileName returns the explicit import name when present, otherwise
+// derives one from the local file name.
+func importTargetFileName(filePath, explicitName string) string {
+	if explicitName != "" {
+		return explicitName
+	}
+	return importDefaultFileName(filePath)
+}
+
+// importDefaultFileName strips only the last extension so names like
+// "report.final.csv" become "report.final".
+func importDefaultFileName(filePath string) string {
+	base := filepath.Base(filePath)
+	ext := filepath.Ext(base)
+	if ext == "" {
+		return base
+	}
+	name := strings.TrimSuffix(base, ext)
+	if name == "" {
+		return base
+	}
+	return name
+}

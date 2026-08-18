@@ -1,0 +1,903 @@
+// Copyright (c) 2026 Lark Technologies Pte. Ltd.
+// SPDX-License-Identifier: MIT
+
+package apps
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
+
+	"strings"
+	"unicode"
+
+	"github.com/larksuite/cli/errs"
+	"github.com/larksuite/cli/internal/charcheck"
+	"github.com/larksuite/cli/shortcuts/common"
+)
+
+// defaultInitBranch is the fixed remote branch +init checks out after clone.
+const defaultInitBranch = "sprint/default"
+
+// Fixed init commit subjects. Constants — never interpolate user input. The
+// empty-repo (`app init`) path splits the scaffolded tree into two commits;
+// the non-empty (`app sync`) path stays a single commit.
+const (
+	commitMsgAppCode   = "chore: initialize app project code"
+	commitMsgAppConfig = "chore: initialize app config"
+	commitMsgUpgrade   = "chore: initialize app repository"
+)
+
+// scaffold kinds returned by runScaffold and consumed by commitAndPushIfDirty.
+const (
+	scaffoldKindInit    = "init"
+	scaffoldKindUpgrade = "upgrade"
+)
+
+const (
+	miaodaCLIPkg    = "@lark-apaas/miaoda-cli@latest"
+	npmRegistry     = "https://registry.npmmirror.com"
+	metaRelPath     = ".spark/meta.json"
+	steeringRelPath = ".agent/skills/steering"
+	seedReadme      = "README.md"
+)
+
+// Fallback committer identity written to the cloned repo's LOCAL git config when
+// no user.name/user.email is resolvable (from local, global, or system config).
+// The scaffold's `git commit` would otherwise fail with "please tell me who you
+// are"; an existing identity (e.g. the developer's global config) is respected.
+const (
+	defaultGitUserName  = "lark-cli-bot"
+	defaultGitUserEmail = "lark-cli-bot@miaoda.com"
+)
+
+// initRunner is the commandRunner used by +init. Package-level so unit tests
+// can swap in a fakeCommandRunner. Production uses execCommandRunner.
+var initRunner commandRunner = execCommandRunner{}
+
+// appTypePolicy captures the per-app-type control points +init toggles, keeping
+// each knob out of the inline `appType == "..."` checks that would otherwise be
+// scattered through the flow. Add a field here (and set it in appTypePolicies)
+// for each new control point rather than threading another type comparison
+// through appsInitExecute.
+type appTypePolicy struct {
+	// skipInstall passes --skip-install to `npx ... app init`, so scaffolding
+	// runs no dependency install.
+	skipInstall bool
+	// skipEnvPull skips the post-init `+env-pull` step, on both the fresh-init
+	// tail and the already-initialized refresh path.
+	skipEnvPull bool
+	// skipSkillsSync skips the conditional `npx ... skills sync --local` step on
+	// the non-empty (`app sync`) scaffold path.
+	skipSkillsSync bool
+	// skipAppSync skips `npx ... app sync` on the non-empty repo path.
+	skipAppSync bool
+}
+
+// appTypePolicies maps an app_type to its +init control strategy. Types absent
+// from the map get the zero-value policy (install runs, env is pulled, skills
+// are synced).
+var appTypePolicies = map[string]appTypePolicy{
+	// modern_html / html are static HTML sites: no dependencies to install,
+	// no startup env vars to pull, no steering skills to sync, and no app sync.
+	"modern_html": {skipInstall: true, skipEnvPull: true, skipSkillsSync: true, skipAppSync: true},
+	"html":        {skipInstall: true, skipEnvPull: true, skipSkillsSync: true, skipAppSync: true},
+	// frontend (vite-react, a buildable front-end app) is intentionally NOT
+	// listed here: it takes the zero-value policy (install deps, pull env, sync
+	// skills) like full_stack, since it needs a build step — it is not a static
+	// HTML site and must not skip those steps.
+}
+
+// policyForAppType returns the +init control strategy for appType. Unlisted
+// types (including "") get the zero-value policy.
+func policyForAppType(appType string) appTypePolicy {
+	return appTypePolicies[appType]
+}
+
+// AppsInit initializes an app's code and local development environment.
+var AppsInit = common.Shortcut{
+	Service:     appsService,
+	Command:     "+init",
+	Description: "Initialize an app's code and local development environment",
+	Risk:        "write",
+	Tips: []string{
+		"Example: lark-cli apps +init --app-id <app_id> --dir <dir>",
+		"Example: lark-cli apps +init --app-id <app_id> --dir <dir> --dry-run",
+	},
+	// +init calls queryAppType (GET /apps/{id}) which requires spark:app:read;
+	// the scope is declared as conditional since the call is non-fatal.
+	// The git credential subprocess enforces its own scopes independently.
+	// Explicit []string{} (not nil) per the convention enforced by
+	// TestAllShortcutsScopesNotNil.
+	Scopes:            []string{},
+	ConditionalScopes: []string{"spark:app:read"},
+	AuthTypes:         []string{"user"},
+	HasFormat:         true,
+	Flags: []common.Flag{
+		// NOTE: --app-id is intentionally NOT Required:true. The framework maps
+		// Required:true to cobra's MarkFlagRequired, whose error is plain-text
+		// exit-1 (root.go handleRootError case 4), bypassing the structured
+		// envelope. The spec and the E2E assert exit-2 + a structured
+		// {"ok":false,"error":{...}} envelope for missing --app-id, so the empty
+		// check lives in Validate (typed validation error -> exit 2).
+		{Name: "app-id", Desc: "app ID"},
+		{Name: "dir", Desc: "clone target directory; absolute or relative path (default ./<app-id>)"},
+		{Name: "source-path", Desc: "path to existing source files (e.g. HTML output from an agent) to incorporate into the initialized project"},
+	},
+	Validate: func(ctx context.Context, rctx *common.RuntimeContext) error {
+		appID := strings.TrimSpace(rctx.Str("app-id"))
+		if appID == "" {
+			return appsValidationParamError("--app-id", "--app-id is required")
+		}
+		if err := validateRealAppID(appID); err != nil {
+			return err
+		}
+		if sp := strings.TrimSpace(rctx.Str("source-path")); sp != "" {
+			if err := charcheck.RejectControlChars(sp, "--source-path"); err != nil {
+				return appsValidationParamError("--source-path", "%v", err).WithCause(err)
+			}
+		}
+		return nil
+	},
+	DryRun: func(ctx context.Context, rctx *common.RuntimeContext) *common.DryRunAPI {
+		appID := strings.TrimSpace(rctx.Str("app-id"))
+		dry := common.NewDryRunAPI().
+			Desc("Initialize app code (credential-init, clone, checkout, npx code-init, optional commit/push)").
+			Set("credential_init", fmt.Sprintf("apps +git-credential-init --app-id %s --format json", appID)).
+			Set("checkout", "git checkout "+defaultInitBranch).
+			Set("scaffold", fmt.Sprintf("empty repo: npx -y --prefer-online %s app init --app-type <appType> --app-id %s; non-empty: npx -y --prefer-online %s app sync + .spark/meta.json app_id patch + conditional skills sync --local", miaodaCLIPkg, appID, miaodaCLIPkg)).
+			Set("commit_push", "conditional: git add -A + commit + push origin "+defaultInitBranch+" when the working tree has changes").
+			Set("template", "derived from queryAppType (fallback: full_stack)").
+			Set("env_pull", fmt.Sprintf("apps +env-pull --app-id %s --project-path <clone_path> --format json (after successful init)", appID))
+		dir, err := resolveTargetPath(rctx, appID)
+		if err != nil {
+			dry.Set("dir_error", err.Error())
+			dir = defaultCloneDir(appID)
+		} else if isAlreadyInitialized(dir) {
+			if existing, e := ensureInitDirMatchesApp(dir, appID); e != nil {
+				if existing != "" {
+					dry.Set("app_id_mismatch", existing)
+				}
+				dry.Set("dir_error", e.Error())
+			} else {
+				dry.Set("already_initialized", true)
+			}
+		} else if e := ensureEmptyDir(dir); e != nil {
+			dry.Set("dir_error", e.Error())
+		}
+		dry.Set("clone", fmt.Sprintf("git clone -- <repository_url-from-credential-init> %s", dir))
+		dry.Set("clone_path", dir)
+		return dry
+	},
+	Execute: appsInitExecute,
+}
+
+// defaultCloneDir returns the default clone target (./<app-id>) for an app ID.
+func defaultCloneDir(appID string) string {
+	return filepath.Join(".", appID)
+}
+
+// initLogf writes a one-line progress message to stderr. stdout stays reserved
+// for the structured JSON envelope, so progress never pollutes it. Callers must
+// never pass a raw repository_url (it may embed a token) — pass step names,
+// clone_path, branch, or scaffold kind, and route any URL through
+// redactURLCredentials first.
+func initLogf(rctx *common.RuntimeContext, format string, args ...interface{}) {
+	fmt.Fprintf(rctx.IO().ErrOut, "→ "+format+"\n", args...)
+}
+
+// resolveTargetPath computes the absolute clone target from --dir (or the
+// ./<app-id> default). Unlike the prior SafeInputPath approach it does NOT
+// confine to cwd — the clone destination is user-chosen (the skill prompts for
+// it). It rejects empty input and control characters; symlink/no-clobber
+// guarding happens in ensureEmptyDir.
+func resolveTargetPath(rctx *common.RuntimeContext, appID string) (string, error) {
+	raw := strings.TrimSpace(rctx.Str("dir"))
+	if raw == "" {
+		raw = defaultCloneDir(appID)
+	}
+	// Reject ALL control characters (incl. tab/newline — a newline in an echoed
+	// path is a log-injection vector); charcheck additionally rejects dangerous
+	// Unicode (bidi overrides, zero-width) that IsControl does not.
+	if strings.IndexFunc(raw, unicode.IsControl) >= 0 {
+		return "", appsValidationParamError("--dir", "--dir must not contain control characters")
+	}
+	if err := charcheck.RejectControlChars(raw, "--dir"); err != nil {
+		return "", appsValidationParamError("--dir", "%v", err).WithCause(err)
+	}
+	abs, err := filepath.Abs(raw) //nolint:forbidigo // shortcuts cannot import internal/vfs (depguard rule shortcuts-no-vfs); raw is control-char-validated above, and FileIO.ResolvePath cannot resolve a clone target (it rejects absolute paths).
+	if err != nil {
+		return "", appsValidationParamError("--dir", "--dir cannot be resolved: %v", err)
+	}
+	return abs, nil
+}
+
+// ensureEmptyDir refuses to clone into an existing non-empty dir, a symlink, or
+// a non-directory. A non-existent path is fine (git clone creates it). Uses
+// Lstat so a symlinked target is rejected rather than followed.
+func ensureEmptyDir(dir string) error {
+	info, err := os.Lstat(dir) //nolint:forbidigo // shortcuts cannot import internal/vfs (depguard rule shortcuts-no-vfs); dir is the validated clone target, and lstat is required to reject a symlink (FileIO has no Lstat; its Stat follows symlinks).
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return appsValidationParamError("--dir", "--dir cannot be read: %v", err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return appsValidationParamError("--dir", "--dir must not be a symlink: %q", dir)
+	}
+	if !info.IsDir() {
+		return appsValidationParamError("--dir", "--dir exists and is not a directory: %q", dir)
+	}
+	entries, err := os.ReadDir(dir) //nolint:forbidigo // shortcuts cannot import internal/vfs (depguard rule shortcuts-no-vfs); dir is the validated clone target, and FileIO has no ReadDir.
+	if err != nil {
+		return appsValidationParamError("--dir", "--dir cannot be read: %v", err)
+	}
+	if len(entries) > 0 {
+		return appsValidationParamError("--dir", "target directory %q already exists and is not empty", dir)
+	}
+	return nil
+}
+
+// isAlreadyInitialized reports whether dir is an already-initialized app
+// repo, detected by the presence of <dir>/.spark/meta.json (regardless of its
+// app_id value). Used to short-circuit +init into a friendly no-op.
+func isAlreadyInitialized(dir string) bool {
+	info, err := os.Stat(filepath.Join(dir, metaRelPath)) //nolint:forbidigo // shortcuts cannot import internal/vfs (depguard rule shortcuts-no-vfs); path is under the validated clone dir, and FileIO.Stat rejects absolute paths.
+	return err == nil && !info.IsDir()
+}
+
+// readMetaAppID 读取 <dir>/.spark/meta.json 的 app_id，用于判断目标目录是否同一个妙搭应用。
+// 返回 (appID, isSparkProject, err)：
+//   - meta.json 不存在             → ("", false, nil)   非妙搭工程
+//   - 读取/解析失败（损坏/不可读）  → ("", false, err)   无法确认是否妙搭工程
+//   - 解析成功                     → (trim 后的 app_id, true, nil)（app_id 缺失/为空时为 ""）
+func readMetaAppID(dir string) (string, bool, error) {
+	b, err := os.ReadFile(filepath.Join(dir, metaRelPath)) //nolint:forbidigo // shortcuts cannot import internal/vfs (depguard rule shortcuts-no-vfs); path is under the validated clone dir, and FileIO.Open rejects absolute paths.
+	if os.IsNotExist(err) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, appsFileIOError(err, "read %s failed: %v", metaRelPath, err)
+	}
+	var m struct {
+		AppID string `json:"app_id"`
+	}
+	if err := json.Unmarshal(b, &m); err != nil {
+		return "", false, appsFileIOError(err, "parse %s failed: %v", metaRelPath, err)
+	}
+	return strings.TrimSpace(m.AppID), true, nil
+}
+
+// ensureInitDirMatchesApp 校验「已存在的目标目录」能否被 appID 安全复用：
+//   - 不是妙搭工程（无 meta.json）        → nil（交给 ensureEmptyDir 判空/非空）
+//   - 是妙搭工程且 app_id 与 appID 一致    → nil（走已初始化短路，复用本地代码）
+//   - 是妙搭工程但 app_id 不一致（含为空）  → 报错，提示换目录
+//   - meta.json 损坏/不可读，无法确认      → 报错（fail closed），提示换目录
+//
+// 返回值 existing 是目录里已存在的 app_id（仅"已是另一个 app"的拒绝场景非空），供调用方在
+// dry-run 里回填 app_id_mismatch，避免二次读 meta.json。
+func ensureInitDirMatchesApp(dir, appID string) (existing string, err error) {
+	existing, isSpark, readErr := readMetaAppID(dir)
+	if readErr != nil {
+		return "", appsValidationParamError("--dir",
+			"target directory %q already exists but its %s is unreadable or corrupted; cannot confirm it belongs to app %s, refusing to use it",
+			dir, metaRelPath, appID).
+			WithHint("choose a different --dir, or repair/remove the directory, before running +init").
+			WithCause(readErr)
+	}
+	if !isSpark || existing == appID {
+		return existing, nil
+	}
+	if existing == "" {
+		// meta 存在但缺 app_id：更可能是同一应用上次 +init 中断留下的半成品，而非另一个 app。
+		return "", appsValidationParamError("--dir",
+			"target directory %q has a %s without an app_id; cannot confirm it belongs to app %s, refusing to use it",
+			dir, metaRelPath, appID).
+			WithHint("remove the directory and re-run +init, or choose a different --dir")
+	}
+	return existing, appsValidationParamError("--dir",
+		"target directory %q is already initialized for a different app (%s); refusing to initialize app %s into it",
+		dir, existing, appID).
+		WithHint("choose a different --dir (or cd into the matching project) before running +init")
+}
+
+// ensureMetaAppID patches <dir>/.spark/meta.json to include app_id when the file
+// exists but lacks (or has an empty) app_id. Other fields are preserved. When
+// the file does not exist, this is a no-op (we never create it).
+func ensureMetaAppID(dir, appID string) error {
+	path := filepath.Join(dir, metaRelPath)
+	b, err := os.ReadFile(path) //nolint:forbidigo // shortcuts cannot import internal/vfs (depguard rule shortcuts-no-vfs); path is under the validated clone dir, and FileIO.Open rejects absolute paths.
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return appsFileIOError(err, "read %s failed: %v", metaRelPath, err)
+	}
+	var m map[string]interface{}
+	if err := json.Unmarshal(b, &m); err != nil {
+		return appsFileIOError(err, "parse %s failed: %v", metaRelPath, err)
+	}
+	if cur, _ := m["app_id"].(string); strings.TrimSpace(cur) != "" {
+		return nil
+	}
+	if m == nil {
+		m = map[string]interface{}{}
+	}
+	m["app_id"] = appID
+	out, err := json.MarshalIndent(m, "", "  ")
+	if err != nil {
+		return appsFileIOError(err, "marshal %s failed: %v", metaRelPath, err)
+	}
+	if err := os.WriteFile(path, append(out, '\n'), 0o644); err != nil { //nolint:forbidigo // shortcuts cannot import internal/vfs (depguard rule shortcuts-no-vfs); path is under the validated clone dir, and FileIO.Save rejects absolute paths.
+		return appsFileIOError(err, "write %s failed: %v", metaRelPath, err)
+	}
+	return nil
+}
+
+// ensureGitIdentity guarantees the cloned repo has a committer identity so the
+// scaffold's `git commit` cannot fail with "please tell me who you are". It sets
+// the repo-LOCAL user.name/user.email to the lark-cli-bot defaults ONLY when
+// each is not already resolvable from local/global/system config, so a
+// developer's existing identity is never overwritten. Each key is handled
+// independently (a machine with only user.name set still gets a default email).
+func ensureGitIdentity(ctx context.Context, dir, authorName, authorEmail string) error {
+	name := strings.TrimSpace(authorName)
+	if name == "" {
+		name = defaultGitUserName
+	}
+	email := strings.TrimSpace(authorEmail)
+	if email == "" {
+		email = defaultGitUserEmail
+	}
+	if err := ensureGitConfigValue(ctx, dir, "user.name", name); err != nil {
+		return err
+	}
+	return ensureGitConfigValue(ctx, dir, "user.email", email)
+}
+
+// ensureGitConfigValue sets <key>=fallback in the repo-local git config when key
+// resolves to no value. `git config --get` exits non-zero (or prints nothing)
+// when the key is unset at every scope; any resolved value (including one
+// inherited from global/system) is left untouched.
+func ensureGitConfigValue(ctx context.Context, dir, key, fallback string) error {
+	stdout, _, err := initRunner.Run(ctx, dir, "git", "config", "--get", key)
+	if err == nil && strings.TrimSpace(stdout) != "" {
+		return nil // already configured at some scope — respect it
+	}
+	if _, stderr, e := initRunner.Run(ctx, dir, "git", "config", key, fallback); e != nil {
+		return appsExternalToolError(e, "git config %s failed: %s", key, gitErr(stderr, e))
+	}
+	return nil
+}
+
+// hasSteeringSkills reports whether <dir>/.agent/skills/steering exists as a dir.
+func hasSteeringSkills(dir string) bool {
+	info, err := os.Stat(filepath.Join(dir, steeringRelPath)) //nolint:forbidigo // shortcuts cannot import internal/vfs (depguard rule shortcuts-no-vfs); path is under the validated clone dir, and FileIO.Stat rejects absolute paths.
+	return err == nil && info.IsDir()
+}
+
+// isEmptyRepo reports whether the checked-out branch has no tracked files
+// other than the backend's default seed README.md. `git ls-files` listing
+// nothing — or only README.md — counts as empty (→ scaffold via `app init`).
+func isEmptyRepo(ctx context.Context, dir string) (bool, error) {
+	stdout, stderr, err := initRunner.Run(ctx, dir, "git", "ls-files")
+	if err != nil {
+		return false, appsExternalToolError(err, "git ls-files failed: %s", gitErr(stderr, err))
+	}
+	for _, line := range strings.Split(strings.TrimSpace(stdout), "\n") {
+		f := strings.TrimSpace(line)
+		// Match the seed exactly (case- and path-sensitive): only a root-level
+		// "README.md" is the backend's default seed. A docs/README.md or readme.md
+		// is treated as real content (→ non-empty), which is the safe direction
+		// (skip scaffolding rather than risk overwriting). Extend this allow-list
+		// here if the backend's seed set grows.
+		if f == "" || f == seedReadme {
+			continue
+		}
+		return false, nil // a non-README tracked file → non-empty repo
+	}
+	return true, nil
+}
+
+// runScaffold runs the npx scaffolding step inside the cloned repo (cwd=dir).
+// Empty repo -> `app init`; non-empty -> `app sync` + meta app_id patch +
+// conditional `skills sync`. Returns "init" or "upgrade".
+func runScaffold(ctx context.Context, dir, appID, appType, sourcePath string) (string, error) {
+	empty, err := isEmptyRepo(ctx, dir)
+	if err != nil {
+		return "", err
+	}
+	if empty {
+		args := scaffoldInitArgs(appType, appID, sourcePath)
+		if _, stderr, err := initRunner.Run(ctx, dir, "npx", args...); err != nil {
+			return "", appsExternalToolError(err, "npx app init failed: %s", gitErr(stderr, err))
+		}
+		return scaffoldKindInit, nil
+	}
+	policy := policyForAppType(appType)
+	if !policy.skipAppSync {
+		if _, stderr, err := initRunner.Run(ctx, dir, "npx", "-y", "--prefer-online", "--registry", npmRegistry, miaodaCLIPkg, "app", "sync"); err != nil {
+			return "", appsExternalToolError(err, "npx app sync failed: %s", gitErr(stderr, err))
+		}
+	}
+	if err := ensureMetaAppID(dir, appID); err != nil {
+		return "", err
+	}
+	if !policy.skipSkillsSync && !hasSteeringSkills(dir) {
+		if _, stderr, err := initRunner.Run(ctx, dir, "npx", "-y", "--prefer-online", "--registry", npmRegistry, miaodaCLIPkg, "skills", "sync", "--local"); err != nil {
+			return "", appsExternalToolError(err, "npx skills sync failed: %s", gitErr(stderr, err))
+		}
+	}
+	return scaffoldKindUpgrade, nil
+}
+
+// scaffoldInitArgs builds the npx argument list for `app init`.
+// appType from queryAppType is passed as --app-type; falls back to "full_stack"
+// when empty. sourcePath is appended as --source-path when non-empty.
+// --skip-install is appended per the app_type's policy (see appTypePolicy):
+// types whose policy sets skipInstall (e.g. modern_html) skip the dependency
+// install; others run it as usual.
+// appType is forwarded verbatim (including "frontend") — the CLI does not
+// translate the app type; mapping the app type to a concrete tech stack is the
+// downstream tool's responsibility.
+func scaffoldInitArgs(appType, appID, sourcePath string) []string {
+	base := []string{"-y", "--prefer-online", "--registry", npmRegistry, miaodaCLIPkg, "app", "init"}
+	at := appType
+	if at == "" {
+		at = "full_stack"
+	}
+	base = append(base, "--app-type", at, "--app-id", appID)
+	if sourcePath != "" {
+		base = append(base, "--source-path", sourcePath)
+	}
+	if policyForAppType(appType).skipInstall {
+		base = append(base, "--skip-install")
+	}
+	return base
+}
+
+// credentialInitResult holds the fields parsed from +git-credential-init output.
+type credentialInitResult struct {
+	RepositoryURL     string
+	CommitAuthorName  string
+	CommitAuthorEmail string
+}
+
+// parseCredentialInitEnvelope extracts fields from a +git-credential-init JSON
+// envelope ({"ok":true,"data":{"repository_url":"...","commit_author_name":"...","commit_author_email":"..."}}).
+func parseCredentialInitEnvelope(stdout string) (credentialInitResult, error) {
+	var env struct {
+		OK   bool `json:"ok"`
+		Data struct {
+			RepositoryURL     string `json:"repository_url"`
+			CommitAuthorName  string `json:"commit_author_name"`
+			CommitAuthorEmail string `json:"commit_author_email"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &env); err != nil {
+		return credentialInitResult{}, appsSubprocessEnvelopeError("could not parse +git-credential-init output as JSON: %v", err)
+	}
+	if !env.OK {
+		return credentialInitResult{}, appsSubprocessEnvelopeError("+git-credential-init reported failure")
+	}
+	if strings.TrimSpace(env.Data.RepositoryURL) == "" {
+		return credentialInitResult{}, appsSubprocessEnvelopeError("+git-credential-init returned no repository_url")
+	}
+	return credentialInitResult{
+		RepositoryURL:     env.Data.RepositoryURL,
+		CommitAuthorName:  env.Data.CommitAuthorName,
+		CommitAuthorEmail: env.Data.CommitAuthorEmail,
+	}, nil
+}
+
+// parseEnvFileFromEnvelope extracts data.env_file from a `+env-pull` success
+// envelope ({"ok":true,"data":{"env_file":"..."}}) on stdout.
+func parseEnvFileFromEnvelope(stdout string) (string, error) {
+	var env struct {
+		OK   bool `json:"ok"`
+		Data struct {
+			EnvFile string `json:"env_file"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &env); err != nil {
+		return "", appsSubprocessEnvelopeError("could not parse +env-pull output as JSON: %v", err)
+	}
+	if !env.OK {
+		return "", appsSubprocessEnvelopeError("+env-pull reported failure")
+	}
+	if strings.TrimSpace(env.Data.EnvFile) == "" {
+		return "", appsSubprocessEnvelopeError("+env-pull returned no env_file")
+	}
+	return env.Data.EnvFile, nil
+}
+
+// parseEnvPullErrorEnvelope extracts a single-line reason from a `+env-pull`
+// error envelope ({"ok":false,"error":{"type":...,"message":...}}) on stderr.
+// Returns "" when stderr is not a parseable error envelope (caller falls back).
+func parseEnvPullErrorEnvelope(stderr string) string {
+	var env struct {
+		Error struct {
+			Type    string `json:"type"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(stderr)), &env); err != nil {
+		return ""
+	}
+	msg := strings.TrimSpace(env.Error.Message)
+	if msg == "" {
+		return ""
+	}
+	if t := strings.TrimSpace(env.Error.Type); t != "" {
+		return t + ": " + msg
+	}
+	return msg
+}
+
+// validateRepoURLScheme rejects any repository_url that is not http(s):// to
+// block git's dangerous transports (ext::, file://, ssh://) and option injection.
+func validateRepoURLScheme(repoURL string) error {
+	if strings.HasPrefix(repoURL, "http://") || strings.HasPrefix(repoURL, "https://") {
+		return nil
+	}
+	// The URL comes from the +git-credential-init subprocess response, not user
+	// input, so a non-http(s) scheme is a broken upstream contract.
+	return appsSubprocessEnvelopeError(
+		"repository_url from +git-credential-init must be http(s); refusing %q", redactURLCredentials(repoURL))
+}
+
+func appsInitExecute(ctx context.Context, rctx *common.RuntimeContext) error {
+	appID := strings.TrimSpace(rctx.Str("app-id"))
+
+	dir, err := resolveTargetPath(rctx, appID)
+	if err != nil {
+		return err
+	}
+
+	// 异 app 目录护栏：拒绝把当前 app 初始化进另一个 app 的已初始化工程。
+	if _, err := ensureInitDirMatchesApp(dir, appID); err != nil {
+		return err
+	}
+
+	appType, err := queryAppType(ctx, rctx, appID)
+	if err != nil {
+		return err
+	}
+	policy := policyForAppType(appType)
+
+	// Already-initialized short-circuit: a dir containing .spark/meta.json is an
+	// initialized app repo -> skip clone/scaffold/commit, but still refresh
+	// the local env so a re-run picks up the latest startup env vars.
+	if isAlreadyInitialized(dir) {
+		initLogf(rctx, "Already initialized at %s — refreshing local environment", dir)
+		out := map[string]interface{}{
+			"app_id":     appID,
+			"clone_path": dir,
+			"scaffold":   "already_initialized",
+			"committed":  false,
+			"pushed":     false,
+		}
+		if appType != "" {
+			out["app_type"] = appType
+		}
+		if policy.skipEnvPull {
+			out["env_pulled"] = false
+			out["env_pull_skipped"] = true
+			out["message"] = "Repository already initialized. You can start developing."
+			rctx.OutFormat(out, nil, func(w io.Writer) {
+				fmt.Fprintf(w, "✓ Already initialized at %s\n", dir)
+				fmt.Fprintln(w, "仓库已初始化完成，可以开始开发了。")
+			})
+			return nil
+		}
+		initLogf(rctx, "Pulling local environment variables...")
+		envFile, envPullErr := pullEnv(ctx, rctx, appID, dir)
+		envPulled := envPullErr == ""
+		out["env_pulled"] = envPulled
+		if envPulled {
+			initLogf(rctx, "Local environment written to %s", envFile)
+			out["env_file"] = envFile
+			out["message"] = "Repository already initialized. Local env refreshed — you can start developing."
+		} else {
+			initLogf(rctx, "Could not pull local env vars: %s", envPullErr)
+			out["env_pull_error"] = envPullErr
+			out["message"] = fmt.Sprintf("Repository already initialized. Could not pull local env vars automatically — run `lark-cli apps +env-pull --app-id %s` to retry.", appID)
+		}
+		rctx.OutFormat(out, nil, func(w io.Writer) {
+			fmt.Fprintf(w, "✓ Already initialized at %s\n", dir)
+			if envPulled {
+				fmt.Fprintf(w, "✓ Local environment written to %s\n", envFile)
+			} else {
+				fmt.Fprintf(w, "⚠ Could not pull local env vars: %s\n", envPullErr)
+				fmt.Fprintf(w, "  run `lark-cli apps +env-pull --app-id %s` to retry\n", appID)
+			}
+			fmt.Fprintln(w, "仓库已初始化完成，可以开始开发了。")
+		})
+		return nil
+	}
+
+	if _, err := exec.LookPath("git"); err != nil {
+		return appsFailedPreconditionError("git executable not found on PATH").
+			WithHint("install git and ensure it is on your PATH")
+	}
+	if _, err := exec.LookPath("npx"); err != nil {
+		return appsFailedPreconditionError("npx executable not found on PATH").
+			WithHint("install Node.js (which provides npx) and ensure it is on your PATH")
+	}
+
+	if err := ensureEmptyDir(dir); err != nil {
+		return err
+	}
+
+	initLogf(rctx, "Issuing repository credentials for %s...", appID)
+	cred, err := issueCredentials(ctx, rctx, appID)
+	if err != nil {
+		return err
+	}
+	if err := validateRepoURLScheme(cred.RepositoryURL); err != nil {
+		return err
+	}
+
+	initLogf(rctx, "Cloning into %s...", dir)
+	if _, stderr, err := initRunner.Run(ctx, "", "git", "clone", "--", cred.RepositoryURL, dir); err != nil {
+		return appsExternalToolError(err, "git clone failed: %s", gitErr(stderr, err))
+	}
+	initLogf(rctx, "Checking out %s...", defaultInitBranch)
+	if _, stderr, err := initRunner.Run(ctx, dir, "git", "checkout", defaultInitBranch); err != nil {
+		return appsExternalToolError(err, "git checkout %s failed: %s", defaultInitBranch, gitErr(stderr, err))
+	}
+
+	// Ensure a committer identity exists before the scaffold commit. Uses the
+	// author name/email from +git-credential-init when available; falls back
+	// to lark-cli-bot defaults when the server does not provide them.
+	if err := ensureGitIdentity(ctx, dir, cred.CommitAuthorName, cred.CommitAuthorEmail); err != nil {
+		return err
+	}
+
+	initLogf(rctx, "Initializing app code (running miaoda-cli)...")
+	sourcePath := strings.TrimSpace(rctx.Str("source-path"))
+	if sourcePath != "" {
+		sourcePath, err = filepath.Abs(sourcePath) //nolint:forbidigo // shortcuts cannot import internal/vfs (depguard rule shortcuts-no-vfs); sourcePath is control-char-validated in Validate.
+		if err != nil {
+			return appsValidationParamError("--source-path", "--source-path cannot be resolved: %v", err)
+		}
+	}
+	scaffold, err := runScaffold(ctx, dir, appID, appType, sourcePath)
+	if err != nil {
+		return err
+	}
+
+	committed, pushed, err := commitAndPushIfDirty(ctx, dir, scaffold)
+	if err != nil {
+		return err
+	}
+	if pushed {
+		initLogf(rctx, "Committed and pushed to %s", defaultInitBranch)
+	} else {
+		initLogf(rctx, "Working tree clean — skipped commit/push")
+	}
+
+	out := map[string]interface{}{
+		"app_id":         appID,
+		"repository_url": redactURLCredentials(cred.RepositoryURL),
+		"branch":         defaultInitBranch,
+		"clone_path":     dir,
+		"scaffold":       scaffold,
+		"committed":      committed,
+		"pushed":         pushed,
+		"message":        "Repository initialized. You can start developing.",
+	}
+	if appType != "" {
+		out["app_type"] = appType
+	}
+
+	if policy.skipEnvPull {
+		out["env_pulled"] = false
+		out["env_pull_skipped"] = true
+	} else {
+		initLogf(rctx, "Pulling local environment variables...")
+		envFile, envPullErr := pullEnv(ctx, rctx, appID, dir)
+		envPulled := envPullErr == ""
+		out["env_pulled"] = envPulled
+		if envPulled {
+			initLogf(rctx, "Local environment written to %s", envFile)
+			out["env_file"] = envFile
+		} else {
+			initLogf(rctx, "Could not pull local env vars: %s", envPullErr)
+			out["env_pull_error"] = envPullErr
+			out["message"] = fmt.Sprintf("Repository initialized. Could not pull local env vars automatically — run `lark-cli apps +env-pull --app-id %s` to retry.", appID)
+		}
+	}
+
+	rctx.OutFormat(out, nil, func(w io.Writer) {
+		fmt.Fprintf(w, "✓ Repository initialized at %s\n", dir)
+		fmt.Fprintf(w, "  branch: %s\n  scaffold: %s\n", defaultInitBranch, scaffold)
+		if policy.skipEnvPull {
+			fmt.Fprintln(w, "  (env pull skipped)")
+		} else if envPulled, _ := out["env_pulled"].(bool); envPulled {
+			fmt.Fprintf(w, "✓ Local environment written to %s\n", out["env_file"])
+		} else if envPullErr, ok := out["env_pull_error"].(string); ok {
+			fmt.Fprintf(w, "⚠ Could not pull local env vars: %s\n", envPullErr)
+			fmt.Fprintf(w, "  run `lark-cli apps +env-pull --app-id %s` to retry\n", appID)
+		}
+		fmt.Fprintln(w, "仓库已初始化完成，可以开始开发了。")
+	})
+	return nil
+}
+
+// pullEnv runs `<self> apps +env-pull --app-id <appID> --project-path <dir>
+// --format json`, forwarding --as when set. Returns (envFile, "") on success or
+// ("", reason) on failure. Non-fatal by contract: the caller logs a warning and
+// continues. The success envelope is read from stdout, the error envelope from
+// stderr (lark-cli writes structured errors to stderr; see cmd/root.go
+// handleRootError). The reason is always redacted.
+func pullEnv(ctx context.Context, rctx *common.RuntimeContext, appID, dir string) (envFile, reason string) {
+	self, err := os.Executable()
+	if err != nil {
+		return "", redactURLCredentials(fmt.Sprintf("cannot locate lark-cli executable: %v", err))
+	}
+	args := []string{"apps", "+env-pull", "--app-id", appID, "--project-path", dir, "--format", "json"}
+	if as := strings.TrimSpace(rctx.Str("as")); as != "" {
+		args = append(args, "--as", as)
+	}
+	stdout, stderr, runErr := initRunner.Run(ctx, "", self, args...)
+	if runErr != nil {
+		r := parseEnvPullErrorEnvelope(stderr)
+		if r == "" {
+			r = gitErr(stderr, runErr)
+		}
+		return "", redactURLCredentials(r)
+	}
+	envFile, perr := parseEnvFileFromEnvelope(stdout)
+	if perr != nil {
+		return "", redactURLCredentials(perr.Error())
+	}
+	return envFile, ""
+}
+
+// issueCredentials runs `<self> apps +git-credential-init --app-id <id> --format json`
+// and returns the repo_url it reports. Forwards --as when set.
+func issueCredentials(ctx context.Context, rctx *common.RuntimeContext, appID string) (credentialInitResult, error) {
+	self, err := os.Executable()
+	if err != nil {
+		return credentialInitResult{}, errs.NewInternalError(errs.SubtypeUnknown, "cannot locate lark-cli executable: %v", err).WithCause(err)
+	}
+	args := []string{"apps", "+git-credential-init", "--app-id", appID, "--format", "json"}
+	if as := strings.TrimSpace(rctx.Str("as")); as != "" {
+		args = append(args, "--as", as)
+	}
+	stdout, stderr, err := initRunner.Run(ctx, "", self, args...)
+	if err != nil {
+		return credentialInitResult{}, appsExternalToolError(err, "apps +git-credential-init failed: %s", gitErr(stderr, err)).
+			WithHint("ensure apps +git-credential-init is available and you are logged in").
+			WithCause(err)
+	}
+	return parseCredentialInitEnvelope(stdout)
+}
+
+// commitAndPushIfDirty commits and pushes only when the working tree has
+// changes; a clean tree is a no-op (returns false,false). For the empty-repo
+// init path (scaffoldKind == "init") it splits the scaffolded tree into two
+// commits — app project code, then app config (.spark/.agent) — skipping
+// either commit when that group has no changes (no empty commits). Other paths
+// commit once. Push is a single `git push origin <branch>` for all commits.
+func commitAndPushIfDirty(ctx context.Context, dir, scaffoldKind string) (committed, pushed bool, err error) {
+	status, stderr, runErr := initRunner.Run(ctx, dir, "git", "status", "--porcelain")
+	if runErr != nil {
+		return false, false, appsExternalToolError(runErr, "git status failed: %s", gitErr(stderr, runErr))
+	}
+	if strings.TrimSpace(status) == "" {
+		return false, false, nil
+	}
+
+	if scaffoldKind == scaffoldKindInit {
+		// Stage each group by its exact porcelain paths (never gitignored files),
+		// so neither `git add` errors on an ignored path like .agent.
+		appPaths, configPaths := classifyPorcelain(status)
+		if len(appPaths) > 0 {
+			if e := stageAndCommit(ctx, dir, commitMsgAppCode, appPaths...); e != nil {
+				return committed, false, e
+			}
+			committed = true
+		}
+		if len(configPaths) > 0 {
+			if e := stageAndCommit(ctx, dir, commitMsgAppConfig, configPaths...); e != nil {
+				return committed, false, e
+			}
+			committed = true
+		}
+	} else {
+		if e := stageAndCommit(ctx, dir, commitMsgUpgrade, "."); e != nil {
+			return false, false, e
+		}
+		committed = true
+	}
+
+	if !committed {
+		return false, false, nil
+	}
+
+	if _, se, e := initRunner.Run(ctx, dir, "git", "push", "origin", defaultInitBranch); e != nil {
+		return true, false, withAppsHint(
+			appsExternalToolError(e, "git push failed: %s", gitErr(se, e)),
+			"the push was rejected — the git output is in the message above; if it is a non-fast-forward (remote has new commits), sync the remote and retry; if it is an auth failure, make sure `lark-cli apps +git-credential-init` has succeeded")
+	}
+	return true, true, nil
+}
+
+// stageAndCommit stages the given pathspecs (`git add -A -- <pathspecs>`) and
+// makes one `git commit --no-verify -m message`. --no-verify skips the scaffold
+// repo's local pre-commit / commit-msg hooks (local only; the later push is not
+// --no-verify). Callers gate this on classifyPorcelain so the group is non-empty
+// and the commit never hits "nothing to commit".
+func stageAndCommit(ctx context.Context, dir, message string, pathspecs ...string) error {
+	addArgs := append([]string{"add", "-A", "--"}, pathspecs...)
+	if _, se, e := initRunner.Run(ctx, dir, "git", addArgs...); e != nil {
+		return appsExternalToolError(e, "git add failed: %s", gitErr(se, e))
+	}
+	if _, se, e := initRunner.Run(ctx, dir, "git", "commit", "--no-verify", "-m", message); e != nil {
+		return appsExternalToolError(e, "git commit failed: %s", gitErr(se, e))
+	}
+	return nil
+}
+
+// classifyPorcelain parses `git status --porcelain` output and partitions the
+// changed paths into the "app code" group (anything outside .spark/ and .agent/)
+// and the "app config" group (.spark/ and .agent/). It returns the exact
+// porcelain paths so callers can stage them verbatim: porcelain never lists
+// gitignored files, so `git add -- <these paths>` never trips git's ignored-path
+// error. (Naming an ignored dir explicitly — or combining a "." pathspec with
+// :(exclude) magic — DOES error when a scaffold template gitignores e.g. .agent,
+// which is why we stage exact paths instead of pathspecs.)
+func classifyPorcelain(status string) (appPaths, configPaths []string) {
+	for _, line := range strings.Split(status, "\n") {
+		p := porcelainPath(line)
+		if p == "" {
+			continue
+		}
+		if isConfigPath(p) {
+			configPaths = append(configPaths, p)
+		} else {
+			appPaths = append(appPaths, p)
+		}
+	}
+	return appPaths, configPaths
+}
+
+// porcelainPath extracts the path from a `git status --porcelain` v1 line.
+// Format is "XY <path>" (2 status chars + space); rename/copy lines are
+// "XY <orig> -> <dest>" (dest is what matters). Quoted paths are unquoted.
+func porcelainPath(line string) string {
+	if len(line) < 4 {
+		return ""
+	}
+	p := line[3:]
+	if i := strings.Index(p, " -> "); i >= 0 {
+		p = p[i+len(" -> "):]
+	}
+	p = strings.TrimSpace(p)
+	p = strings.Trim(p, `"`)
+	return p
+}
+
+// isConfigPath reports whether p is the app-config group: the .spark or
+// .agent directory itself, or anything under them. ".sparkrc" is NOT config.
+func isConfigPath(p string) bool {
+	return p == ".spark" || p == ".agent" ||
+		strings.HasPrefix(p, ".spark/") || strings.HasPrefix(p, ".agent/")
+}
+
+// gitErr builds a redacted, single-line error detail from stderr (falling back
+// to the exec error). Always redacts embedded credentials.
+func gitErr(stderr string, err error) string {
+	s := strings.TrimSpace(stderr)
+	if s == "" && err != nil {
+		s = err.Error()
+	}
+	return redactURLCredentials(s)
+}

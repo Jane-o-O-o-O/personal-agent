@@ -1,0 +1,970 @@
+// Copyright (c) 2026 Lark Technologies Pte. Ltd.
+// SPDX-License-Identifier: MIT
+
+package apps
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/spf13/cobra"
+
+	"github.com/larksuite/cli/errs"
+	"github.com/larksuite/cli/extension/fileio"
+	"github.com/larksuite/cli/internal/cmdutil"
+	"github.com/larksuite/cli/internal/core"
+	"github.com/larksuite/cli/internal/httpmock"
+	"github.com/larksuite/cli/shortcuts/common"
+)
+
+func writeAppsSampleSite(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "index.html"), []byte("<html></html>"), 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+	return dir
+}
+
+func TestPrepareHTMLPublishTarball_PathNotFound(t *testing.T) {
+	_, err := prepareHTMLPublishTarball(newTestFIO(), "/nonexistent")
+	if err == nil {
+		t.Fatalf("expected error")
+	}
+}
+
+func TestPrepareHTMLPublishTarball_DirRequiresIndexHTML(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "foo.html"), []byte("<html></html>"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	_, err := prepareHTMLPublishTarball(newTestFIO(), dir)
+	if err == nil {
+		t.Fatalf("expected error for missing index.html")
+	}
+	problem := requireAppsValidationProblem(t, err)
+	if !strings.Contains(problem.Message, "index.html") {
+		t.Fatalf("message missing 'index.html': %v", problem.Message)
+	}
+	if problem.Hint == "" {
+		t.Fatalf("expected non-empty hint")
+	}
+}
+
+func TestPrepareHTMLPublishTarball_DirWithIndexHTMLPasses(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "index.html"), []byte("<html></html>"), 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "extra.html"), []byte("<html></html>"), 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+	tarball, err := prepareHTMLPublishTarball(newTestFIO(), dir)
+	if err != nil {
+		t.Fatalf("err=%v", err)
+	}
+	if tarball == nil || tarball.Size == 0 {
+		t.Fatalf("expected non-empty tarball")
+	}
+}
+
+func TestPrepareHTMLPublishTarball_SingleFileRejectedIfNotNamedIndex(t *testing.T) {
+	dir := t.TempDir()
+	single := filepath.Join(dir, "foo.html")
+	if err := os.WriteFile(single, []byte("<html></html>"), 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+	_, err := prepareHTMLPublishTarball(newTestFIO(), single)
+	if err == nil {
+		t.Fatalf("single-file path 'foo.html' should be rejected (not named index.html)")
+	}
+	requireAppsValidationProblem(t, err)
+}
+
+func TestPrepareHTMLPublishTarball_SingleFileNamedIndexPasses(t *testing.T) {
+	dir := t.TempDir()
+	single := filepath.Join(dir, "index.html")
+	if err := os.WriteFile(single, []byte("<html></html>"), 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+	tarball, err := prepareHTMLPublishTarball(newTestFIO(), single)
+	if err != nil {
+		t.Fatalf("err=%v", err)
+	}
+	if tarball == nil || tarball.Size == 0 {
+		t.Fatalf("expected non-empty tarball")
+	}
+}
+
+func TestPrepareHTMLPublishTarball_RejectsOversizeTarball(t *testing.T) {
+	orig := maxHTMLPublishTarballBytes
+	maxHTMLPublishTarballBytes = 100
+	defer func() { maxHTMLPublishTarballBytes = orig }()
+
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "index.html"), []byte("<html></html>"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "big.html"),
+		[]byte(strings.Repeat("x", 4096)), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	_, err := prepareHTMLPublishTarball(newTestFIO(), dir)
+	if err == nil {
+		t.Fatalf("expected oversize error")
+	}
+	problem := requireAppsValidationProblem(t, err)
+	if !strings.Contains(problem.Message, "exceeds") {
+		t.Fatalf("message missing 'exceeds': %v", problem.Message)
+	}
+	if problem.Hint == "" {
+		t.Fatalf("expected non-empty hint")
+	}
+}
+
+func TestMaxHTMLPublishTarballBytes_Default(t *testing.T) {
+	// Pin 20MB 常量值，typo 到 20*1000*1024 之类会被拦截。
+	if maxHTMLPublishTarballBytes != 20*1024*1024 {
+		t.Fatalf("default = %d, want %d (20MiB)", maxHTMLPublishTarballBytes, 20*1024*1024)
+	}
+}
+
+func TestAppsHTMLPublish_RequiresAppID(t *testing.T) {
+	site := writeAppsSampleSite(t)
+	factory, stdout, _ := newAppsExecuteFactory(t)
+	err := runAppsShortcut(t, AppsHTMLPublish,
+		[]string{"+html-publish", "--path", site}, factory, stdout)
+	// cobra Required:true may report flag name without "--" prefix
+	if err == nil || !strings.Contains(err.Error(), "app-id") {
+		t.Fatalf("expected --app-id required, got %v", err)
+	}
+}
+
+func TestAppsHTMLPublish_RequiresPath(t *testing.T) {
+	factory, stdout, _ := newAppsExecuteFactory(t)
+	err := runAppsShortcut(t, AppsHTMLPublish,
+		[]string{"+html-publish", "--app-id", "app_x"}, factory, stdout)
+	if err == nil || !strings.Contains(err.Error(), "path") {
+		t.Fatalf("expected --path required, got %v", err)
+	}
+}
+
+func TestAppsHTMLPublish_DryRunPrintsManifest(t *testing.T) {
+	// 这个用例走真实 shortcut → 真实 LocalFileIO（cwd-bounded）。
+	// 必须 chdir 进 tmp 用相对路径，否则 SafeInputPath 会拒绝绝对 --path。
+	dir := t.TempDir()
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(cwd) })
+	if err := os.MkdirAll(filepath.Join(dir, "dist"), 0o755); err != nil {
+		t.Fatalf("mkdir dist: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "dist", "index.html"), []byte("<html></html>"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	factory, stdout, _ := newAppsExecuteFactory(t)
+	if err := runAppsShortcut(t, AppsHTMLPublish,
+		[]string{"+html-publish", "--app-id", "app_x", "--path", "./dist", "--dry-run", "--as", "user"},
+		factory, stdout); err != nil {
+		t.Fatalf("dry-run err=%v", err)
+	}
+	got := stdout.String()
+	if !strings.Contains(got, "/open-apis/spark/v1/apps/app_x/pre_release") {
+		t.Fatalf("dry-run missing pre_release endpoint: %s", got)
+	}
+	if !strings.Contains(got, "presigned_upload_url") {
+		t.Fatalf("dry-run missing TOS PUT step: %s", got)
+	}
+	if !strings.Contains(got, "/open-apis/spark/v1/apps/app_x/releases") {
+		t.Fatalf("dry-run missing release-create endpoint: %s", got)
+	}
+	if !strings.Contains(got, "tos_path") {
+		t.Fatalf("dry-run missing tos_path in release-create body: %s", got)
+	}
+	if !strings.Contains(got, "index.html") {
+		t.Fatalf("dry-run missing file list: %s", got)
+	}
+}
+
+// TestAppsHTMLPublish_CleanCwdIsAllowed pins the post-PR behavior change:
+// --path "." is no longer hard-rejected by Validate. A clean cwd (no
+// credential files) is a valid publish target.
+func TestAppsHTMLPublish_CleanCwdIsAllowed(t *testing.T) {
+	dir := t.TempDir()
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(cwd) })
+	if err := os.WriteFile(filepath.Join(dir, "index.html"), []byte("<html></html>"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	factory, stdout, _ := newAppsExecuteFactory(t)
+	if err := runAppsShortcut(t, AppsHTMLPublish,
+		[]string{"+html-publish", "--app-id", "app_x", "--path", ".", "--dry-run", "--as", "user"},
+		factory, stdout); err != nil {
+		t.Fatalf("dry-run with --path . should pass when cwd is clean, got err=%v", err)
+	}
+}
+
+// TestAppsHTMLPublish_SensitiveBlocksValidate pins the new behavior: a credential
+// file under --path causes Validate to reject before either DryRun or Execute
+// runs, so dry-run also returns non-zero (unlike the previous advisory-warning
+// model).
+func TestAppsHTMLPublish_SensitiveBlocksValidate(t *testing.T) {
+	dir := t.TempDir()
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(cwd) })
+	if err := os.MkdirAll(filepath.Join(dir, "dist"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "dist", "index.html"), []byte("<html></html>"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "dist", ".env"), []byte("API_KEY=secret"), 0o644); err != nil {
+		t.Fatalf("write .env: %v", err)
+	}
+
+	// Dry-run path: must also fail (this is the whole point of moving the
+	// check into Validate — dry-run can no longer say "OK" when Execute would
+	// reject).
+	factory, stdout, _ := newAppsExecuteFactory(t)
+	err = runAppsShortcut(t, AppsHTMLPublish,
+		[]string{"+html-publish", "--app-id", "app_x", "--path", "./dist", "--dry-run", "--as", "user"},
+		factory, stdout)
+	if err == nil {
+		t.Fatalf("dry-run with sensitive file should fail")
+	}
+	problem := requireAppsValidationProblem(t, err)
+	if !strings.Contains(problem.Message, ".env") {
+		t.Fatalf("error message should list the offending file, got %q", problem.Message)
+	}
+	if !strings.Contains(problem.Hint, "--allow-sensitive") {
+		t.Fatalf("error hint should mention --allow-sensitive escape hatch, got %q", problem.Hint)
+	}
+}
+
+// TestAppsHTMLPublish_AllowSensitiveOverride pins that --allow-sensitive
+// bypasses the credential-file check (legitimate cases like a docs site
+// shipping an example .env on purpose).
+func TestAppsHTMLPublish_AllowSensitiveOverride(t *testing.T) {
+	dir := t.TempDir()
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(cwd) })
+	if err := os.MkdirAll(filepath.Join(dir, "dist"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "dist", "index.html"), []byte("<html></html>"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "dist", ".env.example"), []byte("API_KEY=replace-me"), 0o644); err != nil {
+		t.Fatalf("write .env.example: %v", err)
+	}
+
+	factory, stdout, _ := newAppsExecuteFactory(t)
+	if err := runAppsShortcut(t, AppsHTMLPublish,
+		[]string{"+html-publish", "--app-id", "app_x", "--path", "./dist", "--dry-run", "--allow-sensitive", "--as", "user"},
+		factory, stdout); err != nil {
+		t.Fatalf("--allow-sensitive should bypass the credential scan, got err=%v", err)
+	}
+	got := stdout.String()
+	// Dry-run output surfaces the waived list so the caller still sees what
+	// was let through.
+	if !strings.Contains(got, "sensitive_waived") {
+		t.Fatalf("dry-run output should record the waived credential file under --allow-sensitive, got: %s", got)
+	}
+	if !strings.Contains(got, ".env.example") {
+		t.Fatalf("waived list should name the file, got: %s", got)
+	}
+}
+
+// TestAppsHTMLPublish_SensitiveBlocksWhenPathIsCredentialParentDir pins that
+// the credential-file scan still rejects when --path itself is the
+// conventional parent dir (e.g. ./.aws, ./.docker, ./.kube). Without joining
+// the candidate back to its absolute path, walker would strip the parent
+// segment via filepath.Rel and the cloud-SDK matchers — which anchor on
+// parent/file pairs — would silently pass.
+func TestAppsHTMLPublish_SensitiveBlocksWhenPathIsCredentialParentDir(t *testing.T) {
+	cases := []struct {
+		name       string
+		parent     string
+		fileName   string
+		wantSubstr string
+	}{
+		{"aws_credentials", ".aws", "credentials", "credentials"},
+		{"docker_config_json", ".docker", "config.json", "config.json"},
+		{"kube_config", ".kube", "config", "config"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			cwd, err := os.Getwd()
+			if err != nil {
+				t.Fatalf("getwd: %v", err)
+			}
+			if err := os.Chdir(dir); err != nil {
+				t.Fatalf("chdir: %v", err)
+			}
+			t.Cleanup(func() { _ = os.Chdir(cwd) })
+			root := filepath.Join(dir, tc.parent)
+			if err := os.MkdirAll(root, 0o755); err != nil {
+				t.Fatalf("mkdir: %v", err)
+			}
+			if err := os.WriteFile(filepath.Join(root, tc.fileName), []byte("fake credential"), 0o600); err != nil {
+				t.Fatalf("write: %v", err)
+			}
+			if err := os.WriteFile(filepath.Join(root, "index.html"), []byte("<html></html>"), 0o644); err != nil {
+				t.Fatalf("write index: %v", err)
+			}
+
+			factory, stdout, _ := newAppsExecuteFactory(t)
+			err = runAppsShortcut(t, AppsHTMLPublish,
+				[]string{"+html-publish", "--app-id", "app_x", "--path", "./" + tc.parent, "--dry-run", "--as", "user"},
+				factory, stdout)
+			if err == nil {
+				t.Fatalf("expected rejection when --path is %s/ (would leak %s), got success", tc.parent, tc.fileName)
+			}
+			problem := requireAppsValidationProblem(t, err)
+			if !strings.Contains(problem.Message, tc.wantSubstr) {
+				t.Fatalf("error message should name the leaked file, got %q", problem.Message)
+			}
+		})
+	}
+}
+
+// TestAppsHTMLPublish_SensitiveBlocksWhenPathIsCredentialFileItself pins the
+// single-file form: --path pointing directly at a credential file (e.g.
+// ./.aws/credentials) must also reject. Walker's single-file branch sets
+// RelPath = filepath.Base(rootPath), so the .aws segment is lost the same way.
+func TestAppsHTMLPublish_SensitiveBlocksWhenPathIsCredentialFileItself(t *testing.T) {
+	dir := t.TempDir()
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(cwd) })
+	if err := os.MkdirAll(filepath.Join(dir, ".aws"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".aws", "credentials"), []byte("fake credential"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	factory, stdout, _ := newAppsExecuteFactory(t)
+	err = runAppsShortcut(t, AppsHTMLPublish,
+		[]string{"+html-publish", "--app-id", "app_x", "--path", "./.aws/credentials", "--dry-run", "--as", "user"},
+		factory, stdout)
+	if err == nil {
+		t.Fatalf("expected rejection when --path points directly at .aws/credentials, got success")
+	}
+	problem := requireAppsValidationProblem(t, err)
+	if !strings.Contains(problem.Message, "credentials") {
+		t.Fatalf("error message should name the leaked file, got %q", problem.Message)
+	}
+}
+
+// TestSensitiveCandidatesError_Truncation pins the inline-list truncation so a
+// payload with many credential files (e.g. an accidentally-copied tree of
+// per-stage .env.* files) produces a readable, length-bounded error.
+func TestSensitiveCandidatesError_Truncation(t *testing.T) {
+	hits := []string{"a.env", "b.env", "c.env", "d.env", "e.env", "f.env", "g.env"}
+	err := sensitiveCandidatesError(hits)
+	msg := requireAppsValidationProblem(t, err).Message
+	if !strings.Contains(msg, "7 credential file(s)") {
+		t.Fatalf("message should report the full count, got %q", msg)
+	}
+	if !strings.Contains(msg, "and 2 more") {
+		t.Fatalf("message should truncate beyond %d entries, got %q", maxSensitiveListInError, msg)
+	}
+	// Pin: the truncated tail is NOT spelled out.
+	if strings.Contains(msg, "g.env") {
+		t.Fatalf("message should not list entries past the truncation, got %q", msg)
+	}
+}
+
+func TestRunHTMLPublish_RejectsOversizeRawCandidates(t *testing.T) {
+	orig := maxHTMLPublishRawBytes
+	maxHTMLPublishRawBytes = 100
+	defer func() { maxHTMLPublishRawBytes = orig }()
+
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "index.html"), []byte("<html></html>"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "big.html"), []byte(strings.Repeat("x", 4096)), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	_, err := prepareHTMLPublishTarball(newTestFIO(), dir)
+	if err == nil {
+		t.Fatalf("expected raw-size cap to fire")
+	}
+	problem := requireAppsValidationProblem(t, err)
+	if !strings.Contains(problem.Message, "raw") || !strings.Contains(problem.Message, "bytes") {
+		t.Fatalf("expected message to explain raw-byte cap, got %q", problem.Message)
+	}
+}
+
+func TestOversizeHTMLFiles(t *testing.T) {
+	orig := maxHTMLPublishSingleHTMLFileBytes
+	maxHTMLPublishSingleHTMLFileBytes = 100
+	defer func() { maxHTMLPublishSingleHTMLFileBytes = orig }()
+
+	cands := []htmlPublishCandidate{
+		{RelPath: "index.html", Size: 50},
+		{RelPath: "big.html", Size: 4096},
+		{RelPath: "BIG.HTML", Size: 4096}, // 大小写不敏感
+		{RelPath: "huge.png", Size: 9000}, // 非 .html，忽略
+	}
+	hits := oversizeHTMLFiles(cands)
+	if len(hits) != 2 {
+		t.Fatalf("hits=%v, want [big.html BIG.HTML]", hits)
+	}
+	for _, h := range hits {
+		if h == "huge.png" || h == "index.html" {
+			t.Fatalf("unexpected hit %q", h)
+		}
+	}
+}
+
+func TestMaxHTMLPublishSingleHTMLFileBytes_Default(t *testing.T) {
+	if maxHTMLPublishSingleHTMLFileBytes != 10*1024*1024 {
+		t.Fatalf("default=%d, want %d (10MiB)", maxHTMLPublishSingleHTMLFileBytes, 10*1024*1024)
+	}
+}
+
+func TestRunHTMLPublish_RejectsOversizeHTMLFile(t *testing.T) {
+	orig := maxHTMLPublishSingleHTMLFileBytes
+	maxHTMLPublishSingleHTMLFileBytes = 100
+	defer func() { maxHTMLPublishSingleHTMLFileBytes = orig }()
+
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "index.html"), []byte("<html></html>"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "big.html"), []byte(strings.Repeat("x", 4096)), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	_, err := prepareHTMLPublishTarball(newTestFIO(), dir)
+	if err == nil {
+		t.Fatalf("expected per-file oversize error")
+	}
+	problem := requireAppsValidationProblem(t, err)
+	if !strings.Contains(problem.Message, "big.html") || !strings.Contains(problem.Message, "10MB") {
+		t.Fatalf("message=%q, want contains 'big.html' and '10MB'", problem.Message)
+	}
+	if problem.Hint == "" {
+		t.Fatalf("expected non-empty hint")
+	}
+}
+
+func TestPrepareHTMLPublishTarball_IgnoresOversizeNonHTML(t *testing.T) {
+	orig := maxHTMLPublishSingleHTMLFileBytes
+	maxHTMLPublishSingleHTMLFileBytes = 100
+	defer func() { maxHTMLPublishSingleHTMLFileBytes = orig }()
+
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "index.html"), []byte("<html></html>"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "big.png"), []byte(strings.Repeat("x", 4096)), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	tarball, err := prepareHTMLPublishTarball(newTestFIO(), dir)
+	if err != nil {
+		t.Fatalf("non-html oversize must not be blocked by the .html cap: %v", err)
+	}
+	if tarball == nil || tarball.Size == 0 {
+		t.Fatalf("expected non-empty tarball")
+	}
+}
+
+// ── runHTMLPublishTOS tests ──
+
+// permissiveFIOProvider wraps permissiveFIO as a fileio.Provider for tests
+// that call runHTMLPublishTOS (which obtains FileIO via rctx.FileIO()).
+type permissiveFIOProvider struct{}
+
+func (permissiveFIOProvider) Name() string                                { return "test-permissive" }
+func (permissiveFIOProvider) ResolveFileIO(context.Context) fileio.FileIO { return permissiveFIO{} }
+
+// newTOSTestRuntime builds a RuntimeContext with httpmock registry and a
+// permissive FileIO provider, ready for runHTMLPublishTOS unit tests.
+func newTOSTestRuntime(t *testing.T) (*common.RuntimeContext, *httpmock.Registry) {
+	t.Helper()
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("LARKSUITE_CLI_CONFIG_DIR", t.TempDir())
+	cfg := &core.CliConfig{
+		AppID:      "test-app-" + strings.ToLower(t.Name()),
+		AppSecret:  "test-secret",
+		Brand:      core.BrandFeishu,
+		UserOpenId: "ou_test",
+	}
+	factory, _, _, reg := cmdutil.TestFactory(t, cfg)
+	factory.FileIOProvider = permissiveFIOProvider{}
+	rt := common.TestNewRuntimeContextForAPI(
+		context.Background(),
+		&cobra.Command{Use: "+tos-test"},
+		cfg, factory, core.AsUser,
+	)
+	return rt, reg
+}
+
+// registerAppTypeStub registers the GET /apps/{id} stub that the app_type
+// precheck at the top of runHTMLPublishTOS issues via queryAppType. appType is
+// the uppercase server value ("HTML", "FULL_STACK", ...); queryAppType
+// normalizes it to lowercase. httpmock matches a stub when the request URL
+// contains stub.URL (strings.Contains). queryAppType requests the bare
+// /apps/{id} path, which cannot contain a longer /apps/{id}/pre_release or
+// /apps/{id}/releases stub URL, so it only ever matches this app_type stub —
+// resolution stays unambiguous regardless of registration order.
+func registerAppTypeStub(reg *httpmock.Registry, appID, appType string) {
+	reg.Register(&httpmock.Stub{
+		Method: "GET",
+		URL:    "/open-apis/spark/v1/apps/" + appID,
+		Body: map[string]interface{}{
+			"code": float64(0),
+			"data": map[string]interface{}{
+				"app": map[string]interface{}{
+					"app_id":   appID,
+					"app_type": appType,
+				},
+			},
+		},
+	})
+}
+
+// failIfCalled returns an OnMatch hook that fails the test if a stub is hit,
+// proving the app_type precheck short-circuited before that downstream step.
+func failIfCalled(t *testing.T, step string) func(*http.Request) {
+	t.Helper()
+	return func(*http.Request) { t.Errorf("precheck should have rejected before %s", step) }
+}
+
+func TestRunHTMLPublishTOS_RejectsFullStack(t *testing.T) {
+	rt, reg := newTOSTestRuntime(t)
+	registerAppTypeStub(reg, "app_tos", "FULL_STACK")
+	reg.Register(&httpmock.Stub{
+		Method: "GET", URL: "/apps/app_tos/pre_release",
+		Optional: true,
+		OnMatch:  failIfCalled(t, "pre_release"),
+		Body:     map[string]interface{}{"code": float64(0)},
+	})
+	reg.Register(&httpmock.Stub{
+		Method: "POST", URL: "/apps/app_tos/releases",
+		Optional: true,
+		OnMatch:  failIfCalled(t, "release-create"),
+		Body:     map[string]interface{}{"code": float64(0)},
+	})
+
+	// A nonexistent --path proves the precheck short-circuits before any
+	// packaging: if the precheck ever moved below prepareHTMLPublishTarball,
+	// walkHTMLPublishCandidates would fail first with a different (non
+	// FailedPrecondition) error and this test would break.
+	missing := filepath.Join(t.TempDir(), "does-not-exist")
+	_, err := runHTMLPublishTOS(context.Background(), rt, appsHTMLPublishSpec{AppID: "app_tos", Path: missing})
+	problem := requireAppsProblem(t, err, errs.CategoryValidation)
+	if problem.Subtype != errs.SubtypeFailedPrecondition {
+		t.Fatalf("subtype=%q, want %q", problem.Subtype, errs.SubtypeFailedPrecondition)
+	}
+	if !strings.Contains(problem.Message, "full_stack") {
+		t.Fatalf("message should name the rejected app_type, got %q", problem.Message)
+	}
+	if !strings.Contains(problem.Hint, "+release-create") {
+		t.Fatalf("hint should redirect to +release-create, got %q", problem.Hint)
+	}
+	if !strings.Contains(problem.Hint, "+release-create --help") || !strings.Contains(problem.Hint, "full_stack example") {
+		t.Fatalf("hint must route through the app-type-aware release help, got %q", problem.Hint)
+	}
+	if strings.Contains(problem.Hint, "--apply-reason") {
+		t.Fatalf("+html-publish must not own the release-reason policy, got %q", problem.Hint)
+	}
+}
+
+func TestRunHTMLPublishTOS_RejectsFrontend(t *testing.T) {
+	rt, reg := newTOSTestRuntime(t)
+	registerAppTypeStub(reg, "app_tos", "FRONTEND")
+	reg.Register(&httpmock.Stub{
+		Method: "GET", URL: "/apps/app_tos/pre_release",
+		Optional: true,
+		OnMatch:  failIfCalled(t, "pre_release"),
+		Body:     map[string]interface{}{"code": float64(0)},
+	})
+
+	// Nonexistent --path: see the rationale in TestRunHTMLPublishTOS_RejectsFullStack.
+	missing := filepath.Join(t.TempDir(), "does-not-exist")
+	_, err := runHTMLPublishTOS(context.Background(), rt, appsHTMLPublishSpec{AppID: "app_tos", Path: missing})
+	problem := requireAppsProblem(t, err, errs.CategoryValidation)
+	if problem.Subtype != errs.SubtypeFailedPrecondition {
+		t.Fatalf("subtype=%q, want %q", problem.Subtype, errs.SubtypeFailedPrecondition)
+	}
+	if !strings.Contains(problem.Message, "frontend") {
+		t.Fatalf("message should name the rejected app_type, got %q", problem.Message)
+	}
+	if !strings.Contains(problem.Hint, "+release-create --help") || !strings.Contains(problem.Hint, "frontend example") {
+		t.Fatalf("hint must route through the app-type-aware release help, got %q", problem.Hint)
+	}
+	if strings.Contains(problem.Hint, "--apply-reason") {
+		t.Fatalf("+html-publish must not own the release-reason policy, got %q", problem.Hint)
+	}
+}
+
+func TestRunHTMLPublishTOS_AllowsModernHTML(t *testing.T) {
+	site := writeAppsSampleSite(t)
+	rt, reg := newTOSTestRuntime(t)
+	registerAppTypeStub(reg, "app_tos", "MODERN_HTML")
+
+	tosServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer tosServer.Close()
+
+	reg.Register(&httpmock.Stub{
+		Method: "GET",
+		URL:    "/open-apis/spark/v1/apps/app_tos/pre_release",
+		Body: map[string]interface{}{
+			"code": float64(0),
+			"data": map[string]interface{}{
+				"kvs": []interface{}{
+					map[string]interface{}{"key": "upload_url", "value": tosServer.URL},
+					map[string]interface{}{"key": "tos_path", "value": "tos://bucket/key"},
+				},
+			},
+		},
+	})
+	reg.Register(&httpmock.Stub{
+		Method: "POST",
+		URL:    "/open-apis/spark/v1/apps/app_tos/releases",
+		Body: map[string]interface{}{
+			"code": float64(0),
+			"data": map[string]interface{}{"release_id": "rel_mh", "status": "publishing"},
+		},
+	})
+
+	out, err := runHTMLPublishTOS(context.Background(), rt, appsHTMLPublishSpec{AppID: "app_tos", Path: site})
+	if err != nil {
+		t.Fatalf("modern_html should be publishable, got err=%v", err)
+	}
+	if out["release_id"] != "rel_mh" {
+		t.Fatalf("release_id=%v, want rel_mh", out["release_id"])
+	}
+}
+
+func TestRunHTMLPublishTOS_AppNotExist(t *testing.T) {
+	site := writeAppsSampleSite(t)
+	rt, reg := newTOSTestRuntime(t)
+	// queryAppType resolves the app first; a non-existent app surfaces the
+	// backend "app not exist" business code (400002577). The precheck must
+	// translate it into the actionable +list hint (#8), not leak the raw code.
+	reg.Register(&httpmock.Stub{
+		Method: "GET",
+		URL:    "/open-apis/spark/v1/apps/app_tos",
+		Body:   map[string]interface{}{"code": float64(400002577), "msg": "app not exist"},
+	})
+
+	_, err := runHTMLPublishTOS(context.Background(), rt, appsHTMLPublishSpec{AppID: "app_tos", Path: site})
+	if err == nil {
+		t.Fatalf("expected error for non-existent app")
+	}
+	problem, ok := errs.ProblemOf(err)
+	if !ok {
+		t.Fatalf("expected typed problem, got %T: %v", err, err)
+	}
+	if !strings.Contains(problem.Hint, "+list") {
+		t.Fatalf("hint should point to +list to find the right app_id, got %q", problem.Hint)
+	}
+}
+
+// TestRunHTMLPublishTOS_ReleaseAppTypeErrorTranslated pins the defense-in-depth
+// layer: the app_type precheck passes (HTML), pre_release and TOS upload
+// succeed, but release-create still returns the app_type business code
+// (400000059) — e.g. the type changed mid-flight. The opaque code must be
+// translated into the actionable +release-create hint rather than bubbling raw.
+func TestRunHTMLPublishTOS_ReleaseAppTypeErrorTranslated(t *testing.T) {
+	site := writeAppsSampleSite(t)
+	rt, reg := newTOSTestRuntime(t)
+	registerAppTypeStub(reg, "app_tos", "HTML")
+
+	tosServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer tosServer.Close()
+
+	reg.Register(&httpmock.Stub{
+		Method: "GET",
+		URL:    "/open-apis/spark/v1/apps/app_tos/pre_release",
+		Body: map[string]interface{}{
+			"code": float64(0),
+			"data": map[string]interface{}{
+				"kvs": []interface{}{
+					map[string]interface{}{"key": "upload_url", "value": tosServer.URL},
+					map[string]interface{}{"key": "tos_path", "value": "tos://bucket/key"},
+				},
+			},
+		},
+	})
+	reg.Register(&httpmock.Stub{
+		Method: "POST",
+		URL:    "/open-apis/spark/v1/apps/app_tos/releases",
+		Body:   map[string]interface{}{"code": float64(400000059), "msg": "app_type invalid"},
+	})
+
+	_, err := runHTMLPublishTOS(context.Background(), rt, appsHTMLPublishSpec{AppID: "app_tos", Path: site})
+	if err == nil {
+		t.Fatalf("expected error from release-create app_type rejection")
+	}
+	problem, ok := errs.ProblemOf(err)
+	if !ok {
+		t.Fatalf("expected typed problem, got %T: %v", err, err)
+	}
+	if !strings.Contains(problem.Hint, "+release-create") {
+		t.Fatalf("release-create app_type rejection should be translated to a +release-create hint, got %q", problem.Hint)
+	}
+	if !strings.Contains(problem.Hint, "+release-create --help") || !strings.Contains(problem.Hint, "confirm the current app type") {
+		t.Fatalf("release-create app_type rejection must route through app-type-aware help, got %q", problem.Hint)
+	}
+	if strings.Contains(problem.Hint, "--apply-reason") {
+		t.Fatalf("+html-publish must not own the release-reason policy, got %q", problem.Hint)
+	}
+}
+
+func TestRunHTMLPublishTOS_Success(t *testing.T) {
+	site := writeAppsSampleSite(t)
+	rt, reg := newTOSTestRuntime(t)
+	registerAppTypeStub(reg, "app_tos", "HTML")
+
+	// Start httptest server to accept the TOS upload.
+	tosServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPut {
+			t.Errorf("TOS upload method = %s, want PUT", r.Method)
+		}
+		if ct := r.Header.Get("Content-Type"); ct != "application/gzip" {
+			t.Errorf("TOS upload Content-Type = %s, want application/gzip", ct)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer tosServer.Close()
+
+	// Register pre_release API stub.
+	reg.Register(&httpmock.Stub{
+		Method: "GET",
+		URL:    "/open-apis/spark/v1/apps/app_tos/pre_release",
+		Body: map[string]interface{}{
+			"code": float64(0),
+			"data": map[string]interface{}{
+				"kvs": []interface{}{
+					map[string]interface{}{"key": "upload_url", "value": tosServer.URL},
+					map[string]interface{}{"key": "tos_path", "value": "tos://bucket/key"},
+				},
+			},
+		},
+	})
+
+	// Register release-create API stub.
+	releaseStub := &httpmock.Stub{
+		Method: "POST",
+		URL:    "/open-apis/spark/v1/apps/app_tos/releases",
+		Body: map[string]interface{}{
+			"code": float64(0),
+			"data": map[string]interface{}{
+				"release_id": "rel_123",
+				"status":     "publishing",
+			},
+		},
+	}
+	reg.Register(releaseStub)
+
+	out, err := runHTMLPublishTOS(context.Background(), rt, appsHTMLPublishSpec{
+		AppID: "app_tos",
+		Path:  site,
+	})
+	if err != nil {
+		t.Fatalf("err=%v", err)
+	}
+	if out["release_id"] != "rel_123" {
+		t.Fatalf("release_id=%v, want rel_123", out["release_id"])
+	}
+	var releaseBody map[string]interface{}
+	if err := json.Unmarshal(releaseStub.CapturedBody, &releaseBody); err != nil {
+		t.Fatalf("decode release body: %v", err)
+	}
+	if len(releaseBody) != 1 || releaseBody["tos_path"] != "tos://bucket/key" {
+		t.Fatalf("html release body=%v, want only tos_path", releaseBody)
+	}
+	if _, ok := releaseBody["apply_reason"]; ok {
+		t.Fatalf("html release body must omit apply_reason: %v", releaseBody)
+	}
+}
+
+func TestRunHTMLPublishTOS_MissingIndexHTML(t *testing.T) {
+	dir := t.TempDir()
+	// Create a file that is NOT named index.html.
+	if err := os.WriteFile(filepath.Join(dir, "foo.html"), []byte("<html></html>"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	rt, reg := newTOSTestRuntime(t)
+	registerAppTypeStub(reg, "app_tos", "HTML")
+	_, err := runHTMLPublishTOS(context.Background(), rt, appsHTMLPublishSpec{
+		AppID: "app_tos",
+		Path:  dir,
+	})
+	if err == nil {
+		t.Fatalf("expected error for missing index.html")
+	}
+	if !strings.Contains(err.Error(), "index.html") {
+		t.Fatalf("error should mention index.html, got: %v", err)
+	}
+}
+
+func TestRunHTMLPublishTOS_PreReleaseError(t *testing.T) {
+	site := writeAppsSampleSite(t)
+	rt, reg := newTOSTestRuntime(t)
+	registerAppTypeStub(reg, "app_tos", "HTML")
+
+	// Register pre_release API stub that returns an error code.
+	reg.Register(&httpmock.Stub{
+		Method: "GET",
+		URL:    "/open-apis/spark/v1/apps/app_tos/pre_release",
+		Body: map[string]interface{}{
+			"code": float64(99999),
+			"msg":  "internal server error",
+		},
+	})
+
+	_, err := runHTMLPublishTOS(context.Background(), rt, appsHTMLPublishSpec{
+		AppID: "app_tos",
+		Path:  site,
+	})
+	if err == nil {
+		t.Fatalf("expected error from pre_release API failure")
+	}
+}
+
+func TestRunHTMLPublishTOS_MissingParams(t *testing.T) {
+	site := writeAppsSampleSite(t)
+	rt, reg := newTOSTestRuntime(t)
+	registerAppTypeStub(reg, "app_tos", "HTML")
+
+	// Register pre_release API stub that returns empty kvs list.
+	reg.Register(&httpmock.Stub{
+		Method: "GET",
+		URL:    "/open-apis/spark/v1/apps/app_tos/pre_release",
+		Body: map[string]interface{}{
+			"code": float64(0),
+			"data": map[string]interface{}{
+				"kvs": []interface{}{},
+			},
+		},
+	})
+
+	_, err := runHTMLPublishTOS(context.Background(), rt, appsHTMLPublishSpec{
+		AppID: "app_tos",
+		Path:  site,
+	})
+	if err == nil {
+		t.Fatalf("expected error for empty kvs")
+	}
+	problem := requireAppsProblem(t, err, errs.CategoryInternal)
+	if !strings.Contains(problem.Message, "no kvs") {
+		t.Fatalf("error should mention 'no kvs', got: %q", problem.Message)
+	}
+}
+
+func TestRunHTMLPublishTOS_MissingParamsObject(t *testing.T) {
+	site := writeAppsSampleSite(t)
+	rt, reg := newTOSTestRuntime(t)
+	registerAppTypeStub(reg, "app_tos", "HTML")
+
+	// Register pre_release API stub that returns no kvs key at all.
+	reg.Register(&httpmock.Stub{
+		Method: "GET",
+		URL:    "/open-apis/spark/v1/apps/app_tos/pre_release",
+		Body: map[string]interface{}{
+			"code": float64(0),
+			"data": map[string]interface{}{},
+		},
+	})
+
+	_, err := runHTMLPublishTOS(context.Background(), rt, appsHTMLPublishSpec{
+		AppID: "app_tos",
+		Path:  site,
+	})
+	if err == nil {
+		t.Fatalf("expected error for missing kvs")
+	}
+	problem := requireAppsProblem(t, err, errs.CategoryInternal)
+	if !strings.Contains(problem.Message, "no kvs") {
+		t.Fatalf("error should mention 'no kvs', got: %q", problem.Message)
+	}
+}
+
+func TestRunHTMLPublishTOS_UploadFails(t *testing.T) {
+	site := writeAppsSampleSite(t)
+	rt, reg := newTOSTestRuntime(t)
+	registerAppTypeStub(reg, "app_tos", "HTML")
+
+	// Start httptest server that returns 500.
+	tosServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer tosServer.Close()
+
+	reg.Register(&httpmock.Stub{
+		Method: "GET",
+		URL:    "/open-apis/spark/v1/apps/app_tos/pre_release",
+		Body: map[string]interface{}{
+			"code": float64(0),
+			"data": map[string]interface{}{
+				"kvs": []interface{}{
+					map[string]interface{}{"key": "upload_url", "value": tosServer.URL},
+					map[string]interface{}{"key": "tos_path", "value": "tos://bucket/key"},
+				},
+			},
+		},
+	})
+
+	_, err := runHTMLPublishTOS(context.Background(), rt, appsHTMLPublishSpec{
+		AppID: "app_tos",
+		Path:  site,
+	})
+	if err == nil {
+		t.Fatalf("expected error from TOS upload failure")
+	}
+	problem := requireAppsProblem(t, err, errs.CategoryNetwork)
+	if !strings.Contains(problem.Message, "500") {
+		t.Fatalf("error should mention HTTP 500, got: %q", problem.Message)
+	}
+}
