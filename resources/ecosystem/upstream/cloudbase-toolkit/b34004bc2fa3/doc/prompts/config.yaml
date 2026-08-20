@@ -1,0 +1,378 @@
+categories:
+  - id: auth
+    label: 身份认证
+    order: 1
+  - id: database
+    label: 数据库
+    order: 2
+  - id: backend
+    label: 后端开发
+    order: 3
+  - id: frontend
+    label: 应用集成
+    order: 4
+  - id: ai
+    label: AI
+    order: 5
+  - id: tools
+    label: 开发工具
+    order: 6
+
+rules:
+  
+  - id: auth-tool-cloudbase
+    title: 身份认证：配置管理
+    description: 配置和管理 CloudBase 认证提供商，启用/禁用登录方式（短信、邮箱、微信、Google、匿名、用户名密码等）
+    shortDescription: 配置管理认证提供商
+    category: auth
+    order: 1
+    prompts:
+      - "在 CloudBase 控制台帮我配置短信登录方式"
+      - "在 CloudBase 中启用邮箱验证码登录"
+      - "在 CloudBase 中配置微信开放平台登录"
+      - "在 CloudBase 中设置匿名登录功能"
+  
+  - id: auth-web-cloudbase
+    title: 身份认证：Web SDK
+    description: 使用 CloudBase Web SDK 进行前端身份认证
+    shortDescription: Web SDK 身份认证
+    category: auth
+    order: 2
+    prompts:
+      - "帮我实现一个 Web 登录页面，使用 CloudBase Auth"
+      - "在 Web 应用中创建一个使用 CloudBase Auth 的手机号注册和登录功能"
+  
+  - id: auth-wechat-miniprogram
+    title: 身份认证：微信小程序
+    description: 微信小程序中使用 CloudBase Auth 进行身份认证
+    shortDescription: 微信小程序身份认证
+    category: auth
+    order: 3
+    prompts:
+      - "在微信小程序中使用 CloudBase Auth 实现用户登录功能"
+      - "创建一个使用 CloudBase Auth 支持微信登录的小程序应用"
+  
+  - id: auth-http-api
+    title: 身份认证：App 集成
+    description: 使用 CloudBase HTTP API 进行身份认证，适用于 Android、iOS、Cocos、Flutter、React Native 等原生应用和框架
+    shortDescription: Android、iOS 原生应用
+    category: auth
+    order: 4
+    ruleDir: http-api-cloudbase
+    prompts:
+      - "在 Android 应用中使用 CloudBase HTTP API 实现用户登录功能"
+      - "在 iOS 应用中使用 CloudBase HTTP API 实现用户注册和登录"
+
+  - id: auth-nodejs-cloudbase
+    title: 身份认证：Node.js 服务端
+    description: 使用 CloudBase Node SDK 进行服务端身份认证
+    shortDescription: Node.js 服务端身份认证
+    category: auth
+    order: 5
+    prompts:
+      - "帮我实现一个云函数，验证用户身份并获取用户信息"
+      - "创建一个 Node.js 后端服务，使用 CloudBase Auth 进行用户认证"
+  
+  - id: cloudbase-document-database-web-sdk
+    title: 文档数据库：Web SDK
+    description: 使用 CloudBase 文档数据库 Web SDK 进行数据操作
+    shortDescription: Web SDK 文档数据库
+    category: database
+    order: 1
+    prompts:
+      - "帮我创建一个待办事项应用，使用 CloudBase 文档数据库存储数据"
+      - "在 Web 应用中使用 CloudBase 文档数据库实现分页查询和复杂查询功能"
+  
+  - id: cloudbase-document-database-in-wechat-miniprogram
+    title: 文档数据库：小程序 SDK
+    description: 微信小程序中使用 CloudBase 文档数据库 SDK
+    shortDescription: 小程序 SDK 文档数据库
+    category: database
+    order: 2
+    prompts:
+      - "在微信小程序中使用 CloudBase 文档数据库实现数据查询和更新"
+      - "创建一个使用 CloudBase 文档数据库的小程序应用"
+  
+  - id: relational-database-mcp-cloudbase
+    title: 关系型数据库：工具与规则
+    description: 操作 CloudBase 关系型数据库的工具和规则,支持[连接自有数据库](https://docs.cloudbase.net/database/configuration/db/hosted-mysql/init)
+    shortDescription: MySQL 关系型数据库
+    category: database
+    order: 3
+    prompts:
+      - "在 CloudBase 关系型数据库中帮我创建一个用户表并设置权限"
+      - "在 CloudBase 关系型数据库中执行 SQL 查询和更新操作"
+  
+  - id: relational-database-web-cloudbase
+    title: 关系型数据库：Web SDK
+    description: 在 Web 应用中使用 CloudBase 关系型数据库,支持[连接自有数据库](https://docs.cloudbase.net/database/configuration/db/hosted-mysql/init)
+    shortDescription: Web SDK 关系型数据库
+    category: database
+    order: 4
+    prompts:
+      - "帮我创建一个使用 CloudBase 关系型数据库的 Web 应用"
+      - "在 Web 应用中使用 CloudBase 关系型数据库 SDK 实现数据查询和操作"
+
+  - id: data-model-creation
+    title: 数据库：数据模型创建
+    description: 使用 AI 创建复杂数据模型
+    shortDescription: 复杂数据模型设计
+    category: database
+    order: 5
+    prompts:
+      - "帮我创建一个用户和订单的数据模型"
+      - "设计一个博客系统的数据模型"
+  
+  - id: database-http-api
+    title: 数据库：App 集成
+    description: 使用 CloudBase HTTP API 进行数据库操作，适用于 Android、iOS 等原生应用
+    shortDescription: Android、iOS 原生应用
+    category: database
+    order: 6
+    ruleDir: http-api-cloudbase
+    prompts:
+      - "在 Android 应用中使用 CloudBase HTTP API 实现数据查询和更新"
+      - "在 iOS 应用中使用 CloudBase HTTP API 实现数据库操作"
+  
+  - id: postgresql-development-cloudbase
+    title: 关系型数据库：PostgreSQL
+    description: 使用 CloudBase PostgreSQL（PG 模式）设计表结构、通过 JS SDK 或 MCP 工具读写数据、配置权限，并落地 Web 后台管理场景
+    shortDescription: PostgreSQL 开发与调试
+    category: database
+    order: 7
+    prompts:
+      - "帮我在 CloudBase PostgreSQL 中设计用户表并配置权限"
+      - "在 Web 应用中使用 CloudBase PostgreSQL 的 JS SDK 实现数据增删改查"
+      - "帮我排查 CloudBase PG 应用的数据库连接和权限配置问题"
+
+  - id: postgresql-best-practices-cloudbase
+    title: PostgreSQL：设计与性能最佳实践
+    description: 按访问路径设计 CloudBase PostgreSQL，消除 N+1 与重复查询，通过索引和执行计划优化慢 SQL，并检查高流量上线容量
+    shortDescription: PostgreSQL 设计与性能优化
+    category: database
+    order: 8
+    prompts:
+      - "循环里查 users，帮我改成批量查询"
+      - "这个 PostgreSQL 接口很慢，帮我分析执行计划并补索引"
+      - "活动上线前检查数据库访问路径和容量风险"
+
+  - id: cloud-functions
+    title: 后端开发：云函数
+    description: 开发和部署 Node.js 云函数，包括运行时选择、部署、日志查询、HTTP 访问配置
+    shortDescription: Node.js 云函数
+    category: backend
+    order: 1
+    prompts:
+      - "在完成 CloudBase MCP 连接后，帮我创建一个云函数并部署"
+      - "配置 CloudBase 云函数的 HTTP 访问"
+      - "查询 CloudBase 云函数的执行日志"
+      - "更新 CloudBase 云函数的环境变量"
+  
+  - id: cloudrun-development
+    title: 后端开发：云托管
+    description: 使用云托管开发和部署任意语言的后端服务
+    shortDescription: Node.js、Python、Go、Java 等
+    category: backend
+    order: 2
+    prompts:
+      - "帮我部署一个 Node.js 后端服务到 CloudBase 云托管"
+      - "在 CloudBase 云托管中创建一个支持多语言的后端服务"
+  
+  - id: cloudbase-declarative-deploy
+    title: 后端开发：声明式部署
+    description: 用 cloudbaserc 配置描述整个项目的目标状态，通过 deployPlan 预演和 deployApply 应用，支持多环境覆盖与只部署部分资源
+    shortDescription: cloudbaserc 声明式部署
+    category: backend
+    order: 3
+    prompts:
+      - "帮我把 CloudBase 项目改成 cloudbaserc 声明式部署配置"
+      - "部署前先给我一份 deployPlan 预演结果，确认后再应用"
+      - "用 cloudbaserc 的 envOverrides 配置多环境部署"
+
+  - id: cloud-api-operations
+    title: 后端开发：Cloud API 操作
+    description: 在没有专用 MCP 工具时，通过 callCloudApi 或官方 SDK 操作腾讯云管控面资源（监控告警、CLB、CAM、COS、MySQL、SCF 等），包含 API 检索、CAM 授权与常用编排流程
+    shortDescription: 管控面 API 调用与 CAM 授权
+    category: backend
+    order: 4
+    prompts:
+      - "帮我给 CloudBase 云函数配置一个 CPU 使用率告警"
+      - "通过 callCloudApi 调用腾讯云监控接口查询云函数的指标数据"
+      - "帮我创建 CAM 角色并授权云函数访问 COS 存储桶"
+
+  - id: web-development
+    title: 应用集成：Web 应用
+    description: 通用 Web 应用开发、构建调试、浏览器验证与 CloudBase 集成
+    shortDescription: React、Vue、Vite、浏览器验证
+    category: frontend
+    order: 1
+    prompts:
+      - "帮我搭一个 React + Vite Web 应用，并规划本地开发和构建流程"
+      - "帮我排查一个 Vue 页面交互问题，并给出浏览器验证步骤"
+      - "把这个 Web 前端接入 CloudBase 并部署到静态托管"
+
+  - id: minimal-web-baas-demo
+    title: 应用集成：最小 Web BaaS Demo
+    description: BaaS-first 最小前后端快路径——Web SDK 直连数据库 CRUD，默认不创建云函数，凭据等待期间预热模板
+    shortDescription: Lovable-like 最小前后端，Web SDK CRUD 优先
+    category: frontend
+    order: 2
+    prompts:
+      - "用 CloudBase 给我搭一套最小可用前后端 demo 项目"
+      - "做一个留言板 / Todo，用云数据库，不要云函数中转"
+      - "带云函数+云数据库的最小 demo，但只要 CRUD 能预览就行"
+
+  - id: miniprogram-development
+    title: 应用集成：微信小程序
+    description: 微信小程序开发、tabBar 配置与 CloudBase 集成
+    shortDescription: 小程序开发、tabBar、CloudBase
+    category: frontend
+    order: 3
+    prompts:
+      - "帮我创建一个微信小程序项目并集成 CloudBase"
+      - "实现小程序与 CloudBase 的完整集成"
+      - "我想把微信小程序 tabBar 调整为纯文字样式，怎么去掉图标占位并消除标签上方留白？"
+      - "帮我做小程序 SEO：优化页面让微信搜索能收录（小程序搜索优化指南）"
+
+  - id: cloudbase-wechat-integration
+    title: 应用集成：微信生态集成
+    description: 使用 CloudBase 集成中心接入小程序微信支付、公众号 JSAPI 支付、Native 扫码支付和公众号 OAuth
+    shortDescription: 微信支付、公众号 OAuth
+    category: frontend
+    order: 4
+    prompts:
+      - "在 CloudBase 小程序中接入微信支付，并处理支付回调"
+      - "帮我用 CloudBase 集成中心实现公众号 JSAPI 支付"
+      - "在 Web 站点中接入微信 Native 扫码支付并查询订单状态"
+      - "通过 CloudBase 集成中心获取公众号 openid 并用于支付"
+  
+  - id: ui-design
+    title: 应用集成：UI 设计
+    description: 界面视觉方向、设计规格与前端原型指导
+    shortDescription: 专业界面设计指南
+    category: frontend
+    order: 5
+    prompts:
+      - "帮我设计一个现代化的用户界面，用于 CloudBase 应用"
+      - "创建一个美观的登录页面，集成 CloudBase Auth"
+  
+  - id: http-api-cloudbase
+    title: 应用集成：App 集成
+    description: 使用 CloudBase HTTP API 访问平台功能，适用于 Android、iOS 等任意原生语言开发
+    shortDescription: Android、iOS 原生应用
+    category: frontend
+    order: 6
+    prompts:
+      - "帮我通过 HTTP API 调用 CloudBase 服务"
+      - "在 Android 应用中集成 CloudBase HTTP API"
+      - "在 iOS 应用中集成 CloudBase HTTP API"
+  
+  - id: cloud-storage-web
+    title: 应用集成：云存储（Web SDK）
+    description: 使用 CloudBase Web SDK 完成文件上传、下载、临时访问链接获取与文件管理
+    shortDescription: Web SDK 云存储
+    category: frontend
+    order: 7
+    prompts:
+      - "帮我实现一个文件上传功能，文件存到 CloudBase 云存储"
+      - "在 Web 应用中获取 CloudBase 云存储文件的临时访问链接"
+      - "帮我给 CloudBase 云存储配置安全域名和跨域规则"
+
+  - id: spec-workflow
+    title: 开发工具：Spec 工作流
+    description: 按需求分析、技术设计、任务拆分推进的工程规划工作流
+    shortDescription: 需求分析、技术设计、任务拆分
+    category: tools
+    order: 1
+    prompts:
+      - "帮我按照 Spec 工作流开发一个 CloudBase 新功能"
+      - "为 CloudBase 项目创建一个完整的需求文档、技术方案和任务拆分"
+  
+  - id: cloudbase-platform
+    title: 开发工具：CloudBase 平台
+    description: CloudBase 平台知识库和最佳实践
+    shortDescription: 平台知识库和最佳实践
+    category: tools
+    order: 2
+    prompts:
+      - "帮我了解 CloudBase 平台的功能和特性，包括云函数、小程序云开发、数据库等"
+      - "创建一个完整的 CloudBase 应用架构，包含云函数、数据库、存储等组件"
+      - "介绍 CloudBase 云函数的使用场景和最佳实践"
+      - "介绍小程序云开发的核心概念和使用方法"
+  
+  - id: cloudbase-cli
+    title: 开发工具：CloudBase CLI
+    description: 使用 tcb CLI 管理云函数、云托管、数据库、存储、静态托管与权限，适用于 CI/CD 与批量操作，支持国内站与国际站链路切换
+    shortDescription: tcb 命令行资源管理
+    category: tools
+    order: 3
+    prompts:
+      - "帮我把云函数用 tcb CLI 部署到 CloudBase"
+      - "在 CI 脚本里用 CloudBase CLI 完成一次批量部署发布"
+      - "国际站环境用 tcb CLI 登录时怎么指定站点？"
+
+  - id: cloudbase-code-review
+    title: 开发工具：代码审查
+    description: 写完代码后对 CloudBase 项目做落地检查，覆盖鉴权守卫、数据表缺失、RLS 配置、存储域名与 SDK 误用等常见坑
+    shortDescription: 项目落地检查与常见坑
+    category: tools
+    order: 4
+    prompts:
+      - "帮我检查这个 CloudBase Web 项目有没有鉴权配置问题"
+      - "帮我审查小程序项目里的 SDK 用法是否符合规范"
+      - "检查云开发数据库的表结构和安全规则配置是否正确"
+
+  - id: ops-inspector
+    title: 开发工具：环境巡检与诊断
+    description: 对 CloudBase 环境做健康检查、日志诊断、告警解读与故障排查，覆盖限频 429、云函数 404、调用量为 0 等典型问题
+    shortDescription: 环境巡检、告警与故障诊断
+    category: tools
+    order: 5
+    prompts:
+      - "帮我巡检一下 CloudBase 环境的健康状况"
+      - "云函数调用量突然变成 0 了，帮我排查原因"
+      - "帮我解读 CPU 使用率告警并给出处理建议"
+
+  - id: ai-model-web
+    title: 在 Web 应用中集成 AI 功能
+    description: 在浏览器/Web 应用中使用 CloudBase AI 模型，支持文本生成和流式响应
+    shortDescription: 在 Web 应用中调用 AI
+    category: ai
+    order: 1
+    prompts:
+      - "在 React Web 应用中集成 CloudBase AI 模型，实现文本生成功能"
+      - "创建一个使用 CloudBase AI 模型的聊天界面，支持流式响应"
+      - "在 Vue 应用中使用 CloudBase AI 调用混元模型生成内容"
+  
+  - id: ai-model-nodejs
+    title: 在 Node.js 后端中集成 AI 功能
+    description: 在 Node.js 后端服务或云函数中使用 CloudBase AI 模型，支持文本生成、流式响应和图片生成
+    shortDescription: 在后端服务中调用 AI
+    category: ai
+    order: 2
+    prompts:
+      - "在 CloudBase 云函数中集成 AI 模型，实现文本生成功能"
+      - "创建一个使用 CloudBase AI 模型生成图片的云函数"
+      - "在 Express 后端服务中使用 CloudBase AI 模型处理用户请求"
+  
+  - id: ai-model-wechat
+    title: 在微信小程序中集成 AI 功能
+    description: 在微信小程序中使用 CloudBase AI 模型，支持文本生成和流式响应
+    shortDescription: 在小程序中调用 AI
+    category: ai
+    order: 3
+    prompts:
+      - "在微信小程序中集成 CloudBase AI 模型，实现智能对话功能"
+      - "创建一个使用 CloudBase AI 模型的小程序应用，支持流式响应"
+      - "在小程序中使用混元模型生成内容并展示给用户"
+  
+  - id: cloudbase-agent
+    title: 在应用中集成 AI Agent
+    description: 使用 CloudBase Agent SDK（TypeScript / Python）构建和部署 AI Agent 服务，基于 AG-UI 协议打通 Agent 与 Web / 小程序前端
+    shortDescription: Agent 服务构建与部署
+    category: ai
+    order: 4
+    prompts:
+      - "帮我用 CloudBase Agent SDK 搭建一个支持流式输出的 AI Agent 服务"
+      - "把 LangGraph 的 Agent 通过 CloudBase Agent SDK 部署到云托管"
+      - "帮我实现一个 Web 前端，接入 AG-UI 协议展示 Agent 的流式回复"

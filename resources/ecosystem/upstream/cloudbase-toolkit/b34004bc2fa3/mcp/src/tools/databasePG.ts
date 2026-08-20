@@ -1,0 +1,3604 @@
+import * as fs from "fs";
+import * as path from "path";
+import { z } from "zod";
+import { getCloudBaseManager, getEnvId } from "../cloudbase-manager.js";
+import type { ExtendedMcpServer } from "../server.js";
+import {
+  queryEnvRuntimeBackends,
+  type EnvRuntimeBackendSnapshot,
+} from "./env.js";
+import { t } from "../i18n/index.js";
+import { requireProjectRoot } from "../utils/project-config.js";
+import { buildJsonToolResult, ToolNextStep } from "../utils/tool-result.js";
+import {
+  getSqlVerb,
+  isDestructiveSql,
+  stripLeadingSqlComments,
+} from "../utils/sql-risk.js";
+
+const CATEGORY = "PostgreSQL database";
+const QUERY_PG_DATABASE = "queryPgDatabase";
+const MANAGE_PG_DATABASE = "managePgDatabase";
+
+const QUERY_ACTIONS = [
+  "context",
+  "objects",
+  "metadata",
+  "schema",
+  "sql",
+] as const;
+const MANAGE_ACTIONS = [
+  "execute",
+  "dryRun",
+  "planMigration",
+  "applyMigration",
+  "listMigrations",
+  "migrationDetail",
+  "describeMigrationTask",
+  "fetchMigration",
+  "repairMigration",
+] as const;
+type QueryPgAction = (typeof QUERY_ACTIONS)[number];
+type ManagePgAction = (typeof MANAGE_ACTIONS)[number];
+type PgToolPayload = {
+  success: boolean;
+  data?: Record<string, unknown>;
+  message: string;
+  errorCode?: string;
+  nextActions?: ToolNextStep[];
+};
+
+type QueryPgDatabaseArgs = {
+  action: QueryPgAction;
+  sql?: string;
+  objectName?: string;
+  schema?: string;
+  limit?: number;
+};
+
+type ManagePgDatabaseArgs = {
+  action: ManagePgAction;
+  sql?: string;
+  confirm?: boolean;
+  envId?: string;
+  instanceId?: string;
+  defaultSchema?: string;
+  role?: string;
+  objectName?: string;
+  migrationName?: string;
+  migrationVersion?: string;
+  rollbackSql?: string;
+  limit?: number;
+  offset?: number;
+  lockTimeoutMs?: number;
+  statementTimeoutMs?: number;
+  /**
+   * How long applyMigration polls DescribeTaskResult before MIGRATION_TASK_TIMEOUT.
+   * Default aligns with CLI `tcb db pg migration up` (10 minutes). Clamped to
+   * [MIGRATION_TASK_MIN_WAIT_MS, MIGRATION_TASK_MAX_WAIT_MS].
+   */
+  taskPollTimeoutMs?: number;
+  /**
+   * When false, skip DescribeTaskResult polling and return TaskId immediately
+   * (MIGRATION_TASK_PENDING). Caller must listMigrations before retrying.
+   * Default true.
+   */
+  waitForTask?: boolean;
+  /**
+   * describeMigrationTask: TaskId returned by PushPGUserMigrations / applyMigration
+   * (MIGRATION_TASK_PENDING / MIGRATION_TASK_TIMEOUT). Polls DescribeTaskResult once.
+   */
+  taskId?: string;
+  repairStatus?: "applied" | "reverted";
+  repairReason?: string;
+  /**
+   * fetchMigration: when true, overwrite existing local SQL files under cloudbase/migrations/.
+   * Default false — skip files that already exist (CLI `tcb db pg migration fetch --force` parity).
+   */
+  force?: boolean;
+  /**
+   * planMigration / applyMigration: allow out-of-order migrations (version older than
+   * LatestVersion). Matches CLI `tcb db pg migration up --include-all`. Default false.
+   */
+  includeAll?: boolean;
+  /** Escape hatch: allow schema DDL through execute instead of applyMigration. Default false. */
+  allowDdlViaExecute?: boolean;
+};
+
+type PgQueryField = {
+  name: string;
+};
+
+type PgQueryResult = {
+  rows: Record<string, unknown>[];
+  rowCount?: number | null;
+  command?: string;
+  fields?: PgQueryField[];
+};
+
+type PgClientLike = {
+  connect(): Promise<unknown>;
+  query(sql: string, values?: unknown[]): Promise<PgQueryResult>;
+  end(): Promise<void>;
+};
+
+type PgReadyCheckOptions = {
+  maxAttempts?: number;
+  retryDelayMs?: number;
+};
+
+type PgToolDependencies = {
+  createClient: (
+    context: PgDbContext,
+  ) => Promise<PgClientLike> | PgClientLike;
+  readyCheckOptions?: PgReadyCheckOptions;
+};
+
+type PgObjectSummary = {
+  schema: string;
+  name: string;
+  schemaTable: string;
+  kind: string;
+  estimatedRows?: number | null;
+  rowCount?: number | null;
+  rowCountSource?: "actual" | "estimated" | "not_applicable";
+  columnCount?: number;
+  rlsEnabled?: boolean;
+};
+
+type PgColumnInfo = {
+  name: string;
+  dataType: string;
+  isNullable: boolean;
+  defaultValue: string | null;
+};
+
+function buildPgToolResult(payload: PgToolPayload) {
+  return buildJsonToolResult(payload);
+}
+
+function buildNextAction(
+  tool: string,
+  action: string,
+  reason: string,
+  suggestedArgs?: Record<string, unknown>,
+): ToolNextStep {
+  return {
+    tool,
+    action,
+    suggested_args: suggestedArgs,
+    required_params: undefined,
+    reason,
+  } as ToolNextStep & { reason: string };
+}
+
+/**
+ * PG 执行上下文（无状态，每次调用推导）
+ * 替代旧的 PgRuntimeContext，不包含 createdAt/updatedAt 等可变状态
+ */
+interface PgDbContext {
+  envId: string;
+  instanceId: string;
+  defaultSchema: string;
+  role: string;
+}
+
+/**
+ * 从 cloudBaseOptions + args 推导 PG 执行上下文（无状态）
+ * 照搬 MySQL 的 resolveSqlDbContext 模式
+ */
+async function resolvePgDbContext(
+  cloudBaseOptions?: ExtendedMcpServer["cloudBaseOptions"],
+  args?: { envId?: string; instanceId?: string; defaultSchema?: string; role?: string },
+): Promise<PgDbContext> {
+  const envId =
+    args?.envId ??
+    cloudBaseOptions?.envId ??
+    (await getEnvId(cloudBaseOptions));
+
+  return {
+    envId,
+    instanceId: args?.instanceId ?? "cloudbase-pg",
+    defaultSchema: args?.defaultSchema ?? "public",
+    role: args?.role ?? PG_DEFAULT_ROLE,
+  };
+}
+
+
+/** Default / recommended roles for CloudBase PG ExecutePGSql.Role */
+const PG_DEFAULT_ROLE = "cloudbase_postgres";
+const PG_RECOMMENDED_ROLES = [
+  "cloudbase_postgres",
+  "anon",
+  "authenticated",
+  "service_role",
+] as const;
+/**
+ * Platform-owned admin roles. cloudbase_admin is the platform management
+ * account and must not be used by user-facing ExecutePGSql calls.
+ */
+const PG_PLATFORM_RESERVED_ROLES = ["cloudbase_admin"] as const;
+
+/**
+ * Roles that look like login/instance principals and routinely fail SET ROLE
+ * in beacon data (e.g. postgres, postgres_pgdb_<id>). Reject before the API call.
+ * Also rejects platform-reserved roles (cloudbase_admin) that are not for user calls.
+ */
+function isLikelyInvalidPgExecuteRole(role: string): boolean {
+  const normalized = role.trim();
+  if (!normalized) {
+    return true;
+  }
+  if (normalized === "postgres") {
+    return true;
+  }
+  // Platform management account, reserved for the platform itself.
+  if ((PG_PLATFORM_RESERVED_ROLES as readonly string[]).includes(normalized)) {
+    return true;
+  }
+  // Instance-derived login principals, not valid ExecutePGSql Role targets
+  if (/^postgres_pgdb_[a-z0-9]+$/i.test(normalized)) {
+    return true;
+  }
+  // AI-invented concatenations such as cloudbase_admin_pgdb_xxx_pgdb_xxx
+  if (
+    /_pgdb_[a-z0-9]+(_pgdb_[a-z0-9]+)?$/i.test(normalized) &&
+    !(PG_RECOMMENDED_ROLES as readonly string[]).includes(normalized)
+  ) {
+    return true;
+  }
+  return false;
+}
+
+function extractPgRoleNameFromError(message: string): string | null {
+  const missing = message.match(/role\s+"([^"]+)"\s+does\s+not\s+exist/i);
+  if (missing?.[1]) {
+    return missing[1];
+  }
+  const setRole = message.match(/set\s+role\s+([^\s:]+)/i);
+  if (setRole?.[1]) {
+    return setRole[1].replace(/^"|"$/g, "");
+  }
+  const denied = message.match(
+    /permission\s+denied\s+to\s+set\s+role\s+"([^"]+)"/i,
+  );
+  if (denied?.[1]) {
+    return denied[1];
+  }
+  return null;
+}
+
+function isPgRoleExecutionError(message: string): boolean {
+  const lower = message.toLowerCase();
+  return (
+    (lower.includes("set role") &&
+      (lower.includes("does not exist") ||
+        lower.includes("permission denied"))) ||
+    /role\s+"[^"]+"\s+does\s+not\s+exist/i.test(message) ||
+    /permission\s+denied\s+to\s+set\s+role/i.test(message)
+  );
+}
+
+function buildPgRoleGuidanceMessage(attemptedRole: string): string {
+  const recommended = PG_RECOMMENDED_ROLES.join(", ");
+  return t("databasePG.roleError.guidance", {
+    role: attemptedRole,
+    recommended,
+  });
+}
+
+function buildPgRoleErrorPayload(
+  attemptedRole: string,
+  rawMessage?: string,
+): PgToolPayload {
+  return {
+    success: false,
+    errorCode: "PG_ROLE_NOT_AVAILABLE",
+    message: buildPgRoleGuidanceMessage(attemptedRole),
+    data: {
+      attemptedRole,
+      defaultRole: PG_DEFAULT_ROLE,
+      recommendedRoles: [...PG_RECOMMENDED_ROLES],
+      listRolesSql: "SELECT rolname FROM pg_roles ORDER BY rolname;",
+      ...(rawMessage ? { rawError: rawMessage.slice(0, 500) } : {}),
+    },
+    nextActions: [
+      buildNextAction(
+        MANAGE_PG_DATABASE,
+        "execute",
+        t("databasePG.roleError.retryWithoutCustomRole", { defaultRole: PG_DEFAULT_ROLE }),
+        {
+          action: "execute",
+          role: PG_DEFAULT_ROLE,
+          sql: "SELECT rolname FROM pg_roles ORDER BY rolname;",
+          confirm: true,
+        },
+      ),
+      buildNextAction(
+        QUERY_PG_DATABASE,
+        "context",
+        t("databasePG.roleError.inspectContext"),
+        { action: "context" },
+      ),
+    ],
+  };
+}
+
+function tryBuildPgRoleErrorPayload(
+  error: unknown,
+  fallbackRole: string,
+): PgToolPayload | null {
+  const rawMessage = error instanceof Error ? error.message : String(error);
+  if (!isPgRoleExecutionError(rawMessage)) {
+    return null;
+  }
+  const attemptedRole =
+    extractPgRoleNameFromError(rawMessage) ?? fallbackRole;
+  return buildPgRoleErrorPayload(attemptedRole, rawMessage);
+}
+
+function normalizeLimit(limit?: number, fallback = 20, max = 200) {
+  if (!Number.isFinite(limit)) {
+    return fallback;
+  }
+
+  return Math.max(1, Math.min(max, Math.floor(limit!)));
+}
+
+function isReadOnlySql(sql: string) {
+  const normalized = stripLeadingSqlComments(sql);
+  const verb = getSqlVerb(normalized);
+  const readOnlyVerbs = new Set([
+    "SELECT",
+    "SHOW",
+    "EXPLAIN",
+    "WITH",
+    "VALUES",
+  ]);
+
+  if (!readOnlyVerbs.has(verb)) {
+    return false;
+  }
+
+  return !/\b(INSERT|UPDATE|DELETE|CREATE|ALTER|DROP|TRUNCATE|REPLACE|RENAME|GRANT|REVOKE|COMMENT|VACUUM|ANALYZE|FOR\s+UPDATE|FOR\s+SHARE)\b/i.test(
+    normalized,
+  );
+}
+
+function buildLimitedReadOnlySql(sql: string, limit: number) {
+  const normalized = stripLeadingSqlComments(sql).replace(/;\s*$/, "");
+  const verb = getSqlVerb(normalized);
+  if (!["SELECT", "WITH", "VALUES"].includes(verb)) {
+    return sql;
+  }
+  return `SELECT * FROM (${normalized}) AS cloudbase_mcp_readonly_limit LIMIT ${limit}`;
+}
+
+function classifySqlRisk(sql: string) {
+  const normalized = stripLeadingSqlComments(sql);
+  const verb = getSqlVerb(normalized);
+
+  if (!verb) {
+    return {
+      risk: "unknown_risk",
+      readOnly: false,
+      requiresConfirm: true,
+    };
+  }
+
+  if (isReadOnlySql(normalized)) {
+    return {
+      risk: "read_only",
+      readOnly: true,
+      requiresConfirm: false,
+    };
+  }
+
+  if (isDestructiveSql(normalized)) {
+    return {
+      risk: "destructive",
+      readOnly: false,
+      requiresConfirm: true,
+    };
+  }
+
+  if (
+    /\b(GRANT|REVOKE|CREATE\s+POLICY|ALTER\s+POLICY|DROP\s+POLICY|ENABLE\s+ROW\s+LEVEL\s+SECURITY|DISABLE\s+ROW\s+LEVEL\s+SECURITY)\b/i.test(
+      normalized,
+    )
+  ) {
+    return {
+      risk: "security_change",
+      readOnly: false,
+      requiresConfirm: true,
+    };
+  }
+
+  if (["CREATE", "ALTER", "COMMENT"].includes(verb)) {
+    return {
+      risk: "schema_change",
+      readOnly: false,
+      requiresConfirm: true,
+    };
+  }
+
+  if (["INSERT", "UPDATE", "DELETE", "MERGE"].includes(verb)) {
+    return {
+      risk: "normal_write",
+      readOnly: false,
+      requiresConfirm: true,
+    };
+  }
+
+  return {
+    risk: "unknown_risk",
+    readOnly: false,
+    requiresConfirm: true,
+  };
+}
+
+/**
+ * Schema DDL that must go through applyMigration by default.
+ * Includes CREATE/ALTER/COMMENT (schema_change) and DROP/TRUNCATE / destructive ALTER.
+ * Excludes DML DELETE and security_change (GRANT/POLICY), which may still use execute.
+ */
+function isSchemaDdlRisk(risk: string, sql: string): boolean {
+  if (risk === "schema_change") {
+    return true;
+  }
+  if (risk !== "destructive") {
+    return false;
+  }
+  const verb = getSqlVerb(stripLeadingSqlComments(sql));
+  return ["DROP", "TRUNCATE", "ALTER"].includes(verb);
+}
+
+/**
+ * Canonical local migration directory — must match CloudBase CLI
+ * `MIGRATIONS_DIR` (`cloudbase/migrations`) so MCP+CLI mixed workflows share files.
+ * Legacy bare `migrations/` is accepted only when an existing matching file is found.
+ */
+const LOCAL_MIGRATIONS_DIR = "cloudbase/migrations";
+const LOCAL_MIGRATIONS_DIR_LEGACY = "migrations";
+/** Same constraint as applyMigration.migrationName (server/CLI parity: lowercase letters and underscores only, digits rejected server-side). */
+const MIGRATION_NAME_PATTERN = /^[a-z][a-z_]*$/;
+/**
+ * Migration identity as returned by the control plane and accepted by `applyMigration.migrationVersion`:
+ * `<version>` in the local `cloudbase/migrations/<version>_<name>.sql` file name.
+ *
+ * Defined once and composed into both the tool schema and the local-file matcher so the two cannot drift.
+ */
+const MIGRATION_VERSION_BODY = "\\d{14}";
+const MIGRATION_VERSION_PATTERN = new RegExp(`^${MIGRATION_VERSION_BODY}$`);
+
+/** Validate migrationName against the server-side rule before calling migration APIs. */
+function validateMigrationName(
+  name: string,
+  actionLabel: string,
+): ReturnType<typeof buildPgToolResult> | null {
+  if (!MIGRATION_NAME_PATTERN.test(name.trim())) {
+    return buildPgToolResult({
+      success: false,
+      errorCode: "MIGRATION_NAME_INVALID",
+      data: {
+        migrationName: name,
+        requiredPattern: MIGRATION_NAME_PATTERN.source,
+      },
+      message: t("databasePG.migration.nameInvalid", {
+        action: actionLabel,
+        name,
+        rule: t("databasePG.migration.nameRule"),
+      }),
+    });
+  }
+  return null;
+}
+
+function getMigrationProjectRoot(): string {
+  return requireProjectRoot();
+}
+
+function buildLocalMigrationFileName(version: string, name: string): string {
+  return `${version}_${name}.sql`;
+}
+
+function buildLocalMigrationFileHint(version: string, name: string): string {
+  return `${LOCAL_MIGRATIONS_DIR}/${buildLocalMigrationFileName(version, name)}`;
+}
+
+/** Normalize SQL for local file compare/write (LF + single trailing newline). */
+function normalizeMigrationSqlForLocalFile(sql: string): string {
+  const normalized = sql.replace(/\r\n/g, "\n").replace(/\s+$/u, "");
+  return `${normalized}\n`;
+}
+
+type LocalMigrationFileEnsureResult =
+  | {
+      ok: true;
+      relativePath: string;
+      absolutePath: string;
+      action: "created" | "matched";
+    }
+  | {
+      ok: false;
+      errorCode: "LOCAL_MIGRATION_FILE_MISMATCH" | "LOCAL_MIGRATION_FILE_WRITE_FAILED";
+      message: string;
+      relativePath?: string;
+      absolutePath?: string;
+    };
+
+/**
+ * Ensure the workspace has a Git-truth SQL file for this migration before Push.
+ * Prefer write-to-workspace when missing; fail closed on mismatch or write failure
+ * (Supabase MCP#241 class: remote apply without local truth source).
+ */
+function ensureLocalMigrationSqlFile(
+  version: string,
+  name: string,
+  sql: string,
+): LocalMigrationFileEnsureResult {
+  const fileName = buildLocalMigrationFileName(version, name);
+  const expected = normalizeMigrationSqlForLocalFile(sql);
+  const projectRoot = getMigrationProjectRoot();
+  const candidates = [
+    {
+      relativePath: `${LOCAL_MIGRATIONS_DIR}/${fileName}`,
+      absolutePath: path.join(projectRoot, LOCAL_MIGRATIONS_DIR, fileName),
+    },
+    {
+      relativePath: `${LOCAL_MIGRATIONS_DIR_LEGACY}/${fileName}`,
+      absolutePath: path.join(projectRoot, LOCAL_MIGRATIONS_DIR_LEGACY, fileName),
+    },
+  ];
+
+  for (const candidate of candidates) {
+    if (!fs.existsSync(candidate.absolutePath)) {
+      continue;
+    }
+    let existing: string;
+    try {
+      existing = fs.readFileSync(candidate.absolutePath, "utf8");
+    } catch (error) {
+      return {
+        ok: false,
+        errorCode: "LOCAL_MIGRATION_FILE_WRITE_FAILED",
+        message: t("databasePG.localFile.readFailed", {
+          path: candidate.relativePath,
+          reason: error instanceof Error ? error.message : String(error),
+        }),
+        relativePath: candidate.relativePath,
+        absolutePath: candidate.absolutePath,
+      };
+    }
+    if (normalizeMigrationSqlForLocalFile(existing) === expected) {
+      return {
+        ok: true,
+        relativePath: candidate.relativePath,
+        absolutePath: candidate.absolutePath,
+        action: "matched",
+      };
+    }
+    return {
+      ok: false,
+      errorCode: "LOCAL_MIGRATION_FILE_MISMATCH",
+      message:
+        `Local migration file ${candidate.relativePath} already exists but its content does not match the sql argument. ` +
+        "Refuse to overwrite (fail closed). Update the local file to match, or use a new migrationVersion / migrationName. " +
+        "Push was NOT submitted.",
+      relativePath: candidate.relativePath,
+      absolutePath: candidate.absolutePath,
+    };
+  }
+
+  const target = candidates[0];
+  try {
+    fs.mkdirSync(path.dirname(target.absolutePath), { recursive: true });
+    fs.writeFileSync(target.absolutePath, expected, "utf8");
+  } catch (error) {
+    return {
+      ok: false,
+      errorCode: "LOCAL_MIGRATION_FILE_WRITE_FAILED",
+      message:
+        `Failed to write local migration file ${target.relativePath} under workspace ${projectRoot}: ` +
+        `${error instanceof Error ? error.message : String(error)}. ` +
+        "Push was NOT submitted. Fix workspace permissions or write the file manually, then retry applyMigration.",
+      relativePath: target.relativePath,
+      absolutePath: target.absolutePath,
+    };
+  }
+
+  return {
+    ok: true,
+    relativePath: target.relativePath,
+    absolutePath: target.absolutePath,
+    action: "created",
+  };
+}
+
+type FetchedRemoteMigration = {
+  Version: string;
+  Name: string;
+  Query: string;
+};
+
+type FetchLocalFileResult = {
+  version: string;
+  name: string;
+  relativePath: string;
+  absolutePath: string;
+  action: "written" | "skipped";
+};
+
+/**
+ * Sync remote migration Query bodies into cloudbase/migrations/ (CLI fetch parity).
+ * Without force, existing files are skipped; with force, overwritten.
+ */
+function syncFetchedMigrationsToLocalFiles(
+  items: FetchedRemoteMigration[],
+  force: boolean,
+): { ok: true; files: FetchLocalFileResult[] } | {
+  ok: false;
+  errorCode: "LOCAL_MIGRATION_FETCH_EMPTY_QUERY" | "LOCAL_MIGRATION_FETCH_INVALID_NAME" | "LOCAL_MIGRATION_FETCH_INVALID_VERSION" | "LOCAL_MIGRATION_FILE_WRITE_FAILED";
+  message: string;
+  relativePath?: string;
+} {
+  const projectRoot = getMigrationProjectRoot();
+  const migrationsDir = path.join(projectRoot, LOCAL_MIGRATIONS_DIR);
+  const files: FetchLocalFileResult[] = [];
+
+  for (const item of items) {
+    const version = item.Version.trim();
+    const name = item.Name.trim();
+    if (!MIGRATION_VERSION_PATTERN.test(version)) {
+      return {
+        ok: false,
+        errorCode: "LOCAL_MIGRATION_FETCH_INVALID_VERSION",
+        message: t("databasePG.localFile.invalidRemoteVersion", { version, name }),
+      };
+    }
+    if (!MIGRATION_NAME_PATTERN.test(name)) {
+      return {
+        ok: false,
+        errorCode: "LOCAL_MIGRATION_FETCH_INVALID_NAME",
+        message: t("databasePG.localFile.invalidRemoteName", { name, version }),
+      };
+    }
+    if (!item.Query.trim()) {
+      return {
+        ok: false,
+        errorCode: "LOCAL_MIGRATION_FETCH_EMPTY_QUERY",
+        message: t("databasePG.localFile.emptyQuery", { version, name }),
+      };
+    }
+
+    const relativePath = buildLocalMigrationFileHint(version, name);
+    const absolutePath = path.join(migrationsDir, buildLocalMigrationFileName(version, name));
+    const exists = fs.existsSync(absolutePath);
+    if (exists && !force) {
+      files.push({ version, name, relativePath, absolutePath, action: "skipped" });
+      continue;
+    }
+
+    try {
+      fs.mkdirSync(migrationsDir, { recursive: true });
+      fs.writeFileSync(absolutePath, normalizeMigrationSqlForLocalFile(item.Query), "utf8");
+    } catch (error) {
+      return {
+        ok: false,
+        errorCode: "LOCAL_MIGRATION_FILE_WRITE_FAILED",
+        message: t("databasePG.localFile.fetchWriteFailed", {
+          path: relativePath,
+          root: projectRoot,
+          reason: error instanceof Error ? error.message : String(error),
+        }),
+        relativePath,
+      };
+    }
+    files.push({ version, name, relativePath, absolutePath, action: "written" });
+  }
+
+  return { ok: true, files };
+}
+
+/** How many recent migration records to scan when verifying a freshly pushed version. */
+const MIGRATION_VERIFY_LIMIT = 100;
+
+/**
+ * Collect every migration version mentioned anywhere in a migration-list API response.
+ * The response shape is not strongly typed, so walk it generically and pick up any
+ * `Version` / `MigrationVersion` string field instead of guessing a single container key.
+ */
+function collectMigrationVersions(value: unknown, found: Set<string> = new Set()): Set<string> {
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      collectMigrationVersions(item, found);
+    }
+    return found;
+  }
+  if (value && typeof value === "object") {
+    for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+      if ((key === "Version" || key === "MigrationVersion") && typeof child === "string" && child.trim()) {
+        found.add(child.trim());
+      } else {
+        collectMigrationVersions(child, found);
+      }
+    }
+  }
+  return found;
+}
+
+/** Brief retries before concluding a pushed migration never landed (Push can be async). */
+const MIGRATION_VERIFY_ATTEMPTS = 4;
+const MIGRATION_VERIFY_DELAY_MS = 1500;
+
+/** Page size when hydrating remote migration history into a Push/Preview payload. */
+const MIGRATION_LIST_PAGE_SIZE = 100;
+
+/**
+ * PushPGUserMigrations is async: poll DescribeTaskResult until Succeed/Failed.
+ * Default wait aligns with CLI `tcb db pg migration up` (10 minutes).
+ * Override per call via applyMigration.taskPollTimeoutMs.
+ */
+const MIGRATION_TASK_POLL_INTERVAL_MS = 1500;
+/** CLI parity: `TASK_MAX_WAIT_MS = 10 * 60 * 1000` in cloudbase-cli migration up. */
+const MIGRATION_TASK_DEFAULT_WAIT_MS = 10 * 60 * 1000;
+const MIGRATION_TASK_MIN_WAIT_MS = 5_000;
+const MIGRATION_TASK_MAX_WAIT_MS = MIGRATION_TASK_DEFAULT_WAIT_MS;
+
+function resolveMigrationTaskPollTimeoutMs(requested?: number): number {
+  if (requested === undefined || !Number.isFinite(requested)) {
+    return MIGRATION_TASK_DEFAULT_WAIT_MS;
+  }
+  const rounded = Math.floor(requested);
+  if (rounded < MIGRATION_TASK_MIN_WAIT_MS) {
+    return MIGRATION_TASK_MIN_WAIT_MS;
+  }
+  if (rounded > MIGRATION_TASK_MAX_WAIT_MS) {
+    return MIGRATION_TASK_MAX_WAIT_MS;
+  }
+  return rounded;
+}
+
+type PgMigrationInput = {
+  Version: string;
+  Name: string;
+  Query: string;
+  Rollback?: string;
+};
+
+type PgMigrationTaskResult = {
+  TaskId?: string;
+  TaskType?: string;
+  Status?: string;
+  Phase?: string;
+  Reason?: string;
+  RequestId?: string;
+  CreatedAt?: string;
+  UpdatedAt?: string;
+};
+
+/**
+ * Confirm a pushed migration version is present in the remote migration history.
+ *
+ * `PushPGUserMigrations` can return a TaskId without the migration actually being
+ * applied, so the raw API response is not sufficient evidence of success. Retries
+ * briefly to tolerate async application, then returns `true`/`false` when the
+ * history could be read, or `null` when verification itself failed (in which case
+ * the caller must not claim the migration is applied).
+ */
+async function verifyMigrationApplied(
+  context: PgDbContext,
+  version: string,
+  cloudBaseOptions?: ExtendedMcpServer["cloudBaseOptions"],
+): Promise<{ applied: boolean | null; error?: string }> {
+  let lastError: string | undefined;
+  let sawSuccessfulList = false;
+  for (let attempt = 1; attempt <= MIGRATION_VERIFY_ATTEMPTS; attempt++) {
+    try {
+      const history = await callPgMigrationApi(
+        context,
+        "ListPGUserMigrations",
+        { Limit: MIGRATION_VERIFY_LIMIT },
+        cloudBaseOptions,
+      );
+      sawSuccessfulList = true;
+      if (collectMigrationVersions(history).has(version)) {
+        return { applied: true };
+      }
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : String(error);
+      // Keep retrying: a transient list failure should not immediately fail verification.
+    }
+    if (attempt < MIGRATION_VERIFY_ATTEMPTS) {
+      await sleep(MIGRATION_VERIFY_DELAY_MS);
+    }
+  }
+  if (sawSuccessfulList) {
+    return { applied: false };
+  }
+  return { applied: null, error: lastError };
+}
+
+function extractMigrationSummaries(history: Record<string, unknown>): Array<{ Version: string; Name: string }> {
+  const raw = history.Migrations;
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+  const summaries: Array<{ Version: string; Name: string }> = [];
+  for (const item of raw) {
+    if (!item || typeof item !== "object") {
+      continue;
+    }
+    const row = item as Record<string, unknown>;
+    const version = typeof row.Version === "string" ? row.Version.trim() : "";
+    const name = typeof row.Name === "string" ? row.Name.trim() : "";
+    if (version) {
+      summaries.push({ Version: version, Name: name || version });
+    }
+  }
+  return summaries;
+}
+
+/**
+ * List every remote migration summary (paginated). Required before Push/Preview:
+ * submitting only the pending migration while remote history exists yields
+ * Executable=false with Conflicts reason remote_history_not_found_locally, and the
+ * async task fails with "migration plan is not executable".
+ */
+async function listAllRemoteMigrationSummaries(
+  context: PgDbContext,
+  cloudBaseOptions?: ExtendedMcpServer["cloudBaseOptions"],
+): Promise<{ summaries: Array<{ Version: string; Name: string }>; latestVersion: string; total: number }> {
+  const summaries: Array<{ Version: string; Name: string }> = [];
+  let offset = 0;
+  let latestVersion = "";
+  let total = 0;
+
+  while (true) {
+    const page = await callPgMigrationApi(
+      context,
+      "ListPGUserMigrations",
+      { Limit: MIGRATION_LIST_PAGE_SIZE, Offset: offset },
+      cloudBaseOptions,
+    );
+    const pageItems = extractMigrationSummaries(page);
+    summaries.push(...pageItems);
+    if (typeof page.LatestVersion === "string" && page.LatestVersion.trim()) {
+      latestVersion = page.LatestVersion.trim();
+    }
+    if (typeof page.Total === "number" && Number.isFinite(page.Total)) {
+      total = page.Total;
+    } else {
+      total = summaries.length;
+    }
+    if (pageItems.length < MIGRATION_LIST_PAGE_SIZE) {
+      break;
+    }
+    offset += MIGRATION_LIST_PAGE_SIZE;
+  }
+
+  return { summaries, latestVersion, total };
+}
+
+/** `<version>_<name>.sql` — version is the identity key for completeness checks. */
+const LOCAL_MIGRATION_FILENAME_RE = new RegExp(`^(${MIGRATION_VERSION_BODY})_(.+)\\.sql$`);
+
+type LocalMigrationFileEntry = {
+  version: string;
+  name: string;
+  query: string;
+  relativePath: string;
+};
+
+type MigrationsPayloadSource = "local" | "hydrate";
+
+type MigrationsPayloadBuildResult = {
+  migrations: PgMigrationInput[];
+  remoteCount: number;
+  latestVersion: string;
+  /** `local` = CLI-parity from workspace files (no per-version Describe). `hydrate` = N+1 Describe fallback. */
+  payloadSource: MigrationsPayloadSource;
+};
+
+function listLocalMigrationFilesInDir(
+  dirAbsolute: string,
+  dirRelative: string,
+): Map<string, LocalMigrationFileEntry> {
+  const map = new Map<string, LocalMigrationFileEntry>();
+  if (!fs.existsSync(dirAbsolute)) {
+    return map;
+  }
+  let stat: fs.Stats;
+  try {
+    stat = fs.statSync(dirAbsolute);
+  } catch {
+    return map;
+  }
+  if (!stat.isDirectory()) {
+    return map;
+  }
+
+  let fileNames: string[];
+  try {
+    fileNames = fs.readdirSync(dirAbsolute);
+  } catch {
+    return map;
+  }
+
+  for (const fileName of fileNames) {
+    const match = LOCAL_MIGRATION_FILENAME_RE.exec(fileName);
+    if (!match) {
+      continue;
+    }
+    const version = match[1];
+    const name = match[2];
+    const absolutePath = path.join(dirAbsolute, fileName);
+    let query: string;
+    try {
+      query = fs.readFileSync(absolutePath, "utf8");
+    } catch {
+      continue;
+    }
+    if (!query.trim()) {
+      continue;
+    }
+    map.set(version, {
+      version,
+      name,
+      query,
+      relativePath: `${dirRelative}/${fileName}`,
+    });
+  }
+  return map;
+}
+
+/**
+ * Index local migration SQL by version. Canonical `cloudbase/migrations/` wins over legacy `migrations/`.
+ */
+function listLocalMigrationFilesByVersion(): Map<string, LocalMigrationFileEntry> {
+  const projectRoot = getMigrationProjectRoot();
+  const legacy = listLocalMigrationFilesInDir(
+    path.join(projectRoot, LOCAL_MIGRATIONS_DIR_LEGACY),
+    LOCAL_MIGRATIONS_DIR_LEGACY,
+  );
+  const canonical = listLocalMigrationFilesInDir(
+    path.join(projectRoot, LOCAL_MIGRATIONS_DIR),
+    LOCAL_MIGRATIONS_DIR,
+  );
+  const merged = new Map(legacy);
+  for (const [version, entry] of canonical) {
+    merged.set(version, entry);
+  }
+  return merged;
+}
+
+function remoteHistoryCoveredByLocalFiles(
+  summaries: Array<{ Version: string; Name: string }>,
+  localByVersion: Map<string, LocalMigrationFileEntry>,
+  pendingVersion: string,
+): boolean {
+  for (const summary of summaries) {
+    if (summary.Version === pendingVersion) {
+      // Pending SQL comes from the tool args / ensureLocal write.
+      continue;
+    }
+    const local = localByVersion.get(summary.Version);
+    if (!local || !local.query.trim()) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
+ * Build Push/Preview Migrations = full candidate set (server skips already-applied).
+ *
+ * Prefer CLI parity when the workspace already has SQL for every remote version:
+ * read local files (no per-version DescribePGUserMigration). Otherwise hydrate
+ * remote Queries via List + N×Describe (agent/remote-first when the local tree is incomplete).
+ */
+async function buildMigrationsPayloadWithRemoteHistory(
+  context: PgDbContext,
+  pending: PgMigrationInput,
+  cloudBaseOptions?: ExtendedMcpServer["cloudBaseOptions"],
+): Promise<MigrationsPayloadBuildResult> {
+  const { summaries, latestVersion } = await listAllRemoteMigrationSummaries(context, cloudBaseOptions);
+  const localByVersion = listLocalMigrationFilesByVersion();
+
+  if (remoteHistoryCoveredByLocalFiles(summaries, localByVersion, pending.Version)) {
+    const migrations: PgMigrationInput[] = [];
+    for (const summary of summaries) {
+      if (summary.Version === pending.Version) {
+        continue;
+      }
+      const local = localByVersion.get(summary.Version)!;
+      migrations.push({
+        Version: local.version,
+        Name: local.name || summary.Name,
+        Query: local.query,
+      });
+    }
+    migrations.push(pending);
+    return {
+      migrations,
+      remoteCount: summaries.length,
+      latestVersion,
+      payloadSource: "local",
+    };
+  }
+
+  const migrations: PgMigrationInput[] = [];
+  for (const summary of summaries) {
+    if (summary.Version === pending.Version) {
+      // Caller supplies the authoritative SQL for this version.
+      continue;
+    }
+    const detail = await callPgMigrationApi(
+      context,
+      "DescribePGUserMigration",
+      { MigrationVersion: summary.Version },
+      cloudBaseOptions,
+    );
+    const query = typeof detail.Query === "string" ? detail.Query : "";
+    if (!query.trim()) {
+      throw new Error(
+        t("databasePG.localFile.hydrateEmptyQuery", {
+          version: summary.Version,
+          name: summary.Name,
+        }),
+      );
+    }
+    migrations.push({
+      Version: typeof detail.Version === "string" && detail.Version.trim() ? detail.Version.trim() : summary.Version,
+      Name: typeof detail.Name === "string" && detail.Name.trim() ? detail.Name.trim() : summary.Name,
+      Query: query,
+    });
+  }
+
+  migrations.push(pending);
+  return {
+    migrations,
+    remoteCount: summaries.length,
+    latestVersion,
+    payloadSource: "hydrate",
+  };
+}
+
+function formatMigrationsPayloadSourceLabel(source: MigrationsPayloadSource, remoteCount: number): string {
+  if (remoteCount <= 0) {
+    return t("databasePG.payloadSource.noRemoteHistory");
+  }
+  return source === "local"
+    ? t("databasePG.payloadSource.localCovered", { count: remoteCount })
+    : t("databasePG.payloadSource.hydrated", { count: remoteCount });
+}
+
+async function waitPgMigrationTask(
+  context: PgDbContext,
+  taskId: string,
+  cloudBaseOptions?: ExtendedMcpServer["cloudBaseOptions"],
+  maxWaitMs: number = MIGRATION_TASK_DEFAULT_WAIT_MS,
+): Promise<PgMigrationTaskResult> {
+  const deadline = Date.now() + maxWaitMs;
+  let last: PgMigrationTaskResult = { TaskId: taskId };
+
+  while (Date.now() <= deadline) {
+    last = (await callPgMigrationApi(
+      context,
+      "DescribeTaskResult",
+      { TaskId: taskId },
+      cloudBaseOptions,
+    )) as PgMigrationTaskResult;
+
+    const status = String(last.Status || "").toLowerCase();
+    if (status === "succeed" || status === "failed") {
+      return last;
+    }
+    await sleep(MIGRATION_TASK_POLL_INTERVAL_MS);
+  }
+
+  const error = new Error(
+    t("databasePG.task.pollTimeout", {
+      seconds: Math.floor(maxWaitMs / 1000),
+      taskId,
+      status: last.Status || "-",
+      phase: last.Phase || "-",
+    }),
+  );
+  (error as Error & { lastTask?: PgMigrationTaskResult }).lastTask = last;
+  throw error;
+}
+
+function buildMigrationTaskPendingNextActions(version: string, taskId?: string): ToolNextStep[] {
+  const actions: ToolNextStep[] = [];
+  if (taskId) {
+    actions.push(
+      buildNextAction(
+        MANAGE_PG_DATABASE,
+        "describeMigrationTask",
+        t("databasePG.task.pendingFirst"),
+        { action: "describeMigrationTask", taskId },
+      ),
+    );
+  }
+  actions.push(
+    buildNextAction(
+      MANAGE_PG_DATABASE,
+      "listMigrations",
+      t("databasePG.task.checkLanded"),
+      { action: "listMigrations", limit: 20 },
+    ),
+    buildNextAction(
+      MANAGE_PG_DATABASE,
+      "migrationDetail",
+      t("databasePG.task.inspectDetail"),
+      { action: "migrationDetail", migrationVersion: version },
+    ),
+  );
+  return actions;
+}
+
+function requireExplicitMigrationVersion(
+  args: ManagePgDatabaseArgs,
+  actionLabel: string,
+) {
+  const version = args.migrationVersion?.trim();
+  if (!version) {
+    return buildPgToolResult({
+      success: false,
+      errorCode: "MIGRATION_VERSION_REQUIRED",
+      message: t("databasePG.migration.versionRequired", {
+      action: actionLabel,
+      rule: t("databasePG.migration.versionRule"),
+    }),
+    });
+  }
+  return version;
+}
+
+function quoteIdentifier(identifier: string) {
+  return `"${identifier.replace(/"/g, '""')}"`;
+}
+
+function buildSchemaNextAction(reason: string, objectName: string) {
+  return buildNextAction(QUERY_PG_DATABASE, "schema", reason, {
+    action: "schema",
+    objectName,
+  });
+}
+
+function parseSchemaQualifiedName(objectName: string) {
+  const match = objectName
+    .trim()
+    .match(/^([A-Za-z_][A-Za-z0-9_$]*)\.([A-Za-z_][A-Za-z0-9_$]*)$/);
+  if (!match) {
+    return null;
+  }
+
+  return {
+    schema: match[1],
+    name: match[2],
+  };
+}
+
+function serializeValue(value: unknown): unknown {
+  if (value instanceof Date) {
+    return value.toISOString();
+  }
+  if (typeof value === "bigint") {
+    return value.toString();
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => serializeValue(item));
+  }
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, nestedValue]) => [
+        key,
+        serializeValue(nestedValue),
+      ]),
+    );
+  }
+
+  return value;
+}
+
+function truncateText(value: unknown, maxLength = 180) {
+  if (value === null || value === undefined) {
+    return null;
+  }
+
+  const text = String(value);
+  return text.length > maxLength ? `${text.slice(0, maxLength)}...` : text;
+}
+
+function buildSchemaTable(schema: string, name: string) {
+  return `${schema}.${name}`;
+}
+
+function parseTargetTableFromSql(sql: string, defaultSchema: string) {
+  const normalized = stripLeadingSqlComments(sql);
+  const identifier = String.raw`((?:[A-Za-z_][A-Za-z0-9_$]*\.)?[A-Za-z_][A-Za-z0-9_$]*)`;
+  const patterns = [
+    new RegExp(
+      String.raw`\bcreate\s+(?:temporary\s+|temp\s+|unlogged\s+)?table\s+(?:if\s+not\s+exists\s+)?${identifier}`,
+      "i",
+    ),
+    new RegExp(
+      String.raw`\b(?:alter|drop|truncate)\s+table\s+(?:if\s+exists\s+)?${identifier}`,
+      "i",
+    ),
+    new RegExp(String.raw`\binsert\s+into\s+${identifier}`, "i"),
+    new RegExp(String.raw`\bupdate\s+${identifier}`, "i"),
+    new RegExp(String.raw`\b(?:delete\s+from|from)\s+${identifier}`, "i"),
+  ];
+  const match = patterns
+    .map((pattern) => normalized.match(pattern))
+    .find(Boolean);
+  if (!match?.[1]) {
+    return undefined;
+  }
+
+  if (match[1].includes(".")) {
+    return match[1];
+  }
+
+  return `${defaultSchema}.${match[1]}`;
+}
+
+function summarizeQueryResult(result: PgQueryResult, limit: number) {
+  const rows = result.rows.map(
+    (row) => serializeValue(row) as Record<string, unknown>,
+  );
+  const trimmedRows = rows.slice(0, limit);
+
+  return {
+    columns:
+      result.fields?.map((field) => field.name) ??
+      (trimmedRows[0] ? Object.keys(trimmedRows[0]) : []),
+    rows: trimmedRows,
+    returnedRows: rows.length,
+    truncated: rows.length > trimmedRows.length,
+    truncatedCount: Math.max(rows.length - trimmedRows.length, 0),
+  };
+}
+
+async function withPgClient<T>(
+  context: PgDbContext,
+  deps: PgToolDependencies,
+  callback: (client: PgClientLike) => Promise<T>,
+) {
+  const client = await deps.createClient(context);
+  await client.connect();
+
+  try {
+    return await callback(client);
+  } finally {
+    await client.end();
+  }
+}
+
+async function getTableRowCount(
+  client: PgClientLike,
+  schema: string,
+  table: string,
+) {
+  const qualifiedName = `${quoteIdentifier(schema)}.${quoteIdentifier(table)}`;
+  const result = await client.query(
+    `SELECT COUNT(*)::bigint AS row_count FROM ${qualifiedName}`,
+  );
+  const rawValue = result.rows[0]?.row_count;
+  const parsed = Number(rawValue);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+async function listObjects(
+  client: PgClientLike,
+  schema: string | undefined,
+  limit: number,
+) {
+  const result = await client.query(
+    `
+      SELECT
+        n.nspname AS schema,
+        c.relname AS name,
+        CASE c.relkind
+          WHEN 'r' THEN 'table'
+          WHEN 'p' THEN 'partitioned_table'
+          WHEN 'v' THEN 'view'
+          WHEN 'm' THEN 'materialized_view'
+          WHEN 'f' THEN 'foreign_table'
+          ELSE c.relkind::text
+        END AS kind,
+        CASE
+          WHEN c.reltuples >= 0 THEN c.reltuples::bigint
+          ELSE NULL
+        END AS estimated_rows
+      FROM pg_class c
+      INNER JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE c.relkind IN ('r', 'p', 'v', 'm', 'f')
+        AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+        AND n.nspname NOT LIKE 'pg_toast%'
+        AND ($1::text IS NULL OR n.nspname = $1)
+      ORDER BY n.nspname, c.relname
+      LIMIT $2
+    `,
+    [schema ?? null, limit],
+  );
+
+  return result.rows.map((row) => ({
+    schema: String(row.schema),
+    name: String(row.name),
+    schemaTable: buildSchemaTable(String(row.schema), String(row.name)),
+    kind: String(row.kind),
+    estimatedRows:
+      row.estimated_rows === null || row.estimated_rows === undefined
+        ? null
+        : Number(row.estimated_rows),
+  })) as PgObjectSummary[];
+}
+
+async function summarizeMetadata(
+  client: PgClientLike,
+  schema: string | undefined,
+  limit: number,
+) {
+  const result = await client.query(
+    `
+      SELECT
+        n.nspname AS schema,
+        c.relname AS name,
+        CASE c.relkind
+          WHEN 'r' THEN 'table'
+          WHEN 'p' THEN 'partitioned_table'
+          WHEN 'v' THEN 'view'
+          WHEN 'm' THEN 'materialized_view'
+          ELSE c.relkind::text
+        END AS kind,
+        CASE
+          WHEN c.reltuples >= 0 THEN c.reltuples::bigint
+          ELSE NULL
+        END AS estimated_rows,
+        c.relrowsecurity AS rls_enabled,
+        COALESCE(col_counts.column_count, 0)::int AS column_count
+      FROM pg_class c
+      INNER JOIN pg_namespace n ON n.oid = c.relnamespace
+      LEFT JOIN LATERAL (
+        SELECT COUNT(*) AS column_count
+        FROM information_schema.columns cols
+        WHERE cols.table_schema = n.nspname
+          AND cols.table_name = c.relname
+      ) AS col_counts ON TRUE
+      WHERE c.relkind IN ('r', 'p', 'v', 'm')
+        AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+        AND n.nspname NOT LIKE 'pg_toast%'
+        AND ($1::text IS NULL OR n.nspname = $1)
+      ORDER BY n.nspname, c.relname
+      LIMIT $2
+    `,
+    [schema ?? null, limit],
+  );
+
+  const summaries: PgObjectSummary[] = [];
+  for (const row of result.rows) {
+    const summary: PgObjectSummary = {
+      schema: String(row.schema),
+      name: String(row.name),
+      schemaTable: buildSchemaTable(String(row.schema), String(row.name)),
+      kind: String(row.kind),
+      estimatedRows:
+        row.estimated_rows === null || row.estimated_rows === undefined
+          ? null
+          : Number(row.estimated_rows),
+      columnCount: Number(row.column_count ?? 0),
+      rlsEnabled: Boolean(row.rls_enabled),
+    };
+
+    if (summary.kind === "table" || summary.kind === "partitioned_table") {
+      summary.rowCount = summary.estimatedRows ?? null;
+      summary.rowCountSource = "estimated";
+    } else {
+      summary.rowCount = null;
+      summary.rowCountSource = "not_applicable";
+    }
+
+    summaries.push(summary);
+  }
+
+  return summaries;
+}
+
+async function readSchemaInfo(
+  client: PgClientLike,
+  schema: string,
+  table: string,
+) {
+  const objectCheck = await client.query(
+    `
+      SELECT
+        CASE c.relkind
+          WHEN 'r' THEN 'table'
+          WHEN 'p' THEN 'partitioned_table'
+          WHEN 'v' THEN 'view'
+          WHEN 'm' THEN 'materialized_view'
+          WHEN 'f' THEN 'foreign_table'
+          ELSE c.relkind::text
+        END AS kind,
+        c.relrowsecurity AS row_security_enabled,
+        c.relforcerowsecurity AS force_row_security
+      FROM pg_class c
+      INNER JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname = $1 AND c.relname = $2
+      LIMIT 1
+    `,
+    [schema, table],
+  );
+
+  if (!objectCheck.rows[0]) {
+    return null;
+  }
+
+  const columnsResult = await client.query(
+    `
+      SELECT
+        column_name,
+        data_type,
+        udt_name,
+        is_nullable,
+        column_default,
+        character_maximum_length,
+        numeric_precision,
+        numeric_scale
+      FROM information_schema.columns
+      WHERE table_schema = $1 AND table_name = $2
+      ORDER BY ordinal_position
+    `,
+    [schema, table],
+  );
+
+  const primaryKeyResult = await client.query(
+    `
+      SELECT kcu.column_name
+      FROM information_schema.table_constraints tc
+      INNER JOIN information_schema.key_column_usage kcu
+        ON tc.constraint_name = kcu.constraint_name
+       AND tc.table_schema = kcu.table_schema
+       AND tc.table_name = kcu.table_name
+      WHERE tc.constraint_type = 'PRIMARY KEY'
+        AND tc.table_schema = $1
+        AND tc.table_name = $2
+      ORDER BY kcu.ordinal_position
+    `,
+    [schema, table],
+  );
+
+  const foreignKeyResult = await client.query(
+    `
+      SELECT
+        tc.constraint_name,
+        kcu.column_name,
+        ccu.table_schema AS foreign_table_schema,
+        ccu.table_name AS foreign_table_name,
+        ccu.column_name AS foreign_column_name
+      FROM information_schema.table_constraints tc
+      INNER JOIN information_schema.key_column_usage kcu
+        ON tc.constraint_name = kcu.constraint_name
+       AND tc.table_schema = kcu.table_schema
+       AND tc.table_name = kcu.table_name
+      INNER JOIN information_schema.constraint_column_usage ccu
+        ON tc.constraint_name = ccu.constraint_name
+       AND tc.table_schema = ccu.table_schema
+      WHERE tc.constraint_type = 'FOREIGN KEY'
+        AND tc.table_schema = $1
+        AND tc.table_name = $2
+      ORDER BY tc.constraint_name, kcu.ordinal_position
+    `,
+    [schema, table],
+  );
+
+  const indexesResult = await client.query(
+    `
+      SELECT indexname, indexdef
+      FROM pg_indexes
+      WHERE schemaname = $1 AND tablename = $2
+      ORDER BY indexname
+    `,
+    [schema, table],
+  );
+
+  const policiesResult = await client.query(
+    `
+      SELECT policyname, permissive, roles, cmd, qual, with_check
+      FROM pg_policies
+      WHERE schemaname = $1 AND tablename = $2
+      ORDER BY policyname
+    `,
+    [schema, table],
+  );
+
+  let rowCount: number | null = null;
+  try {
+    rowCount = await getTableRowCount(client, schema, table);
+  } catch {
+    rowCount = null;
+  }
+
+  const columns = columnsResult.rows.map((row) => ({
+    name: String(row.column_name),
+    dataType: String(row.data_type),
+    isNullable: String(row.is_nullable).toUpperCase() === "YES",
+    defaultValue:
+      row.column_default === undefined
+        ? null
+        : truncateText(row.column_default, 120),
+  })) as PgColumnInfo[];
+
+  return {
+    schemaTable: buildSchemaTable(schema, table),
+    kind: String(objectCheck.rows[0].kind),
+    rowCount,
+    columns,
+    primaryKey: primaryKeyResult.rows.map((row) => String(row.column_name)),
+    foreignKeys: foreignKeyResult.rows.map((row) => ({
+      constraintName: String(row.constraint_name),
+      columnName: String(row.column_name),
+      references: buildSchemaTable(
+        String(row.foreign_table_schema),
+        String(row.foreign_table_name),
+      ),
+      referencedColumn: String(row.foreign_column_name),
+    })),
+    indexes: indexesResult.rows.map((row) => ({
+      name: String(row.indexname),
+      definition: truncateText(row.indexdef, 180),
+    })),
+    security: {
+      rowLevelSecurityEnabled: Boolean(
+        objectCheck.rows[0].row_security_enabled,
+      ),
+      forceRowLevelSecurity: Boolean(objectCheck.rows[0].force_row_security),
+      policies: policiesResult.rows.map((row) => ({
+        name: String(row.policyname),
+        permissive: String(row.permissive),
+        roles: Array.isArray(row.roles)
+          ? row.roles.map((role) => String(role))
+          : [],
+        command: String(row.cmd),
+        using: truncateText(row.qual, 180),
+        withCheck: truncateText(row.with_check, 180),
+      })),
+    },
+  };
+}
+
+function createDefaultDependencies(
+  server?: ExtendedMcpServer,
+): PgToolDependencies {
+  return {
+    createClient: async (context: PgDbContext) =>
+      createManagerPgClient(context, server?.cloudBaseOptions),
+  };
+}
+
+type ExecutePGSqlResult = {
+  RequestId?: string;
+  AffectedRows?: number;
+  Columns?: string[] | null;
+  Rows?: string[] | null;
+  ExecutionTimeMs?: number;
+};
+
+type ExecutePGSqlDatabase = {
+  executePGSql(options: {
+    Sql: string;
+    Role?: string;
+    EnvId?: string;
+  }): Promise<ExecutePGSqlResult>;
+};
+
+type CloudBaseCommonService = {
+  call(options: {
+    Action: string;
+    Param: Record<string, unknown>;
+  }): Promise<ExecutePGSqlResult | { Response?: ExecutePGSqlResult }>;
+};
+
+type CloudBaseWithCommonService = {
+  commonService(service: string, version: string): CloudBaseCommonService;
+};
+
+/**
+ * Native PG migration methods on `manager.database`, added in
+ * @cloudbase/manager-node >= 5.6.5. Each method is a typed wrapper over the same
+ * tcb/2018-06-08 platform channel used by the commonService fallback, and returns
+ * the unwrapped API `Response` (same shape as `callPgMigrationApi`).
+ */
+type PgMigrationApiDatabase = {
+  previewPGUserMigrations(options: {
+    EnvId?: string;
+    Migrations: PgMigrationInput[];
+    IncludeAll?: boolean;
+  }): Promise<Record<string, unknown>>;
+  pushPGUserMigrations(options: {
+    EnvId?: string;
+    Migrations: PgMigrationInput[];
+    LockTimeoutMs?: number;
+    StatementTimeoutMs?: number;
+    IncludeAll?: boolean;
+  }): Promise<Record<string, unknown>>;
+  repairPGUserMigrationHistory(options: {
+    EnvId?: string;
+    MigrationVersion: string;
+    Name: string;
+    Status: "applied" | "reverted";
+    Reason: string;
+    Query?: string;
+  }): Promise<Record<string, unknown>>;
+  listPGUserMigrations(options?: {
+    EnvId?: string;
+    Limit?: number;
+    Offset?: number;
+  }): Promise<Record<string, unknown>>;
+  listAllPGUserMigrations(options?: {
+    EnvId?: string;
+    PageSize?: number;
+  }): Promise<Record<string, unknown>>;
+  describePGUserMigration(options: {
+    EnvId?: string;
+    MigrationVersion: string;
+  }): Promise<Record<string, unknown>>;
+  describeTaskResult(options: { EnvId?: string; TaskId: string }): Promise<Record<string, unknown>>;
+};
+
+function isPgMigrationApiDatabase(value: unknown): value is PgMigrationApiDatabase {
+  return Boolean(
+    value &&
+    typeof value === "object" &&
+    "previewPGUserMigrations" in value &&
+    typeof (value as { previewPGUserMigrations?: unknown }).previewPGUserMigrations === "function" &&
+    "pushPGUserMigrations" in value &&
+    typeof (value as { pushPGUserMigrations?: unknown }).pushPGUserMigrations === "function" &&
+    "listPGUserMigrations" in value &&
+    typeof (value as { listPGUserMigrations?: unknown }).listPGUserMigrations === "function" &&
+    "describeTaskResult" in value &&
+    typeof (value as { describeTaskResult?: unknown }).describeTaskResult === "function",
+  );
+}
+
+/**
+ * Actions without a native wrapper in manager-node are intentionally absent
+ * and keep using the commonService fallback.
+ */
+const PgMigrationNativeActionMethods: Record<string, keyof PgMigrationApiDatabase> = {
+  PreviewPGUserMigrations: "previewPGUserMigrations",
+  PushPGUserMigrations: "pushPGUserMigrations",
+  RepairPGUserMigrationHistory: "repairPGUserMigrationHistory",
+  ListPGUserMigrations: "listPGUserMigrations",
+  DescribePGUserMigration: "describePGUserMigration",
+  DescribeTaskResult: "describeTaskResult",
+};
+
+function isExecutePGSqlDatabase(value: unknown): value is ExecutePGSqlDatabase {
+  return Boolean(
+    value &&
+    typeof value === "object" &&
+    "executePGSql" in value &&
+    typeof (value as { executePGSql?: unknown }).executePGSql === "function",
+  );
+}
+
+function isCloudBaseWithCommonService(
+  value: unknown,
+): value is CloudBaseWithCommonService {
+  return Boolean(
+    value &&
+    typeof value === "object" &&
+    "commonService" in value &&
+    typeof (value as { commonService?: unknown }).commonService === "function",
+  );
+}
+
+async function executeManagerPGSql(
+  context: PgDbContext,
+  sql: string,
+  cloudBaseOptions?: ExtendedMcpServer["cloudBaseOptions"],
+): Promise<ExecutePGSqlResult> {
+  const manager = await getCloudBaseManager({
+    cloudBaseOptions: cloudBaseOptions
+      ? {
+          ...cloudBaseOptions,
+          envId: context.envId,
+        }
+      : {
+          envId: context.envId,
+        },
+  });
+  const options = {
+    Sql: sql,
+    Role: context.role,
+    EnvId: context.envId,
+  };
+
+  if (isExecutePGSqlDatabase(manager.database)) {
+    return manager.database.executePGSql(options);
+  }
+
+  if (isCloudBaseWithCommonService(manager)) {
+    const result = await manager.commonService("tcb", "2018-06-08").call({
+      Action: "ExecutePGSql",
+      Param: options,
+    });
+    return "Response" in result && result.Response ? result.Response : result;
+  }
+
+  throw new Error(t("databasePG.runtime.noExecutePgSql"));
+}
+
+/**
+ * Call a CloudBase PG migration API, preferring native manager-node methods
+ * (>= 5.6.5) and falling back to the commonService channel for older runtimes
+ * and actions without a native wrapper.
+ */
+async function callPgMigrationApi(
+  context: PgDbContext,
+  action: string,
+  params: Record<string, unknown>,
+  cloudBaseOptions?: ExtendedMcpServer["cloudBaseOptions"],
+): Promise<Record<string, unknown>> {
+  const manager = await getCloudBaseManager({
+    cloudBaseOptions: cloudBaseOptions
+      ? { ...cloudBaseOptions, envId: context.envId }
+      : { envId: context.envId },
+  });
+
+  const nativeMethod = PgMigrationNativeActionMethods[action];
+  if (nativeMethod && isPgMigrationApiDatabase(manager.database)) {
+    const invoke = manager.database[nativeMethod] as (
+      options: Record<string, unknown>,
+    ) => Promise<Record<string, unknown>>;
+    return invoke.call(manager.database, { EnvId: context.envId, ...params });
+  }
+
+  if (!isCloudBaseWithCommonService(manager)) {
+    throw new Error(t("databasePG.runtime.noMigrationApi"));
+  }
+
+  const result = await manager.commonService("tcb", "2018-06-08").call({
+    Action: action,
+    Param: { EnvId: context.envId, ...params },
+  });
+  return "Response" in result && result.Response
+    ? (result.Response as Record<string, unknown>)
+    : (result as Record<string, unknown>);
+}
+
+function parseManagerRows(result: ExecutePGSqlResult) {
+  const columns = result.Columns ?? [];
+  return (result.Rows ?? []).map((rowText) => {
+    let values: unknown;
+    try {
+      values = JSON.parse(rowText);
+    } catch {
+      values = [];
+    }
+
+    const arrayValues = Array.isArray(values) ? values : [];
+    return Object.fromEntries(
+      columns.map((column, index) => [column, arrayValues[index] ?? null]),
+    );
+  });
+}
+
+function renderPgLiteral(value: unknown): string {
+  if (value === null || value === undefined) {
+    return "NULL";
+  }
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? String(value) : "NULL";
+  }
+  if (typeof value === "boolean") {
+    return value ? "TRUE" : "FALSE";
+  }
+  if (value instanceof Date) {
+    return `'${value.toISOString().replace(/'/g, "''")}'`;
+  }
+  return `'${String(value).replace(/'/g, "''")}'`;
+}
+
+function renderParameterizedSql(sql: string, values?: unknown[]) {
+  if (!values || values.length === 0) {
+    return sql;
+  }
+
+  return sql.replace(/\$(\d+)/g, (placeholder, indexText) => {
+    const index = Number(indexText);
+    if (!Number.isInteger(index) || index < 1 || index > values.length) {
+      return placeholder;
+    }
+    return renderPgLiteral(values[index - 1]);
+  });
+}
+
+function inferCommand(sql: string) {
+  return getSqlVerb(sql) || undefined;
+}
+
+function createManagerPgClient(
+  context: PgDbContext,
+  cloudBaseOptions?: ExtendedMcpServer["cloudBaseOptions"],
+): PgClientLike {
+  return {
+    async connect() {
+      return undefined;
+    },
+    async query(sql: string, values?: unknown[]) {
+      const renderedSql = renderParameterizedSql(sql, values);
+      const result = await executeManagerPGSql(
+        context,
+        renderedSql,
+        cloudBaseOptions,
+      );
+      const rows = parseManagerRows(result);
+      return {
+        rows,
+        rowCount: result.AffectedRows ?? rows.length,
+        command: inferCommand(renderedSql),
+        fields: result.Columns?.map((name) => ({ name })) ?? [],
+      };
+    },
+    async end() {
+      return undefined;
+    },
+  };
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * 模块级 Promise 缓存：同一 server 生命周期内只探测一次 PG 就绪状态
+ * 照搬 MySQL lazy 就绪检查模式，避免每次业务调用都 SELECT 1
+ */
+let pgReadyPromise: Promise<void> | null = null;
+
+/**
+ * @internal 重置就绪探测缓存（仅供测试使用）
+ */
+export function __resetPgReadyCache() {
+  pgReadyPromise = null;
+}
+
+/**
+ * Per-env cache of successful backend snapshots. Only successful lookups are
+ * cached so a transient environment-info failure never freezes the gate.
+ */
+const pgProvisionCache = new Map<string, EnvRuntimeBackendSnapshot>();
+
+/**
+ * @internal Reset the provisioning snapshot cache (tests only).
+ */
+export function __resetPgProvisionCache() {
+  pgProvisionCache.clear();
+}
+
+/**
+ * Check whether CloudBase PostgreSQL is provisioned for the resolved env.
+ *
+ * Returns a PG_NOT_PROVISIONED payload when the environment is confirmed to
+ * have no PG backend, so callers can fail fast instead of running the ready
+ * probe (20 × SELECT 1) that would only time out. Returns null when PG is
+ * provisioned OR when environment info is unavailable — an unreadable env
+ * must never be turned into a false block; those calls keep their existing
+ * behaviour (context still returns, other actions fall through to
+ * PG_NOT_READY).
+ */
+async function checkPgProvisioned(
+  cloudBaseOptions: ExtendedMcpServer["cloudBaseOptions"] | undefined,
+  context: PgDbContext,
+): Promise<PgToolPayload | null> {
+  let snapshot = pgProvisionCache.get(context.envId);
+
+  if (!snapshot) {
+    try {
+      snapshot = await queryEnvRuntimeBackends(cloudBaseOptions, context.envId);
+    } catch {
+      return null;
+    }
+    pgProvisionCache.set(context.envId, snapshot);
+  }
+
+  if (snapshot.runtimeBackends.postgresql) {
+    return null;
+  }
+
+  return {
+    success: false,
+    errorCode: "PG_NOT_PROVISIONED",
+    message: t("databasePG.runtime.notProvisioned", { envId: snapshot.envId }),
+    data: {
+      envId: snapshot.envId,
+      runtimeMode: snapshot.runtimeMode,
+      // Public casing, matches queryEnv(action="info") EnvInfo.RuntimeBackends.
+      RuntimeBackends: { ...snapshot.runtimeBackends },
+    },
+    nextActions: [
+      buildNextAction(
+        "queryEnv",
+        "info",
+        t("databasePG.runtime.confirmBackends"),
+        { action: "info", envId: snapshot.envId },
+      ),
+    ],
+  };
+}
+
+/**
+ * 首次 SQL 调用时探测 PG 就绪，Promise 缓存避免重复探测
+ * 探测失败抛错，由调用方捕获返回 PG_NOT_READY 错误码
+ */
+async function ensurePgReadyOnce(
+  cloudBaseOptions: ExtendedMcpServer["cloudBaseOptions"] | undefined,
+  deps: PgToolDependencies,
+): Promise<void> {
+  if (pgReadyPromise) {
+    return pgReadyPromise;
+  }
+
+  pgReadyPromise = (async () => {
+    const context = await resolvePgDbContext(cloudBaseOptions);
+    const maxAttempts = deps.readyCheckOptions?.maxAttempts ?? 20;
+    const retryDelayMs = deps.readyCheckOptions?.retryDelayMs ?? 1000;
+    let lastError: unknown;
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      try {
+        await withPgClient(context, deps, async (client) => {
+          await client.query("SELECT 1");
+        });
+        return;
+      } catch (error) {
+        lastError = error;
+        if (attempt === maxAttempts) {
+          break;
+        }
+        await sleep(retryDelayMs);
+      }
+    }
+
+    const reason =
+      lastError instanceof Error ? lastError.message : String(lastError);
+    throw new Error(
+      t("databasePG.runtime.probeFailed", { maxAttempts, reason }),
+    );
+  })();
+
+  return pgReadyPromise;
+}
+
+async function handleQueryContext(context: PgDbContext) {
+  return buildPgToolResult({
+    success: true,
+    data: {
+      context: {
+        envId: context.envId,
+        instanceId: context.instanceId,
+        defaultSchema: context.defaultSchema,
+        runtimeMode: "cloudbase-manager",
+        bootstrapMode: "cloud",
+        role: context.role,
+      },
+    },
+    message: t("databasePG.queryContext.resolved"),
+    nextActions: [
+      buildNextAction(
+        QUERY_PG_DATABASE,
+        "objects",
+        t("databasePG.queryContext.listObjectsFirst"),
+        { action: "objects", limit: 20 },
+      ),
+    ],
+  });
+}
+
+async function handleListObjects(
+  args: QueryPgDatabaseArgs,
+  context: PgDbContext,
+  deps: PgToolDependencies,
+) {
+  const limit = normalizeLimit(args.limit);
+  const objects = await withPgClient(context, deps, (client) =>
+    listObjects(client, args.schema, limit),
+  );
+
+  return buildPgToolResult({
+    success: true,
+    data: {
+      objects,
+      schemaFilter: args.schema ?? null,
+      limit,
+    },
+    message: objects.length > 0
+      ? t("databasePG.listObjects.listed", { count: objects.length })
+      : t("databasePG.listObjects.none"),
+    nextActions:
+      objects.length > 0
+        ? [
+            buildSchemaNextAction(
+              t("databasePG.listObjects.inspectFirst"),
+              objects[0].schemaTable,
+            ),
+          ]
+        : [
+            buildNextAction(
+              QUERY_PG_DATABASE,
+              "context",
+              t("databasePG.listObjects.recheckContext"),
+              { action: "context" },
+            ),
+          ],
+  });
+}
+
+async function handleMetadata(
+  args: QueryPgDatabaseArgs,
+  context: PgDbContext,
+  deps: PgToolDependencies,
+) {
+  const limit = normalizeLimit(args.limit);
+  const tables = await withPgClient(context, deps, (client) =>
+    summarizeMetadata(client, args.schema, limit),
+  );
+
+  return buildPgToolResult({
+    success: true,
+    data: {
+      tables,
+      schemaFilter: args.schema ?? null,
+      limit,
+    },
+    message: tables.length > 0
+      ? t("databasePG.metadata.summarized", { count: tables.length })
+      : t("databasePG.metadata.none"),
+    nextActions:
+      tables.length > 0
+        ? [
+            buildSchemaNextAction(
+              t("databasePG.metadata.inspectTable"),
+              tables[0].schemaTable,
+            ),
+          ]
+        : [
+            buildNextAction(
+              QUERY_PG_DATABASE,
+              "objects",
+              t("databasePG.metadata.listObjectsFirst"),
+              { action: "objects", schema: args.schema, limit },
+            ),
+          ],
+  });
+}
+
+async function handleReadOnlySql(
+  args: QueryPgDatabaseArgs,
+  context: PgDbContext,
+  deps: PgToolDependencies,
+) {
+  if (!args.sql?.trim()) {
+    return buildPgToolResult({
+      success: false,
+      errorCode: "SQL_REQUIRED",
+      message: t("databasePG.readOnly.sqlRequired"),
+    });
+  }
+
+  if (!isReadOnlySql(args.sql)) {
+    return buildPgToolResult({
+      success: false,
+      errorCode: "READ_ONLY_SQL_REQUIRED",
+      message: t("databasePG.readOnly.readOnlyOnly"),
+      nextActions: [
+        buildNextAction(
+          MANAGE_PG_DATABASE,
+          "execute",
+          t("databasePG.readOnly.reissueViaManage"),
+          { action: "execute", sql: args.sql, confirm: true },
+        ),
+        buildSchemaNextAction(
+          t("databasePG.readOnly.inspectSchemaBeforeWrite"),
+          `${context.defaultSchema}.your_table`,
+        ),
+      ],
+    });
+  }
+
+  const limit = normalizeLimit(args.limit);
+  const limitedSql = buildLimitedReadOnlySql(args.sql, limit);
+  let result: PgQueryResult;
+  try {
+    result = await withPgClient(context, deps, (client) =>
+      client.query(limitedSql),
+    );
+  } catch (error) {
+    const rolePayload = tryBuildPgRoleErrorPayload(error, context.role);
+    if (rolePayload) {
+      return buildPgToolResult(rolePayload);
+    }
+    const reason = error instanceof Error ? error.message : String(error);
+    return buildPgToolResult({
+      success: false,
+      errorCode: "PG_SQL_EXEC_FAILED",
+      message: t("databasePG.readOnly.execFailed", { reason }),
+      data: {
+        role: context.role,
+        sqlPreview: args.sql.trim().slice(0, 500),
+      },
+    });
+  }
+  const summary = summarizeQueryResult(result, limit);
+
+  return buildPgToolResult({
+    success: true,
+    data: {
+      ...summary,
+      command: result.command ?? "SELECT",
+      rowCount: result.rowCount ?? summary.returnedRows,
+    },
+    message: summary.truncated
+      ? t("databasePG.readOnly.truncated", {
+          shown: summary.rows.length,
+          total: summary.returnedRows,
+        })
+      : t("databasePG.readOnly.success"),
+    nextActions: [
+      buildSchemaNextAction(
+        t("databasePG.readOnly.refine"),
+        parseTargetTableFromSql(args.sql, context.defaultSchema) ??
+          `${context.defaultSchema}.your_table`,
+      ),
+    ],
+  });
+}
+
+async function handleExecuteSql(
+  args: ManagePgDatabaseArgs,
+  context: PgDbContext,
+  deps: PgToolDependencies,
+) {
+  if (!args.sql?.trim()) {
+    return buildPgToolResult({
+      success: false,
+      errorCode: "SQL_REQUIRED",
+      message: t("databasePG.execute.sqlRequired"),
+    });
+  }
+
+  const classification = classifySqlRisk(args.sql);
+
+  if (isSchemaDdlRisk(classification.risk, args.sql) && args.allowDdlViaExecute !== true) {
+    return buildPgToolResult({
+      success: false,
+      errorCode: "DDL_USE_APPLY_MIGRATION",
+      message: t("databasePG.execute.ddlUseApplyMigration"),
+      data: {
+        classification,
+        localFileHintPattern: "cloudbase/migrations/<migrationVersion>_<migrationName>.sql",
+      },
+      nextActions: [
+        buildNextAction(
+          MANAGE_PG_DATABASE,
+          "planMigration",
+          t("databasePG.execute.previewAsMigration"),
+          {
+            action: "planMigration",
+            migrationName: "describe_your_change",
+            migrationVersion: "YYYYMMDDHHMMSS",
+            sql: args.sql,
+          },
+        ),
+        buildNextAction(
+          MANAGE_PG_DATABASE,
+          "applyMigration",
+          t("databasePG.execute.applyViaPush"),
+          {
+            action: "applyMigration",
+            migrationName: "describe_your_change",
+            migrationVersion: "YYYYMMDDHHMMSS",
+            sql: args.sql,
+            confirm: true,
+          },
+        ),
+      ],
+    });
+  }
+
+  if (args.role !== undefined && isLikelyInvalidPgExecuteRole(args.role)) {
+    return buildPgToolResult(buildPgRoleErrorPayload(args.role.trim() || "(empty)"));
+  }
+
+  if (!classification.readOnly && !args.confirm) {
+    return buildPgToolResult({
+      success: false,
+      errorCode: "CONFIRM_REQUIRED",
+      message: t("databasePG.execute.confirmRequired", { risk: classification.risk }),
+      data: {
+        classification,
+      },
+      nextActions: [
+        buildNextAction(
+          MANAGE_PG_DATABASE,
+          "execute",
+          t("databasePG.execute.reissueWithConfirm"),
+          {
+            action: "execute",
+            sql: args.sql,
+            confirm: true,
+            ...(args.allowDdlViaExecute === true ? { allowDdlViaExecute: true } : {}),
+          },
+        ),
+        buildNextAction(
+          QUERY_PG_DATABASE,
+          "metadata",
+          t("databasePG.execute.inspectBeforeDestructive"),
+          { action: "metadata", limit: 20 },
+        ),
+      ],
+    });
+  }
+
+  let result: PgQueryResult;
+  try {
+    result = await withPgClient(context, deps, (client) =>
+      client.query(args.sql!),
+    );
+  } catch (error) {
+    const rolePayload = tryBuildPgRoleErrorPayload(error, context.role);
+    if (rolePayload) {
+      return buildPgToolResult(rolePayload);
+    }
+    const reason = error instanceof Error ? error.message : String(error);
+    return buildPgToolResult({
+      success: false,
+      errorCode: "PG_SQL_EXEC_FAILED",
+      message: t("databasePG.execute.execFailed", { reason }),
+      data: {
+        role: context.role,
+        sqlPreview: args.sql.trim().slice(0, 500),
+      },
+    });
+  }
+
+  const targetTable = parseTargetTableFromSql(args.sql, context.defaultSchema);
+
+  return buildPgToolResult({
+    success: true,
+    data: {
+      classification,
+      command: result.command ?? getSqlVerb(args.sql),
+      rowCount: result.rowCount ?? null,
+      previewRows: result.rows
+        .slice(0, 5)
+        .map((row) => serializeValue(row) as Record<string, unknown>),
+      targetTable: targetTable ?? null,
+      ...(args.allowDdlViaExecute === true && isSchemaDdlRisk(classification.risk, args.sql)
+        ? {
+            warning: t("databasePG.execute.ddlBypassWarning"),
+          }
+        : {}),
+    },
+    message:
+      args.allowDdlViaExecute === true && isSchemaDdlRisk(classification.risk, args.sql)
+        ? t("databasePG.execute.successDdlBypass")
+        : t("databasePG.execute.success"),
+    nextActions:
+      classification.risk === "schema_change" && targetTable
+        ? [
+            buildNextAction(
+              QUERY_PG_DATABASE,
+              "schema",
+              t("databasePG.execute.inspectAfterSchema"),
+              {
+                action: "schema",
+                objectName: targetTable,
+              },
+            ),
+          ]
+        : [
+            buildNextAction(
+              QUERY_PG_DATABASE,
+              "sql",
+              t("databasePG.execute.verifyMutation"),
+              {
+                action: "sql",
+                sql: targetTable
+                  ? `SELECT * FROM ${targetTable} LIMIT 20`
+                  : "SELECT 1",
+                limit: 20,
+              },
+            ),
+          ],
+  });
+}
+
+async function handleDryRun(args: ManagePgDatabaseArgs) {
+  if (!args.sql?.trim()) {
+    return buildPgToolResult({
+      success: false,
+      errorCode: "SQL_REQUIRED",
+      message: t("databasePG.dryRun.sqlRequired"),
+    });
+  }
+
+  const classification = classifySqlRisk(args.sql);
+  const schemaDdl = isSchemaDdlRisk(classification.risk, args.sql);
+
+  if (classification.readOnly) {
+    return buildPgToolResult({
+      success: true,
+      data: {
+        classification,
+        wouldExecute: false,
+        sqlPreview: args.sql.trim().slice(0, 500),
+      },
+      message: t("databasePG.dryRun.readOnlyDone"),
+      nextActions: [
+        buildNextAction(
+          QUERY_PG_DATABASE,
+          "sql",
+          t("databasePG.dryRun.executeViaQuery"),
+          { action: "sql", sql: args.sql, limit: 20 },
+        ),
+      ],
+    });
+  }
+
+  if (schemaDdl) {
+    return buildPgToolResult({
+      success: true,
+      data: {
+        classification,
+        wouldExecute: false,
+        sqlPreview: args.sql.trim().slice(0, 500),
+        preferredAction: "applyMigration",
+        localFileHintPattern: "cloudbase/migrations/<migrationVersion>_<migrationName>.sql",
+      },
+      message: t("databasePG.dryRun.schemaDdlDone"),
+      nextActions: [
+        buildNextAction(
+          MANAGE_PG_DATABASE,
+          "applyMigration",
+          t("databasePG.dryRun.applyViaMigration"),
+          {
+            action: "applyMigration",
+            migrationName: "describe_your_change",
+            migrationVersion: "YYYYMMDDHHMMSS",
+            sql: args.sql,
+            confirm: true,
+          },
+        ),
+      ],
+    });
+  }
+
+  return buildPgToolResult({
+    success: true,
+    data: {
+      classification,
+      wouldExecute: false,
+      sqlPreview: args.sql.trim().slice(0, 500),
+    },
+    message: t("databasePG.dryRun.writeDone"),
+    nextActions: [
+      buildNextAction(
+        MANAGE_PG_DATABASE,
+        "execute",
+        t("databasePG.dryRun.executeAfterConfirm"),
+        { action: "execute", sql: args.sql, confirm: true },
+      ),
+    ],
+  });
+}
+
+async function handlePlanMigration(args: ManagePgDatabaseArgs, context: PgDbContext, deps: PgToolDependencies, cloudBaseOptions?: ExtendedMcpServer["cloudBaseOptions"]) {
+  if (!args.sql?.trim()) {
+    return buildPgToolResult({
+      success: false,
+      errorCode: "SQL_REQUIRED",
+      message: t("databasePG.planMigration.sqlRequired"),
+    });
+  }
+
+  if (!args.migrationName?.trim()) {
+    return buildPgToolResult({
+      success: false,
+      errorCode: "MIGRATION_NAME_REQUIRED",
+      message: t("databasePG.planMigration.nameRequired"),
+    });
+  }
+
+  const invalidName = validateMigrationName(args.migrationName, "planMigration");
+  if (invalidName) {
+    return invalidName;
+  }
+
+  const versionOrError = requireExplicitMigrationVersion(args, "planMigration");
+  if (typeof versionOrError !== "string") {
+    return versionOrError;
+  }
+  const version = versionOrError;
+  const localFileHint = buildLocalMigrationFileHint(version, args.migrationName);
+
+  const pending: PgMigrationInput = {
+    Version: version,
+    Name: args.migrationName,
+    Query: args.sql,
+  };
+  if (args.rollbackSql?.trim()) {
+    pending.Rollback = args.rollbackSql;
+  }
+
+  try {
+    const hydrated = await buildMigrationsPayloadWithRemoteHistory(
+      context,
+      pending,
+      cloudBaseOptions,
+    );
+    const includeAll = Boolean(args.includeAll);
+    const result = await callPgMigrationApi(context, "PreviewPGUserMigrations", {
+      Migrations: hydrated.migrations,
+      IncludeAll: includeAll,
+    }, cloudBaseOptions);
+    const executable = result.Executable === true;
+    const payloadSourceLabel = formatMigrationsPayloadSourceLabel(
+      hydrated.payloadSource,
+      hydrated.remoteCount,
+    );
+    return buildPgToolResult({
+      success: true,
+      data: {
+        migrationVersion: version,
+        migrationName: args.migrationName,
+        localFileHint,
+        hydratedRemoteCount: hydrated.remoteCount,
+        latestRemoteVersion: hydrated.latestVersion || null,
+        payloadSource: hydrated.payloadSource,
+        includeAll,
+        executable,
+        apiResult: result as Record<string, unknown>,
+      },
+      message: executable
+        ? t("databasePG.planMigration.executable", {
+            source: payloadSourceLabel,
+            includeAll: includeAll ? "，includeAll=true" : "",
+            version,
+            localFileHint,
+          })
+        : t("databasePG.planMigration.notExecutable", {
+            source: payloadSourceLabel,
+            includeAll: includeAll ? "，includeAll=true" : "",
+            latest: hydrated.latestVersion || "unknown",
+          }),
+      nextActions: [
+        buildNextAction(
+          MANAGE_PG_DATABASE,
+          "applyMigration",
+          executable
+            ? t("databasePG.planMigration.reviewPlan")
+            : t("databasePG.planMigration.resolveConflicts"),
+          {
+            action: "applyMigration",
+            migrationName: args.migrationName,
+            migrationVersion: version,
+            sql: args.sql,
+            confirm: true,
+            ...(args.rollbackSql ? { rollbackSql: args.rollbackSql } : {}),
+            ...(includeAll ? { includeAll: true } : {}),
+          },
+        ),
+      ],
+    });
+  } catch (error) {
+    return buildPgToolResult({
+      success: false,
+      errorCode: "MIGRATION_API_ERROR",
+      message: t("databasePG.planMigration.failed", {
+        reason: error instanceof Error ? error.message : String(error),
+      }),
+    });
+  }
+}
+
+async function handleApplyMigration(args: ManagePgDatabaseArgs, context: PgDbContext, deps: PgToolDependencies, cloudBaseOptions?: ExtendedMcpServer["cloudBaseOptions"]) {
+  if (!args.sql?.trim()) {
+    return buildPgToolResult({
+      success: false,
+      errorCode: "SQL_REQUIRED",
+      message: t("databasePG.applyMigration.sqlRequired"),
+    });
+  }
+
+  if (!args.migrationName?.trim()) {
+    return buildPgToolResult({
+      success: false,
+      errorCode: "MIGRATION_NAME_REQUIRED",
+      message: t("databasePG.applyMigration.nameRequired"),
+    });
+  }
+
+  const invalidName = validateMigrationName(args.migrationName, "applyMigration");
+  if (invalidName) {
+    return invalidName;
+  }
+
+  if (args.confirm !== true) {
+    return buildPgToolResult({
+      success: false,
+      errorCode: "CONFIRM_REQUIRED",
+      message: t("databasePG.applyMigration.confirmRequired"),
+    });
+  }
+
+  const versionOrError = requireExplicitMigrationVersion(args, "applyMigration");
+  if (typeof versionOrError !== "string") {
+    return versionOrError;
+  }
+  const version = versionOrError;
+  const localFileHint = buildLocalMigrationFileHint(version, args.migrationName);
+
+  // Prefer write-to-workspace (or fail closed) so remote history cannot advance without a Git truth source.
+  const localFile = ensureLocalMigrationSqlFile(version, args.migrationName, args.sql);
+  if (!localFile.ok) {
+    return buildPgToolResult({
+      success: false,
+      errorCode: localFile.errorCode,
+      data: {
+        migrationVersion: version,
+        migrationName: args.migrationName,
+        localFileHint,
+        localFilePath: localFile.relativePath ?? localFileHint,
+        localFileAbsolutePath: localFile.absolutePath ?? null,
+        verified: false,
+      },
+      message: localFile.message,
+      nextActions: [
+        buildNextAction(
+          MANAGE_PG_DATABASE,
+          "planMigration",
+          t("databasePG.applyMigration.previewAgain"),
+          {
+            action: "planMigration",
+            migrationName: args.migrationName,
+            migrationVersion: version,
+            sql: args.sql,
+            ...(args.rollbackSql ? { rollbackSql: args.rollbackSql } : {}),
+            ...(args.includeAll ? { includeAll: true } : {}),
+          },
+        ),
+      ],
+    });
+  }
+
+  const pending: PgMigrationInput = {
+    Version: version,
+    Name: args.migrationName,
+    Query: args.sql,
+  };
+  if (args.rollbackSql?.trim()) {
+    pending.Rollback = args.rollbackSql;
+  }
+
+  const includeAll = Boolean(args.includeAll);
+
+  try {
+    // Pushing only the pending migration while remote history exists makes the plan
+    // non-executable (remote_history_not_found_locally). Prefer local tree when complete
+    // (CLI parity); otherwise hydrate remote Queries (List + N×Describe).
+    const hydrated = await buildMigrationsPayloadWithRemoteHistory(
+      context,
+      pending,
+      cloudBaseOptions,
+    );
+    const payloadSourceLabel = formatMigrationsPayloadSourceLabel(
+      hydrated.payloadSource,
+      hydrated.remoteCount,
+    );
+
+    const preview = await callPgMigrationApi(
+      context,
+      "PreviewPGUserMigrations",
+      { Migrations: hydrated.migrations, IncludeAll: includeAll },
+      cloudBaseOptions,
+    );
+
+    if (preview.Executable !== true) {
+      return buildPgToolResult({
+        success: false,
+        errorCode: "MIGRATION_NOT_EXECUTABLE",
+        data: {
+          migrationVersion: version,
+          migrationName: args.migrationName,
+          localFileHint,
+          hydratedRemoteCount: hydrated.remoteCount,
+          latestRemoteVersion: hydrated.latestVersion || null,
+          payloadSource: hydrated.payloadSource,
+          includeAll,
+          previewResult: preview as Record<string, unknown>,
+          verified: false,
+        },
+        message: t("databasePG.applyMigration.notExecutable", {
+          version,
+          latest: hydrated.latestVersion || "unknown",
+          source: payloadSourceLabel,
+          includeAll: String(includeAll),
+        }),
+        nextActions: [
+          buildNextAction(
+            MANAGE_PG_DATABASE,
+            "listMigrations",
+            t("databasePG.applyMigration.checkLatest"),
+            { action: "listMigrations", limit: 20 },
+          ),
+          buildNextAction(
+            MANAGE_PG_DATABASE,
+            "planMigration",
+            t("databasePG.applyMigration.rerunPlan"),
+            {
+              action: "planMigration",
+              migrationName: args.migrationName,
+              migrationVersion: version,
+              sql: args.sql,
+              ...(args.rollbackSql ? { rollbackSql: args.rollbackSql } : {}),
+              ...(includeAll ? { includeAll: true } : {}),
+            },
+          ),
+        ],
+      });
+    }
+
+    const params: Record<string, unknown> = {
+      Migrations: hydrated.migrations,
+      IncludeAll: includeAll,
+    };
+    if (args.lockTimeoutMs !== undefined) {
+      params.LockTimeoutMs = args.lockTimeoutMs;
+    }
+    if (args.statementTimeoutMs !== undefined) {
+      params.StatementTimeoutMs = args.statementTimeoutMs;
+    }
+
+    const result = await callPgMigrationApi(context, "PushPGUserMigrations", params, cloudBaseOptions);
+    const taskId = typeof result.TaskId === "string" ? result.TaskId.trim() : "";
+    const pollTimeoutMs = resolveMigrationTaskPollTimeoutMs(args.taskPollTimeoutMs);
+    const shouldWaitForTask = args.waitForTask !== false;
+
+    let taskResult: PgMigrationTaskResult | null = null;
+    if (taskId && !shouldWaitForTask) {
+      return buildPgToolResult({
+        success: false,
+        errorCode: "MIGRATION_TASK_PENDING",
+        data: {
+          migrationVersion: version,
+          migrationName: args.migrationName,
+          localFileHint,
+          hydratedRemoteCount: hydrated.remoteCount,
+          payloadSource: hydrated.payloadSource,
+          apiResult: result as Record<string, unknown>,
+          taskResult: { TaskId: taskId },
+          taskPollTimeoutMs: pollTimeoutMs,
+          waitForTask: false,
+          verified: null,
+        },
+        message: t("databasePG.applyMigration.taskPending", { taskId, version }),
+        nextActions: buildMigrationTaskPendingNextActions(version, taskId),
+      });
+    }
+
+    if (taskId) {
+      try {
+        taskResult = await waitPgMigrationTask(context, taskId, cloudBaseOptions, pollTimeoutMs);
+      } catch (error) {
+        const lastTask = (error as Error & { lastTask?: PgMigrationTaskResult }).lastTask;
+        return buildPgToolResult({
+          success: false,
+          errorCode: "MIGRATION_TASK_TIMEOUT",
+          data: {
+            migrationVersion: version,
+            migrationName: args.migrationName,
+            localFileHint,
+            hydratedRemoteCount: hydrated.remoteCount,
+            apiResult: result as Record<string, unknown>,
+            taskResult: lastTask ?? { TaskId: taskId },
+            taskPollTimeoutMs: pollTimeoutMs,
+            verified: null,
+          },
+          message: t("databasePG.applyMigration.taskTimeout", {
+            taskId,
+            seconds: Math.floor(pollTimeoutMs / 1000),
+            reason: error instanceof Error ? error.message : String(error),
+          }),
+          nextActions: buildMigrationTaskPendingNextActions(version, taskId),
+        });
+      }
+
+      const status = String(taskResult.Status || "").toLowerCase();
+      if (status === "failed") {
+        return buildPgToolResult({
+          success: false,
+          errorCode: "MIGRATION_TASK_FAILED",
+          data: {
+            migrationVersion: version,
+            migrationName: args.migrationName,
+            localFileHint,
+            hydratedRemoteCount: hydrated.remoteCount,
+            apiResult: result as Record<string, unknown>,
+            taskResult: taskResult as Record<string, unknown>,
+            verified: false,
+          },
+          message: t("databasePG.applyMigration.taskFailed", {
+            taskId,
+            phase: taskResult.Phase || "-",
+            reason: taskResult.Reason || "unknown reason",
+          }),
+          nextActions: [
+            buildNextAction(
+              MANAGE_PG_DATABASE,
+              "planMigration",
+              t("databasePG.applyMigration.previewConflicts"),
+              {
+                action: "planMigration",
+                migrationName: args.migrationName,
+                migrationVersion: version,
+                sql: args.sql,
+                ...(args.rollbackSql ? { rollbackSql: args.rollbackSql } : {}),
+                ...(includeAll ? { includeAll: true } : {}),
+              },
+            ),
+            buildNextAction(
+              MANAGE_PG_DATABASE,
+              "listMigrations",
+              t("databasePG.applyMigration.confirmAbsent"),
+              { action: "listMigrations", limit: 20 },
+            ),
+          ],
+        });
+      }
+    }
+
+    // Task Succeed (or sync response without TaskId): confirm history records the version.
+    const verification = await verifyMigrationApplied(context, version, cloudBaseOptions);
+
+    if (verification.applied === false) {
+      return buildPgToolResult({
+        success: false,
+        errorCode: "MIGRATION_NOT_APPLIED",
+        data: {
+          migrationVersion: version,
+          migrationName: args.migrationName,
+          localFileHint,
+          hydratedRemoteCount: hydrated.remoteCount,
+          includeAll,
+          apiResult: result as Record<string, unknown>,
+          taskResult: taskResult as Record<string, unknown> | null,
+          verified: false,
+        },
+        message: t("databasePG.applyMigration.notApplied", {
+          taskId: taskId || "none",
+          version,
+        }),
+        nextActions: [
+          buildNextAction(
+            MANAGE_PG_DATABASE,
+            "listMigrations",
+            t("databasePG.applyMigration.confirmMissing"),
+            { action: "listMigrations", limit: 20 },
+          ),
+          buildNextAction(
+            MANAGE_PG_DATABASE,
+            "migrationDetail",
+            t("databasePG.applyMigration.inspectBackend"),
+            { action: "migrationDetail", migrationVersion: version },
+          ),
+        ],
+      });
+    }
+
+    if (verification.applied === null) {
+      return buildPgToolResult({
+        success: false,
+        errorCode: "MIGRATION_VERIFICATION_FAILED",
+        data: {
+          migrationVersion: version,
+          migrationName: args.migrationName,
+          localFileHint,
+          hydratedRemoteCount: hydrated.remoteCount,
+          apiResult: result as Record<string, unknown>,
+          taskResult: taskResult as Record<string, unknown> | null,
+          verified: null,
+        },
+        message: t("databasePG.applyMigration.verifyFailed", {
+          version,
+          reason: verification.error ?? "-",
+        }),
+        nextActions: [
+          buildNextAction(
+            MANAGE_PG_DATABASE,
+            "listMigrations",
+            t("databasePG.applyMigration.manuallyVerify"),
+            { action: "listMigrations", limit: 20 },
+          ),
+        ],
+      });
+    }
+
+    return buildPgToolResult({
+      success: true,
+      data: {
+        migrationVersion: version,
+        migrationName: args.migrationName,
+        localFileHint,
+        localFilePath: localFile.relativePath,
+        localFileAbsolutePath: localFile.absolutePath,
+        localFileAction: localFile.action,
+        hydratedRemoteCount: hydrated.remoteCount,
+        payloadSource: hydrated.payloadSource,
+        includeAll,
+        apiResult: result as Record<string, unknown>,
+        taskResult: taskResult as Record<string, unknown> | null,
+        verified: true,
+      },
+      message: t("databasePG.applyMigration.success", {
+        source: payloadSourceLabel,
+        includeAll: includeAll ? "，includeAll=true" : "",
+        task: taskId ? `TaskId=${taskId} ` : "",
+        localAction:
+          localFile.action === "created"
+            ? t("databasePG.applyMigration.localWritten")
+            : t("databasePG.applyMigration.localMatched"),
+        localPath: localFile.relativePath,
+      }),
+    });
+  } catch (error) {
+    return buildPgToolResult({
+      success: false,
+      errorCode: "MIGRATION_API_ERROR",
+      message: t("databasePG.applyMigration.failed", {
+        reason: error instanceof Error ? error.message : String(error),
+      }),
+    });
+  }
+}
+
+async function handleListMigrations(args: ManagePgDatabaseArgs, context: PgDbContext, deps: PgToolDependencies, cloudBaseOptions?: ExtendedMcpServer["cloudBaseOptions"]) {
+  const params: Record<string, unknown> = {};
+  if (args.limit !== undefined) {
+    params.Limit = args.limit;
+  }
+  if (args.offset !== undefined) {
+    params.Offset = args.offset;
+  }
+
+  try {
+    const result = await callPgMigrationApi(context, "ListPGUserMigrations", params, cloudBaseOptions);
+    return buildPgToolResult({
+      success: true,
+      data: result as Record<string, unknown>,
+      message: t("databasePG.listMigrations.success"),
+    });
+  } catch (error) {
+    return buildPgToolResult({
+      success: false,
+      errorCode: "MIGRATION_API_ERROR",
+      message: t("databasePG.listMigrations.failed", {
+        reason: error instanceof Error ? error.message : String(error),
+      }),
+    });
+  }
+}
+
+async function handleMigrationDetail(args: ManagePgDatabaseArgs, context: PgDbContext, deps: PgToolDependencies, cloudBaseOptions?: ExtendedMcpServer["cloudBaseOptions"]) {
+  if (!args.migrationVersion?.trim()) {
+    return buildPgToolResult({
+      success: false,
+      errorCode: "MIGRATION_VERSION_REQUIRED",
+      message: t("databasePG.migrationDetail.versionRequired"),
+    });
+  }
+
+  try {
+    const result = await callPgMigrationApi(context, "DescribePGUserMigration", {
+      MigrationVersion: args.migrationVersion,
+    }, cloudBaseOptions);
+    return buildPgToolResult({
+      success: true,
+      data: result as Record<string, unknown>,
+      message: t("databasePG.migrationDetail.success"),
+    });
+  } catch (error) {
+    return buildPgToolResult({
+      success: false,
+      errorCode: "MIGRATION_API_ERROR",
+      message: t("databasePG.migrationDetail.failed", {
+        reason: error instanceof Error ? error.message : String(error),
+      }),
+    });
+  }
+}
+
+/**
+ * One-shot DescribeTaskResult for a PushPGUserMigrations TaskId.
+ * Complements listMigrations: history shows whether a version landed; task result shows
+ * Status/Phase/Reason while the job is running or after it Failed (issue #857 evidence path).
+ */
+async function handleDescribeMigrationTask(
+  args: ManagePgDatabaseArgs,
+  context: PgDbContext,
+  _deps: PgToolDependencies,
+  cloudBaseOptions?: ExtendedMcpServer["cloudBaseOptions"],
+) {
+  const taskId = args.taskId?.trim();
+  if (!taskId) {
+    return buildPgToolResult({
+      success: false,
+      errorCode: "TASK_ID_REQUIRED",
+      message: t("databasePG.migration.taskIdRequired"),
+    });
+  }
+
+  try {
+    const taskResult = (await callPgMigrationApi(
+      context,
+      "DescribeTaskResult",
+      { TaskId: taskId },
+      cloudBaseOptions,
+    )) as PgMigrationTaskResult;
+    const status = String(taskResult.Status || "").toLowerCase();
+    const versionHint = args.migrationVersion?.trim();
+
+    const nextActions: ToolNextStep[] = [];
+    if (status === "succeed") {
+      nextActions.push(
+        buildNextAction(
+          MANAGE_PG_DATABASE,
+          "listMigrations",
+          t("databasePG.task.succeedConfirm"),
+          { action: "listMigrations", limit: 20 },
+        ),
+      );
+      if (versionHint) {
+        nextActions.push(
+          buildNextAction(
+            MANAGE_PG_DATABASE,
+            "migrationDetail",
+            t("databasePG.task.inspectApplied"),
+            { action: "migrationDetail", migrationVersion: versionHint },
+          ),
+        );
+      }
+    } else if (status === "failed") {
+      nextActions.push(
+        buildNextAction(
+          MANAGE_PG_DATABASE,
+          "listMigrations",
+          t("databasePG.task.failedFixFirst"),
+          { action: "listMigrations", limit: 20 },
+        ),
+      );
+    } else {
+      nextActions.push(
+        buildNextAction(
+          MANAGE_PG_DATABASE,
+          "describeMigrationTask",
+          t("databasePG.task.stillRunning"),
+          { action: "describeMigrationTask", taskId },
+        ),
+        buildNextAction(
+          MANAGE_PG_DATABASE,
+          "listMigrations",
+          t("databasePG.task.optionallyCheck"),
+          { action: "listMigrations", limit: 20 },
+        ),
+      );
+    }
+
+    const statusLabel = taskResult.Status || "unknown";
+    return buildPgToolResult({
+      success: true,
+      data: {
+        taskId,
+        taskResult: taskResult as Record<string, unknown>,
+        terminal: status === "succeed" || status === "failed",
+        ...(versionHint ? { migrationVersion: versionHint } : {}),
+      },
+      message:
+        status === "succeed"
+          ? t("databasePG.describeTask.succeed", { taskId, phase: taskResult.Phase || "-" })
+          : status === "failed"
+            ? t("databasePG.describeTask.failed", {
+                taskId,
+                phase: taskResult.Phase || "-",
+                reason: taskResult.Reason || "unknown reason",
+              })
+            : t("databasePG.describeTask.running", {
+                taskId,
+                status: statusLabel,
+                phase: taskResult.Phase || "-",
+              }),
+      nextActions,
+    });
+  } catch (error) {
+    return buildPgToolResult({
+      success: false,
+      errorCode: "MIGRATION_API_ERROR",
+      message: t("databasePG.describeTask.failedApi", {
+        taskId,
+        reason: error instanceof Error ? error.message : String(error),
+      }),
+    });
+  }
+}
+
+/**
+ * Pull remote migration history SQL into cloudbase/migrations/ (CLI `tcb db pg migration fetch`).
+ * Optional migrationVersion fetches one record; omit for full history. force overwrites existing files.
+ */
+async function handleFetchMigration(
+  args: ManagePgDatabaseArgs,
+  context: PgDbContext,
+  _deps: PgToolDependencies,
+  cloudBaseOptions?: ExtendedMcpServer["cloudBaseOptions"],
+) {
+  const force = args.force === true;
+  const singleVersion = args.migrationVersion?.trim();
+
+  try {
+    const remoteItems: FetchedRemoteMigration[] = [];
+
+    if (singleVersion) {
+      const detail = await callPgMigrationApi(
+        context,
+        "DescribePGUserMigration",
+        { MigrationVersion: singleVersion },
+        cloudBaseOptions,
+      );
+      const version =
+        typeof detail.Version === "string" && detail.Version.trim()
+          ? detail.Version.trim()
+          : singleVersion;
+      const name =
+        typeof detail.Name === "string" && detail.Name.trim()
+          ? detail.Name.trim()
+          : "";
+      const query = typeof detail.Query === "string" ? detail.Query : "";
+      remoteItems.push({ Version: version, Name: name || version, Query: query });
+    } else {
+      const { summaries } = await listAllRemoteMigrationSummaries(context, cloudBaseOptions);
+      for (const summary of summaries) {
+        const detail = await callPgMigrationApi(
+          context,
+          "DescribePGUserMigration",
+          { MigrationVersion: summary.Version },
+          cloudBaseOptions,
+        );
+        const version =
+          typeof detail.Version === "string" && detail.Version.trim()
+            ? detail.Version.trim()
+            : summary.Version;
+        const name =
+          typeof detail.Name === "string" && detail.Name.trim()
+            ? detail.Name.trim()
+            : summary.Name;
+        const query = typeof detail.Query === "string" ? detail.Query : "";
+        remoteItems.push({ Version: version, Name: name, Query: query });
+      }
+    }
+
+    const sync = syncFetchedMigrationsToLocalFiles(remoteItems, force);
+    if (!sync.ok) {
+      return buildPgToolResult({
+        success: false,
+        errorCode: sync.errorCode,
+        message: sync.message,
+        data: {
+          migrationsDir: LOCAL_MIGRATIONS_DIR,
+          force,
+          localFilePath: sync.relativePath,
+        },
+      });
+    }
+
+    const written = sync.files.filter((f) => f.action === "written");
+    const skipped = sync.files.filter((f) => f.action === "skipped");
+
+    return buildPgToolResult({
+      success: true,
+      data: {
+        migrationsDir: LOCAL_MIGRATIONS_DIR,
+        force,
+        migrationVersion: singleVersion || null,
+        total: remoteItems.length,
+        writtenCount: written.length,
+        skippedCount: skipped.length,
+        written: written.map((f) => f.relativePath),
+        skipped: skipped.map((f) => f.relativePath),
+        files: sync.files.map(({ version, name, relativePath, action }) => ({
+          version,
+          name,
+          relativePath,
+          action,
+        })),
+      },
+      message: remoteItems.length === 0
+        ? t("databasePG.fetch.none")
+        : t("databasePG.fetch.fetched", {
+            total: remoteItems.length,
+            written: written.length,
+            skipped: skipped.length,
+            suffix:
+              skipped.length > 0 && !force ? t("databasePG.fetch.forceHint") : "",
+            dir: LOCAL_MIGRATIONS_DIR,
+          }),
+      nextActions:
+        skipped.length > 0 && !force
+          ? [
+              buildNextAction(
+                MANAGE_PG_DATABASE,
+                "fetchMigration",
+                t("databasePG.fetch.rerunWithForce"),
+                {
+                  action: "fetchMigration",
+                  force: true,
+                  ...(singleVersion ? { migrationVersion: singleVersion } : {}),
+                },
+              ),
+            ]
+          : undefined,
+    });
+  } catch (error) {
+    return buildPgToolResult({
+      success: false,
+      errorCode: "MIGRATION_API_ERROR",
+      message: t("databasePG.fetch.failed", {
+        reason: error instanceof Error ? error.message : String(error),
+      }),
+    });
+  }
+}
+
+async function handleRepairMigration(args: ManagePgDatabaseArgs, context: PgDbContext, deps: PgToolDependencies, cloudBaseOptions?: ExtendedMcpServer["cloudBaseOptions"]) {
+  if (!args.migrationVersion?.trim()) {
+    return buildPgToolResult({
+      success: false,
+      errorCode: "MIGRATION_VERSION_REQUIRED",
+      message: t("databasePG.repair.versionRequired"),
+    });
+  }
+
+  if (!args.migrationName?.trim()) {
+    return buildPgToolResult({
+      success: false,
+      errorCode: "MIGRATION_NAME_REQUIRED",
+      message: t("databasePG.repair.nameRequired"),
+    });
+  }
+
+  const invalidRepairName = validateMigrationName(args.migrationName, "repairMigration");
+  if (invalidRepairName) {
+    return invalidRepairName;
+  }
+
+  if (!args.repairStatus) {
+    return buildPgToolResult({
+      success: false,
+      errorCode: "REPAIR_STATUS_REQUIRED",
+      message: t("databasePG.repair.statusRequired"),
+    });
+  }
+
+  if (!args.repairReason?.trim()) {
+    return buildPgToolResult({
+      success: false,
+      errorCode: "REPAIR_REASON_REQUIRED",
+      message: t("databasePG.repair.reasonRequired"),
+    });
+  }
+
+  if (args.repairStatus === "applied" && !args.sql?.trim()) {
+    return buildPgToolResult({
+      success: false,
+      errorCode: "SQL_REQUIRED",
+      message: t("databasePG.repair.sqlRequired"),
+    });
+  }
+
+  const params: Record<string, unknown> = {
+    MigrationVersion: args.migrationVersion,
+    Name: args.migrationName,
+    Status: args.repairStatus,
+    Reason: args.repairReason,
+  };
+  if (args.repairStatus === "applied" && args.sql?.trim()) {
+    params.Query = args.sql;
+  }
+
+  try {
+    const result = await callPgMigrationApi(context, "RepairPGUserMigrationHistory", params, cloudBaseOptions);
+    return buildPgToolResult({
+      success: true,
+      data: result as Record<string, unknown>,
+      message: t("databasePG.repair.success"),
+    });
+  } catch (error) {
+    return buildPgToolResult({
+      success: false,
+      errorCode: "MIGRATION_API_ERROR",
+      message: t("databasePG.repair.failed", {
+        reason: error instanceof Error ? error.message : String(error),
+      }),
+    });
+  }
+}
+
+async function handleGetPgSchema(
+  args: Pick<QueryPgDatabaseArgs, "objectName">,
+  context: PgDbContext,
+  deps: PgToolDependencies,
+) {
+  const objectName = args.objectName ?? "";
+  const parsed = parseSchemaQualifiedName(objectName);
+  if (!parsed) {
+    return buildPgToolResult({
+      success: false,
+      errorCode: "SCHEMA_QUALIFIED_NAME_REQUIRED",
+      message: t("databasePG.schema.nameRequired"),
+    });
+  }
+
+  const schemaInfo = await withPgClient(context, deps, (client) =>
+    readSchemaInfo(client, parsed.schema, parsed.name),
+  );
+
+  if (!schemaInfo) {
+    return buildPgToolResult({
+      success: false,
+      errorCode: "OBJECT_NOT_FOUND",
+      message: t("databasePG.schema.notFound", { objectName }),
+      nextActions: [
+        buildNextAction(
+          QUERY_PG_DATABASE,
+          "objects",
+          t("databasePG.schema.listObjects"),
+          { action: "objects", schema: parsed.schema, limit: 20 },
+        ),
+      ],
+    });
+  }
+
+  const security = schemaInfo.security;
+  const rlsWithoutPolicies =
+    security.rowLevelSecurityEnabled && security.policies.length === 0;
+
+  return buildPgToolResult({
+    success: true,
+    data: schemaInfo as unknown as Record<string, unknown>,
+    message: rlsWithoutPolicies
+      ? t("databasePG.schema.rlsNoPolicies")
+      : t("databasePG.schema.resolved"),
+    nextActions: [
+      ...(rlsWithoutPolicies
+        ? [
+            buildNextAction(
+              MANAGE_PG_DATABASE,
+              "execute",
+              t("databasePG.schema.createPolicies"),
+              {
+                action: "execute",
+                sql: `-- Example: CREATE POLICY ... ON ${objectName} FOR SELECT USING (true);`,
+                confirm: true,
+              },
+            ),
+          ]
+        : []),
+      buildNextAction(
+        QUERY_PG_DATABASE,
+        "metadata",
+        t("databasePG.schema.checkNearby"),
+        { action: "metadata", schema: parsed.schema, limit: 20 },
+      ),
+      buildNextAction(
+        QUERY_PG_DATABASE,
+        "sql",
+        t("databasePG.schema.runFocusedQuery"),
+        {
+          action: "sql",
+          sql: `SELECT * FROM ${objectName} LIMIT 20`,
+          limit: 20,
+        },
+      ),
+    ],
+  });
+}
+
+export function registerPGDatabaseTools(
+  server: ExtendedMcpServer,
+  providedDeps?: Partial<PgToolDependencies>,
+) {
+  const deps = {
+    ...createDefaultDependencies(server),
+    ...providedDeps,
+  } satisfies PgToolDependencies;
+
+  server.registerTool?.(
+    QUERY_PG_DATABASE,
+    {
+      title: "databasePG.queryPgDatabase.title",
+      description: "databasePG.queryPgDatabase.description",
+      inputSchema: {
+        action: z
+          .enum(QUERY_ACTIONS)
+          .describe("databasePG.schema.queryAction"),
+        sql: z.string().optional().describe("databasePG.schema.querySql"),
+        objectName: z
+          .string()
+          .optional()
+          .describe("databasePG.schema.queryObjectName"),
+        schema: z
+          .string()
+          .optional()
+          .describe("databasePG.schema.querySchemaFilter"),
+        limit: z
+          .number()
+          .int()
+          .min(1)
+          .max(200)
+          .optional()
+          .describe("databasePG.schema.queryLimit"),
+      },
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        openWorldHint: false,
+        category: CATEGORY,
+      },
+    },
+    async (args: QueryPgDatabaseArgs) => {
+      const context = await resolvePgDbContext(server.cloudBaseOptions);
+
+      const notProvisioned = await checkPgProvisioned(
+        server.cloudBaseOptions,
+        context,
+      );
+      if (notProvisioned) {
+        return buildPgToolResult(notProvisioned);
+      }
+
+      if (args.action === "context") {
+        return handleQueryContext(context);
+      }
+
+      try {
+        await ensurePgReadyOnce(server.cloudBaseOptions, deps);
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        return buildPgToolResult({
+          success: false,
+          errorCode: "PG_NOT_READY",
+          message: t("databasePG.runtime.notReady", { reason }),
+          nextActions: [
+            buildNextAction(
+              "queryEnv",
+              "info",
+              t("databasePG.runtime.queryEnvInfo"),
+              { action: "info", envId: context.envId },
+            ),
+          ],
+        });
+      }
+
+      switch (args.action) {
+        case "objects":
+          return handleListObjects(args, context, deps);
+        case "metadata":
+          return handleMetadata(args, context, deps);
+        case "schema":
+          return handleGetPgSchema(args, context, deps);
+        case "sql":
+          return handleReadOnlySql(args, context, deps);
+        default:
+          return buildPgToolResult({
+            success: false,
+            errorCode: "UNSUPPORTED_ACTION",
+            message: t("databasePG.unsupportedQueryAction", { action: args.action }),
+          });
+      }
+    },
+  );
+
+  server.registerTool?.(
+    MANAGE_PG_DATABASE,
+    {
+      title: "databasePG.managePgDatabase.title",
+      description: "databasePG.managePgDatabase.description",
+      inputSchema: {
+        action: z
+          .enum(MANAGE_ACTIONS)
+          .describe("databasePG.schema.manageAction"),
+        sql: z.string().optional().describe("databasePG.schema.manageSql"),
+        confirm: z
+          .boolean()
+          .optional()
+          .describe("databasePG.schema.manageConfirm"),
+        envId: z.string().optional().describe("databasePG.schema.manageEnvId"),
+        instanceId: z
+          .string()
+          .optional()
+          .describe("databasePG.schema.manageInstanceId"),
+        defaultSchema: z
+          .string()
+          .optional()
+          .describe("databasePG.schema.manageDefaultSchema"),
+        role: z.string().optional().describe("databasePG.schema.manageRole"),
+        objectName: z
+          .string()
+          .optional()
+          .describe("databasePG.schema.manageObjectName"),
+        migrationName: z
+          .string()
+          .regex(/^[a-z][a-z_]*$/)
+          .optional()
+          .describe("databasePG.schema.manageMigrationName"),
+        migrationVersion: z
+          .string()
+          .regex(MIGRATION_VERSION_PATTERN)
+          .optional()
+          .describe("databasePG.schema.manageMigrationVersion"),
+        rollbackSql: z
+          .string()
+          .optional()
+          .describe("databasePG.schema.manageRollbackSql"),
+        limit: z
+          .number()
+          .int()
+          .min(1)
+          .max(500)
+          .optional()
+          .describe("databasePG.schema.manageLimit"),
+        offset: z
+          .number()
+          .int()
+          .min(0)
+          .optional()
+          .describe("databasePG.schema.manageOffset"),
+        lockTimeoutMs: z
+          .number()
+          .int()
+          .optional()
+          .describe("databasePG.schema.manageLockTimeoutMs"),
+        statementTimeoutMs: z
+          .number()
+          .int()
+          .optional()
+          .describe("databasePG.schema.manageStatementTimeoutMs"),
+        taskPollTimeoutMs: z
+          .number()
+          .int()
+          .min(MIGRATION_TASK_MIN_WAIT_MS)
+          .max(MIGRATION_TASK_MAX_WAIT_MS)
+          .optional()
+          .describe("databasePG.schema.manageTaskPollTimeoutMs"),
+        waitForTask: z
+          .boolean()
+          .optional()
+          .describe("databasePG.schema.manageWaitForTask"),
+        taskId: z
+          .string()
+          .optional()
+          .describe("databasePG.schema.manageTaskId"),
+        repairStatus: z
+          .enum(["applied", "reverted"])
+          .optional()
+          .describe("databasePG.schema.manageRepairStatus"),
+        repairReason: z
+          .string()
+          .optional()
+          .describe("databasePG.schema.manageRepairReason"),
+        force: z
+          .boolean()
+          .optional()
+          .describe("databasePG.schema.manageForce"),
+        includeAll: z
+          .boolean()
+          .optional()
+          .describe("databasePG.schema.manageIncludeAll"),
+        allowDdlViaExecute: z
+          .boolean()
+          .optional()
+          .describe("databasePG.schema.manageAllowDdlViaExecute"),
+      },
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: false,
+        openWorldHint: false,
+        category: CATEGORY,
+      },
+    },
+    async (args: ManagePgDatabaseArgs) => {
+      const context = await resolvePgDbContext(server.cloudBaseOptions, args);
+      const cbOpts = server.cloudBaseOptions;
+
+      const notProvisioned = await checkPgProvisioned(cbOpts, context);
+      if (notProvisioned) {
+        return buildPgToolResult(notProvisioned);
+      }
+
+      switch (args.action) {
+        case "execute": {
+          // Soft-block schema DDL before readiness probe so agents get migration guidance immediately.
+          if (args.sql?.trim()) {
+            const classification = classifySqlRisk(args.sql);
+            if (
+              isSchemaDdlRisk(classification.risk, args.sql) &&
+              args.allowDdlViaExecute !== true
+            ) {
+              return handleExecuteSql(args, context, deps);
+            }
+          }
+
+          // Reject known-bad Role values before readiness probe / ExecutePGSql SET ROLE.
+          if (args.role !== undefined && isLikelyInvalidPgExecuteRole(args.role)) {
+            return buildPgToolResult(
+              buildPgRoleErrorPayload(args.role.trim() || "(empty)"),
+            );
+          }
+
+          try {
+            await ensurePgReadyOnce(cbOpts, deps);
+          } catch (error) {
+            const reason = error instanceof Error ? error.message : String(error);
+            return buildPgToolResult({
+              success: false,
+              errorCode: "PG_NOT_READY",
+              message: t("databasePG.runtime.notReady", { reason }),
+              nextActions: [
+                buildNextAction(
+                  "queryEnv",
+                  "info",
+                  t("databasePG.runtime.queryEnvInfo"),
+                  { action: "info", envId: context.envId },
+                ),
+              ],
+            });
+          }
+
+          return handleExecuteSql(args, context, deps);
+        }
+        case "dryRun":
+          return handleDryRun(args);
+        case "planMigration":
+        case "applyMigration":
+        case "listMigrations":
+        case "migrationDetail":
+        case "describeMigrationTask":
+        case "fetchMigration":
+        case "repairMigration": {
+          switch (args.action) {
+            case "planMigration": return handlePlanMigration(args, context, deps, cbOpts);
+            case "applyMigration": return handleApplyMigration(args, context, deps, cbOpts);
+            case "listMigrations": return handleListMigrations(args, context, deps, cbOpts);
+            case "migrationDetail": return handleMigrationDetail(args, context, deps, cbOpts);
+            case "describeMigrationTask": return handleDescribeMigrationTask(args, context, deps, cbOpts);
+            case "fetchMigration": return handleFetchMigration(args, context, deps, cbOpts);
+            case "repairMigration": return handleRepairMigration(args, context, deps, cbOpts);
+            default: return buildPgToolResult({ success: false, errorCode: "UNSUPPORTED_ACTION", message: t("databasePG.unsupportedAction", { action: args.action }) });
+          }
+        }
+        default:
+          return buildPgToolResult({
+            success: false,
+            errorCode: "UNSUPPORTED_ACTION",
+            message: t("databasePG.unsupportedManageAction", { action: args.action }),
+          });
+      }
+    },
+  );
+}

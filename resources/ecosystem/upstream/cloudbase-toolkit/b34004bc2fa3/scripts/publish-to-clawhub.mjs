@@ -1,0 +1,489 @@
+#!/usr/bin/env node
+
+import fs from "fs";
+import path from "path";
+import { execFileSync } from "child_process";
+import { fileURLToPath } from "url";
+
+const __filename = fileURLToPath(import.meta.url);
+const AUTO_CHANGELOG_LIMIT = 5;
+
+/**
+ * Upload-ticket mismatches are intermittent ClawHub races (openclaw/clawhub#3394 / #3397).
+ * all-in-one packages are large and hit them most often; smaller skills can still race.
+ */
+export const ALL_IN_ONE_UPLOAD_TICKET_MAX_ATTEMPTS = 3;
+export const DEFAULT_UPLOAD_TICKET_MAX_ATTEMPTS = 2;
+export const ALL_IN_ONE_UPLOAD_TICKET_RETRY_DELAY_MS = 2000;
+/** @deprecated Use ALL_IN_ONE_UPLOAD_TICKET_RETRY_DELAY_MS; kept for test imports. */
+export const UPLOAD_TICKET_RETRY_DELAY_MS = ALL_IN_ONE_UPLOAD_TICKET_RETRY_DELAY_MS;
+
+function clawhubErrorText(error) {
+  const message = String(error?.message || error || "");
+  const stderr = String(error?.stderr || "");
+  const stdout = String(error?.stdout || "");
+  return `${message}\n${stderr}\n${stdout}`;
+}
+
+function defaultSleepMs(ms) {
+  if (!ms || ms <= 0) {
+    return;
+  }
+
+  // Sync sleep keeps publishToClawhub synchronous (execFileSync-based).
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+function parseArgs(argv) {
+  let manifestPath = "";
+  let dryRun = false;
+  let changelog = "";
+  let tags = "latest";
+  let bump = "minor";
+  let owner = "";
+
+  for (let index = 0; index < argv.length; index += 1) {
+    const arg = argv[index];
+
+    if (arg === "--manifest") {
+      manifestPath = path.resolve(argv[index + 1] || "");
+      index += 1;
+      continue;
+    }
+
+    if (arg === "--dry-run") {
+      dryRun = true;
+      continue;
+    }
+
+    if (arg === "--changelog") {
+      changelog = argv[index + 1] || "";
+      index += 1;
+      continue;
+    }
+
+    if (arg === "--tags") {
+      tags = argv[index + 1] || tags;
+      index += 1;
+      continue;
+    }
+
+    if (arg === "--owner") {
+      // 空值等同于未指定，便于 CI 无条件透传一个可能为空的变量。
+      owner = (argv[index + 1] || "").trim();
+      index += 1;
+      continue;
+    }
+
+    if (arg === "--bump") {
+      bump = argv[index + 1] || bump;
+      index += 1;
+    }
+  }
+
+  if (!manifestPath) {
+    throw new Error("缺少必填参数 --manifest / Missing required --manifest argument");
+  }
+
+  if (!["patch", "minor", "major"].includes(bump)) {
+    throw new Error(
+      `不支持的 bump 类型 / Unsupported bump type: ${bump}. Allowed: patch, minor, major`,
+    );
+  }
+
+  return { manifestPath, dryRun, changelog, tags, bump, owner };
+}
+
+function readManifest(manifestPath) {
+  if (!fs.existsSync(manifestPath)) {
+    throw new Error(`未找到 manifest 文件 / Manifest file not found: ${manifestPath}`);
+  }
+
+  return JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+}
+
+function resolveGitRoot(manifestPath) {
+  try {
+    return execFileSync("git", ["rev-parse", "--show-toplevel"], {
+      cwd: path.dirname(manifestPath),
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+  } catch {
+    return process.cwd();
+  }
+}
+
+function getRecentCommitLines(gitRoot) {
+  try {
+    const output = execFileSync(
+      "git",
+      [
+        "log",
+        `-${AUTO_CHANGELOG_LIMIT}`,
+        "--pretty=format:- %s",
+      ],
+      {
+        cwd: gitRoot,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+      },
+    ).trim();
+
+    return output;
+  } catch {
+    return "";
+  }
+}
+
+export function buildChangelogText(manualChangelog, gitRoot) {
+  const normalizedManual = (manualChangelog || "").trim();
+  const recentCommits = getRecentCommitLines(gitRoot);
+
+  if (normalizedManual && recentCommits) {
+    return `${normalizedManual}\n\nRecent commits / 最近提交:\n${recentCommits}`;
+  }
+
+  if (normalizedManual) {
+    return normalizedManual;
+  }
+
+  if (recentCommits) {
+    return `Recent commits / 最近提交:\n${recentCommits}`;
+  }
+
+  return "";
+}
+
+export function normalizeClawhubChangelog(changelog) {
+  return String(changelog || "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .join(" | ");
+}
+
+export function buildPublishCommand(target, options) {
+  // 发布主体（owner）：条目自带 owner 优先，便于发布主体迁移期间逐条切换；
+  // 否则用 --owner 传入的默认主体；两者都没有时沿用 CLI 自身的默认主体。
+  // --slug 始终显式传入，所以换主体不会改变已发布条目的 slug。
+  const owner = String(target.owner || options.owner || "").trim();
+
+  // 展示名（--name）：ClawHub 的检索面就是 displayName —— 不传的话线上展示的就是
+  // slug 本身，名字里的中文一个字都搜不到。取条目自带的 displayName。
+  const displayName = String(target.displayName || "").trim();
+
+  // 主题词（--topics）：逗号分隔，同样只影响检索与展示。
+  const topics = (Array.isArray(target.topics) ? target.topics : [])
+    .map((topic) => String(topic).trim())
+    .filter(Boolean);
+
+  const args = [
+    "skill",
+    "publish",
+    target.artifactDir,
+    "--slug",
+    target.registrySlug,
+    "--changelog",
+    normalizeClawhubChangelog(options.changelog),
+    "--tags",
+    options.tags,
+  ];
+
+  if (displayName) {
+    args.push("--name", displayName);
+  }
+
+  if (topics.length > 0) {
+    args.push("--topics", topics.join(","));
+  }
+
+  if (owner) {
+    args.push("--owner", owner);
+  }
+
+  return {
+    command: "clawhub",
+    args,
+  };
+}
+
+/**
+ * Concurrent publish jobs may race on the same next patch version.
+ * Treat "Version X already exists" as idempotent success so SkillHub and
+ * later steps still run when a peer job already published the target.
+ *
+ * ClawHub CLI may also return a non-zero exit with this message after a long
+ * upload (especially all-in-one), while smaller skills often exit 0 with
+ * "OK. slug@version is already published". Both must be treated as success.
+ *
+ * IMPORTANT: callers must capture stderr/stdout into the error (do not use
+ * stdio:"inherit" alone), otherwise error.message is only "Command failed: ..."
+ * and this detector never matches.
+ */
+export function isClawhubVersionExistsError(error) {
+  const combined = clawhubErrorText(error);
+  return (
+    /Version\s+\S+\s+already exists/i.test(combined) ||
+    /is already published/i.test(combined) ||
+    /version\s+already\s+exists/i.test(combined) ||
+    /版本(?:号)?已存在/.test(combined)
+  );
+}
+
+/** True when clawhub stdout/stderr indicates the slug@version is already on the registry. */
+export function isClawhubAlreadyPublishedOutput(output) {
+  return isClawhubVersionExistsError({ message: String(output || "") });
+}
+
+/**
+ * Detect intermittent ClawHub upload-ticket mismatches
+ * (openclaw/clawhub#3394 / #3397). These are retryable for large packages.
+ */
+export function isClawhubUploadTicketError(error) {
+  const combined = clawhubErrorText(error);
+  return (
+    /upload ticket does not match/i.test(combined) ||
+    /Uploaded file does not match its skill upload ticket/i.test(combined) ||
+    /skill upload ticket/i.test(combined)
+  );
+}
+
+/**
+ * All targets may retry upload-ticket races. all-in-one gets more attempts because
+ * large packages historically fail more often after long uploads.
+ */
+export function supportsClawhubUploadTicketRetry(_target) {
+  return true;
+}
+
+export function clawhubUploadTicketMaxAttempts(target) {
+  return target?.targetKey === "all-in-one"
+    ? ALL_IN_ONE_UPLOAD_TICKET_MAX_ATTEMPTS
+    : DEFAULT_UPLOAD_TICKET_MAX_ATTEMPTS;
+}
+
+export function formatClawhubUploadTicketFailure(target, error, attempts) {
+  const lastError = String(error?.message || error || "")
+    .trim()
+    .replace(/\s+/g, " ");
+  return [
+    `upload-ticket mismatch after ${attempts} attempt(s) for ${target.targetKey} (${target.registrySlug})`,
+    `last error: ${lastError}`,
+    "hint: intermittent ClawHub issue (openclaw/clawhub#3394 / #3397); re-run workflow_dispatch if it persists",
+  ].join(" | ");
+}
+
+/**
+ * Run clawhub with captured stdout/stderr so idempotent-error detection works,
+ * while still streaming output to the console for CI visibility.
+ */
+export function runClawhubPublish(command, args, env = process.env) {
+  try {
+    const output = execFileSync(command, args, {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      env,
+    });
+    if (output) {
+      process.stdout.write(output);
+    }
+    return { status: "ok", output: String(output || "") };
+  } catch (error) {
+    const stdout = String(error?.stdout || "");
+    const stderr = String(error?.stderr || "");
+    if (stdout) {
+      process.stdout.write(stdout);
+    }
+    if (stderr) {
+      process.stderr.write(stderr);
+    }
+
+    const enriched = new Error(
+      [error?.message, stderr.trim(), stdout.trim()].filter(Boolean).join("\n"),
+    );
+    enriched.stdout = stdout;
+    enriched.stderr = stderr;
+    enriched.status = error?.status;
+    throw enriched;
+  }
+}
+
+export function publishToClawhub({
+  manifestPath,
+  dryRun = false,
+  changelog = "",
+  tags = "latest",
+  bump = "minor",
+  owner = "",
+  runPublish = runClawhubPublish,
+  sleepMs = defaultSleepMs,
+}) {
+  const manifest = readManifest(manifestPath);
+  const gitRoot = resolveGitRoot(manifestPath);
+  const resolvedChangelog = buildChangelogText(changelog, gitRoot);
+  const failures = [];
+  const results = [];
+
+  if (!dryRun && !process.env.CLAWDHUB_TOKEN) {
+    throw new Error("正式发布需要设置 CLAWDHUB_TOKEN / CLAWDHUB_TOKEN is required for non-dry-run publishing");
+  }
+
+  for (const target of manifest.targets || []) {
+    const publishCommand = buildPublishCommand(target, {
+      changelog: resolvedChangelog,
+      tags,
+      bump,
+      owner,
+    });
+
+    console.log(`发布目标 / Publishing target: ${target.targetKey}`);
+    console.log(
+      `执行命令 / Command: ${publishCommand.command} ${publishCommand.args.join(" ")}`,
+    );
+
+    if (dryRun) {
+      publishCommand.args.push("--dry-run");
+      console.log(
+        `Dry run 模式 / Dry-run mode: ${publishCommand.command} ${publishCommand.args.join(" ")}`,
+      );
+      results.push({
+        targetKey: target.targetKey,
+        registrySlug: target.registrySlug,
+        status: "dry-run",
+      });
+      continue;
+    }
+
+    const maxAttempts = clawhubUploadTicketMaxAttempts(target);
+    let settled = false;
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      try {
+        const publishResult = runPublish(
+          publishCommand.command,
+          publishCommand.args,
+          process.env,
+        );
+        const outputText =
+          typeof publishResult === "string"
+            ? publishResult
+            : String(publishResult?.output || "");
+
+        if (isClawhubAlreadyPublishedOutput(outputText)) {
+          console.log(
+            `版本已存在，视为已发布 / Already published (exit success): ${target.registrySlug}`,
+          );
+          results.push({
+            targetKey: target.targetKey,
+            registrySlug: target.registrySlug,
+            status: "already-published",
+            attempts: attempt,
+          });
+        } else {
+          results.push({
+            targetKey: target.targetKey,
+            registrySlug: target.registrySlug,
+            status: "published",
+            attempts: attempt,
+          });
+        }
+        settled = true;
+        break;
+      } catch (error) {
+        if (isClawhubVersionExistsError(error)) {
+          console.log(
+            `版本已存在，视为已发布 / Version already exists, treating as published: ${target.registrySlug}`,
+          );
+          results.push({
+            targetKey: target.targetKey,
+            registrySlug: target.registrySlug,
+            status: "already-published",
+            attempts: attempt,
+          });
+          settled = true;
+          break;
+        }
+
+        const canRetryUploadTicket =
+          attempt < maxAttempts && isClawhubUploadTicketError(error);
+
+        if (canRetryUploadTicket) {
+          console.warn(
+            `upload-ticket 不匹配，准备重试 / Upload-ticket mismatch, retrying ${target.targetKey} (${target.registrySlug}) attempt ${attempt}/${maxAttempts}: ${String(error.message || error).trim()}`,
+          );
+          sleepMs(UPLOAD_TICKET_RETRY_DELAY_MS);
+          continue;
+        }
+
+        const message = isClawhubUploadTicketError(error)
+          ? formatClawhubUploadTicketFailure(target, error, attempt)
+          : error.message;
+
+        if (isClawhubUploadTicketError(error) && maxAttempts > 1) {
+          console.error(
+            `upload-ticket 重试耗尽 / Upload-ticket retries exhausted for ${target.targetKey} (${target.registrySlug}) after ${attempt} attempt(s)`,
+          );
+        }
+
+        failures.push({
+          targetKey: target.targetKey,
+          registrySlug: target.registrySlug,
+          message,
+          attempts: attempt,
+        });
+        settled = true;
+        break;
+      }
+    }
+
+    if (!settled) {
+      failures.push({
+        targetKey: target.targetKey,
+        registrySlug: target.registrySlug,
+        message: `unexpected publish loop exit for ${target.targetKey}`,
+      });
+    }
+  }
+
+  if (failures.length > 0) {
+    for (const failure of failures) {
+      console.error(
+        `发布失败 / Failed to publish ${failure.targetKey} (${failure.registrySlug}): ${failure.message}`,
+      );
+    }
+
+    const error = new Error(
+      `发布到 ClawHub 失败 / Failed to publish ${failures.length} target(s) to ClawHub`,
+    );
+    error.failures = failures;
+    throw error;
+  }
+
+  return results;
+}
+
+function main() {
+  const { manifestPath, dryRun, changelog, tags, bump, owner } = parseArgs(
+    process.argv.slice(2),
+  );
+  const results = publishToClawhub({
+    manifestPath,
+    dryRun,
+    changelog,
+    tags,
+    bump,
+    owner,
+  });
+
+  console.log(`已完成 ${results.length} 个 ClawHub 发布操作 / Completed ${results.length} ClawHub publish operation(s).`);
+}
+
+if (process.argv[1] && path.resolve(process.argv[1]) === __filename) {
+  try {
+    main();
+  } catch (error) {
+    console.error(error.message);
+    process.exit(1);
+  }
+}

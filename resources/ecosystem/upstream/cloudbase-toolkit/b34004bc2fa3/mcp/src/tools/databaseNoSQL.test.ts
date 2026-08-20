@@ -1,0 +1,648 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { ExtendedMcpServer } from "../server.js";
+import { registerDatabaseTools } from "./databaseNoSQL.js";
+import { resetDatabaseInstanceIdCache } from "../cloudbase-manager.js";
+import { databaseNoSQL as databaseNoSQLMessages } from "../i18n/locales/modules/databaseNoSQL.js";
+
+const {
+  mockGetCloudBaseManager,
+  mockLogCloudBaseResult,
+  mockCheckCollectionExists,
+  mockDescribeCollection,
+  mockCreateCollection,
+  mockCommonServiceCall,
+  mockGetEnvInfo,
+  mockGetEnvId,
+} = vi.hoisted(() => ({
+  mockGetCloudBaseManager: vi.fn(),
+  mockLogCloudBaseResult: vi.fn(),
+  mockCheckCollectionExists: vi.fn(),
+  mockDescribeCollection: vi.fn(),
+  mockCreateCollection: vi.fn(),
+  mockCommonServiceCall: vi.fn(),
+  mockGetEnvInfo: vi.fn(),
+  mockGetEnvId: vi.fn(),
+}));
+
+vi.mock("../cloudbase-manager.js", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../cloudbase-manager.js")>();
+  return {
+    ...actual,
+    getCloudBaseManager: mockGetCloudBaseManager,
+    getEnvId: mockGetEnvId,
+    logCloudBaseResult: mockLogCloudBaseResult,
+  };
+});
+
+function createMockServer() {
+  const tools: Record<
+    string,
+    {
+      meta: any;
+      handler: (args: any) => Promise<any>;
+    }
+  > = {};
+
+  const server: ExtendedMcpServer = {
+    cloudBaseOptions: {
+      envId: "env-test",
+      region: "ap-guangzhou",
+    },
+    logger: vi.fn(),
+    registerTool: vi.fn(
+      (name: string, meta: any, handler: (args: any) => Promise<any>) => {
+        tools[name] = { meta, handler };
+      },
+    ),
+  } as unknown as ExtendedMcpServer;
+
+  registerDatabaseTools(server);
+
+  return { tools };
+}
+
+describe("NoSQL database tools", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resetDatabaseInstanceIdCache();
+
+    mockGetEnvId.mockResolvedValue("env-test");
+
+    mockCheckCollectionExists.mockResolvedValue({
+      RequestId: "req-check",
+      Exists: false,
+    });
+    mockDescribeCollection.mockResolvedValue({
+      RequestId: "req-describe",
+      IndexNum: 2,
+      Indexes: [],
+    });
+    mockCreateCollection.mockResolvedValue({
+      RequestId: "req-create",
+    });
+    mockGetEnvInfo.mockResolvedValue({
+      EnvInfo: {
+        Databases: [
+          {
+            InstanceId: "instance-test",
+          },
+        ],
+      },
+    });
+    mockCommonServiceCall.mockImplementation(async ({ Action }) => {
+      if (Action === "QueryRecords") {
+        return {
+          RequestId: "req-query",
+          Data: [
+            "{\"_id\":\"doc-1\",\"name\":\"chain_nosql_probe_001\",\"status\":\"active\"}",
+          ],
+          Pager: {
+            Total: 1,
+            Limit: 100,
+            Offset: 0,
+          },
+        };
+      }
+
+      if (Action === "PutItem") {
+        return {
+          RequestId: "req-insert",
+          InsertedIds: ["doc-1"],
+        };
+      }
+
+      if (Action === "UpdateItem") {
+        return {
+          RequestId: "req-update",
+          ModifiedNum: 1,
+          MatchedNum: 1,
+          UpsertedId: "doc-users-1",
+        };
+      }
+
+      if (Action === "CreateTable") {
+        return { RequestId: "req-create" };
+      }
+
+      if (Action === "DeleteTable") {
+        return { RequestId: "req-delete" };
+      }
+
+      if (Action === "DescribeTable") {
+        return {
+          RequestId: "req-describe",
+          IndexNum: 2,
+          Indexes: [],
+        };
+      }
+
+      if (Action === "ListTables") {
+        return {
+          RequestId: "req-list",
+          Tables: [{ TableName: "t_nosql_products" }],
+          Pager: { Total: 1, Limit: 100, Offset: 0 },
+        };
+      }
+
+      throw new Error(`Unexpected action: ${Action}`);
+    });
+    mockGetCloudBaseManager.mockResolvedValue({
+      env: {
+        getEnvInfo: mockGetEnvInfo,
+      },
+      database: {
+        checkCollectionExists: mockCheckCollectionExists,
+        describeCollection: mockDescribeCollection,
+        createCollection: mockCreateCollection,
+      },
+      commonService: vi.fn(() => ({
+        call: mockCommonServiceCall,
+      })),
+    });
+  });
+
+  it("readNoSqlDatabaseContent should normalize stringified query records", async () => {
+    const { tools } = createMockServer();
+
+    const result = await tools.readNoSqlDatabaseContent.handler({
+      collectionName: "t_nosql_orders",
+      query: { name: "chain_nosql_probe_001" },
+    });
+
+    const payload = JSON.parse(result.content[0].text);
+
+    expect(mockCommonServiceCall).toHaveBeenCalledWith(
+      expect.objectContaining({
+        Action: "QueryRecords",
+        Param: expect.objectContaining({
+          TableName: "t_nosql_orders",
+          MgoQuery: JSON.stringify({ name: "chain_nosql_probe_001" }),
+        }),
+      }),
+    );
+    expect(payload).toMatchObject({
+      success: true,
+      collection: "t_nosql_orders",
+      collectionName: "t_nosql_orders",
+      requestId: "req-query",
+      total: 1,
+      data: [
+        {
+          _id: "doc-1",
+          name: "chain_nosql_probe_001",
+          status: "active",
+        },
+      ],
+      pager: {
+        Total: 1,
+        Limit: 100,
+        Offset: 0,
+      },
+    });
+    expect(payload).not.toHaveProperty("nextActions");
+  });
+
+  it("readNoSqlDatabaseContent should reject object sort to match backend contract", async () => {
+    const { tools } = createMockServer();
+
+    await expect(
+      tools.readNoSqlDatabaseContent.handler({
+        collectionName: "t_nosql_orders",
+        sort: { createdAt: -1, openid: 1 },
+      }),
+    ).rejects.toThrow("sort 仅支持数组");
+
+    expect(mockCommonServiceCall).not.toHaveBeenCalled();
+  });
+
+  it("readNoSqlDatabaseContent should reject stringified object sort to match backend contract", async () => {
+    const { tools } = createMockServer();
+
+    await expect(
+      tools.readNoSqlDatabaseContent.handler({
+        collectionName: "t_nosql_orders",
+        sort: "{\"createdAt\":-1}",
+      }),
+    ).rejects.toThrow("sort 仅支持数组");
+
+    expect(mockCommonServiceCall).not.toHaveBeenCalled();
+  });
+
+  it("readNoSqlDatabaseContent should keep stringified array sort in backend format", async () => {
+    const { tools } = createMockServer();
+
+    await tools.readNoSqlDatabaseContent.handler({
+      collectionName: "t_nosql_orders",
+      sort: JSON.stringify([{ key: "createdAt", direction: -1 }]),
+    });
+
+    expect(mockCommonServiceCall).toHaveBeenCalledWith(
+      expect.objectContaining({
+        Action: "QueryRecords",
+        Param: expect.objectContaining({
+          MgoSort: JSON.stringify([{ key: "createdAt", direction: -1 }]),
+        }),
+      }),
+    );
+  });
+
+  it("readNoSqlDatabaseContent should reject invalid sort directions early", async () => {
+    const { tools } = createMockServer();
+
+    await expect(
+      tools.readNoSqlDatabaseContent.handler({
+        collectionName: "t_nosql_orders",
+        sort: [{ key: "createdAt", direction: 0 }],
+      }),
+    ).rejects.toThrow("非法 sort direction");
+
+    expect(mockCommonServiceCall).not.toHaveBeenCalled();
+  });
+
+  it("readNoSqlDatabaseContent should reject field-name array projection early", async () => {
+    const { tools } = createMockServer();
+
+    await expect(
+      tools.readNoSqlDatabaseContent.handler({
+        collectionName: "t_nosql_orders",
+        projection: ["name", "status"],
+      }),
+    ).rejects.toThrow(/projection 不支持字段名数组/);
+
+    expect(mockCommonServiceCall).not.toHaveBeenCalled();
+  });
+
+  it("readNoSqlDatabaseContent should reject non 0/1 projection values early", async () => {
+    const { tools } = createMockServer();
+
+    await expect(
+      tools.readNoSqlDatabaseContent.handler({
+        collectionName: "t_nosql_orders",
+        projection: { name: "include", status: 1 },
+      }),
+    ).rejects.toThrow(/projection\["name"\] 的值非法/);
+
+    expect(mockCommonServiceCall).not.toHaveBeenCalled();
+  });
+
+  it("readNoSqlDatabaseContent should reject mixed include/exclude projection early", async () => {
+    const { tools } = createMockServer();
+
+    await expect(
+      tools.readNoSqlDatabaseContent.handler({
+        collectionName: "t_nosql_orders",
+        projection: { name: 1, password: 0 },
+      }),
+    ).rejects.toThrow(/不能同时混用包含/);
+
+    expect(mockCommonServiceCall).not.toHaveBeenCalled();
+  });
+
+  it("readNoSqlDatabaseContent should normalize boolean projection flags to 0/1", async () => {
+    const { tools } = createMockServer();
+
+    await tools.readNoSqlDatabaseContent.handler({
+      collectionName: "t_nosql_orders",
+      projection: { _id: true, name: true, status: true },
+    });
+
+    expect(mockCommonServiceCall).toHaveBeenCalledWith(
+      expect.objectContaining({
+        Action: "QueryRecords",
+        Param: expect.objectContaining({
+          MgoProjection: JSON.stringify({ _id: 1, name: 1, status: 1 }),
+        }),
+      }),
+    );
+  });
+
+  it("readNoSqlDatabaseContent should reject limit above MgoLimit lte ceiling early", async () => {
+    const { tools } = createMockServer();
+
+    await expect(
+      tools.readNoSqlDatabaseContent.handler({
+        collectionName: "t_nosql_orders",
+        limit: 1001,
+      }),
+    ).rejects.toThrow(/limit 超出上限[\s\S]*1000/);
+
+    expect(mockCommonServiceCall).not.toHaveBeenCalled();
+  });
+
+  it("readNoSqlDatabaseContent should accept limit at MgoLimit ceiling", async () => {
+    const { tools } = createMockServer();
+
+    await tools.readNoSqlDatabaseContent.handler({
+      collectionName: "t_nosql_orders",
+      limit: 1000,
+    });
+
+    expect(mockCommonServiceCall).toHaveBeenCalledWith(
+      expect.objectContaining({
+        Action: "QueryRecords",
+        Param: expect.objectContaining({
+          MgoLimit: 1000,
+        }),
+      }),
+    );
+  });
+
+  it("readNoSqlDatabaseContent should rewrite illegal projection API errors", async () => {
+    const { tools } = createMockServer();
+    mockCommonServiceCall.mockRejectedValueOnce(
+      new Error(
+        "[QueryRecords] Query projection entered in the request is illegal. Please check your request, but if the problem persists, contact us.",
+      ),
+    );
+
+    await expect(
+      tools.readNoSqlDatabaseContent.handler({
+        collectionName: "t_nosql_orders",
+        projection: { name: 1 },
+      }),
+    ).rejects.toThrow(/QueryRecords 投影非法[\s\S]*合法示例/);
+  });
+
+  it("readNoSqlDatabaseContent should rewrite MgoLimit lte API errors", async () => {
+    const { tools } = createMockServer();
+    mockCommonServiceCall.mockRejectedValueOnce(
+      new Error(
+        "[QueryRecords] Key: 'MgoQueryParam.MgoLimit' Error:Field validation for 'MgoLimit' failed on the 'lte' tag",
+      ),
+    );
+
+    await expect(
+      tools.readNoSqlDatabaseContent.handler({
+        collectionName: "t_nosql_orders",
+        limit: 500,
+      }),
+    ).rejects.toThrow(/QueryRecords MgoLimit 超限[\s\S]*1000/);
+  });
+
+  it("readNoSqlDatabaseContent should reject non-numeric directions in stringified sort arrays", async () => {
+    const { tools } = createMockServer();
+
+    await expect(
+      tools.readNoSqlDatabaseContent.handler({
+        collectionName: "t_nosql_orders",
+        sort: JSON.stringify([{ key: "createdAt", direction: "desc" }]),
+      }),
+    ).rejects.toThrow("非法 sort direction");
+
+    expect(mockCommonServiceCall).not.toHaveBeenCalled();
+  });
+
+  it("writeNoSqlDatabaseContent should describe partial updates using MongoDB operators", () => {
+    const { tools } = createMockServer();
+    const meta = tools.writeNoSqlDatabaseContent.meta;
+    const updateDescription =
+      databaseNoSQLMessages.zh["schema.writeContent.update"];
+
+    expect(meta.description).toBe("databaseNoSQL.writeContent.description");
+    expect(updateDescription).toContain("MgoUpdate");
+    expect(updateDescription).toContain("`$set`");
+    expect(updateDescription).toContain("`status`");
+    expect(updateDescription).toContain("`shipping.city`");
+  });
+
+  it("writeNoSqlDatabaseContent should warn when auth-linked role docs are upserted by uid query", async () => {
+    const { tools } = createMockServer();
+
+    const result = await tools.writeNoSqlDatabaseContent.handler({
+      action: "update",
+      collectionName: "users",
+      query: { uid: "user-123" },
+      update: { $set: { role: "admin" } },
+      upsert: true,
+    });
+    const payload = JSON.parse(result.content[0].text);
+
+    expect(payload.warning).toContain("doc(uid)");
+    expect(payload.message).toContain("doc(uid)");
+  });
+
+  it("NoSQL structure tools should describe index management entry points explicitly", () => {
+    const { tools } = createMockServer();
+    const readMeta = tools.readNoSqlDatabaseStructure.meta;
+    const writeMeta = tools.writeNoSqlDatabaseStructure.meta;
+    const readActionDescription =
+      databaseNoSQLMessages.zh["schema.readStructure.action"];
+    const writeActionDescription =
+      databaseNoSQLMessages.zh["schema.writeStructure.action"];
+    const updateOptionsDescription =
+      databaseNoSQLMessages.zh["schema.writeStructure.updateOptions"];
+
+    expect(readMeta.description).toBe("databaseNoSQL.readStructure.description");
+    expect(readActionDescription).toContain("listIndexes");
+    expect(readActionDescription).toContain("checkIndex");
+
+    expect(writeMeta.description).toBe("databaseNoSQL.writeStructure.description");
+    expect(writeActionDescription).toContain("CreateIndexes");
+    expect(writeActionDescription).toContain("DropIndexes");
+    expect(updateOptionsDescription).toContain("CreateIndexes");
+    expect(updateOptionsDescription).toContain("DropIndexes");
+  });
+
+  it("listCollections should return Tables from ListTables API as collections", async () => {
+    const { tools } = createMockServer();
+
+    const result = await tools.readNoSqlDatabaseStructure.handler({
+      action: "listCollections",
+    });
+    const payload = JSON.parse(result.content[0].text);
+
+    expect(payload.success).toBe(true);
+    expect(payload.requestId).toBe("req-list");
+    expect(payload.collections).toEqual([{ TableName: "t_nosql_products" }]);
+    expect(payload.pager).toEqual({ Total: 1, Limit: 100, Offset: 0 });
+    expect(payload.message).toBe("获取 NoSQL 数据库集合列表成功");
+
+    expect(mockCommonServiceCall).toHaveBeenCalledWith(
+      expect.objectContaining({
+        Action: "ListTables",
+        Param: expect.objectContaining({
+          MgoOffset: 0,
+          MgoLimit: 100,
+        }),
+      }),
+    );
+  });
+
+  it("collection-scoped responses should echo the requested collection name", async () => {
+    const { tools } = createMockServer();
+
+    const checkResult = await tools.readNoSqlDatabaseStructure.handler({
+      action: "checkCollection",
+      collectionName: "t_nosql_products",
+    });
+    const checkPayload = JSON.parse(checkResult.content[0].text);
+    expect(checkPayload.collection).toBe("t_nosql_products");
+    expect(checkPayload.collectionName).toBe("t_nosql_products");
+
+    const describeResult = await tools.readNoSqlDatabaseStructure.handler({
+      action: "describeCollection",
+      collectionName: "t_nosql_products",
+    });
+    const describePayload = JSON.parse(describeResult.content[0].text);
+    expect(describePayload.collection).toBe("t_nosql_products");
+    expect(describePayload.collectionName).toBe("t_nosql_products");
+    expect(describePayload.message).toBe("获取云开发数据库集合信息成功");
+
+    // For createCollection: DescribeTable fails (not exist) → CreateTable → DescribeTable succeeds (ready)
+    let describeTableCallCount = 0;
+    mockCommonServiceCall.mockImplementation(async ({ Action }) => {
+      if (Action === "DescribeTable") {
+        describeTableCallCount++;
+        if (describeTableCallCount === 1) throw new Error("not exist");
+        return { RequestId: "req-check-ready", IndexNum: 0, Indexes: [] };
+      }
+      if (Action === "CreateTable") return { RequestId: "req-create" };
+      if (Action === "PutItem") return { RequestId: "req-insert", InsertedIds: ["doc-1"] };
+      throw new Error(`Unexpected: ${Action}`);
+    });
+
+    const createResult = await tools.writeNoSqlDatabaseStructure.handler({
+      action: "createCollection",
+      collectionName: "t_nosql_products",
+    });
+    const createPayload = JSON.parse(createResult.content[0].text);
+    expect(createPayload.collection).toBe("t_nosql_products");
+    expect(createPayload.collectionName).toBe("t_nosql_products");
+    expect(createPayload.action).toBe("createCollection");
+    expect(createPayload.message).toBe("云开发数据库集合创建成功");
+
+    const insertResult = await tools.writeNoSqlDatabaseContent.handler({
+      action: "insert",
+      collectionName: "t_nosql_products",
+      documents: [{ name: "chain_nosql_probe_001", status: "active" }],
+    });
+    const insertPayload = JSON.parse(insertResult.content[0].text);
+    expect(insertPayload.collection).toBe("t_nosql_products");
+    expect(insertPayload.collectionName).toBe("t_nosql_products");
+    expect(insertPayload.insertedIds).toEqual(["doc-1"]);
+    expect(insertPayload.insertedCount).toBe(1);
+    expect(insertPayload.message).toBe("文档插入成功");
+    expect(insertPayload).not.toHaveProperty("nextActions");
+  });
+
+  it("createCollection should return friendly message when collection already exists", async () => {
+    const { tools } = createMockServer();
+
+    // DescribeTable 成功 = 集合存在
+    mockCommonServiceCall.mockImplementation(async ({ Action }) => {
+      if (Action === "DescribeTable") {
+        return { RequestId: "req-check-exists", IndexNum: 0, Indexes: [] };
+      }
+      throw new Error(`Unexpected action: ${Action}`);
+    });
+
+    const result = await tools.writeNoSqlDatabaseStructure.handler({
+      action: "createCollection",
+      collectionName: "users",
+    });
+    const payload = JSON.parse(result.content[0].text);
+
+    expect(payload).toMatchObject({
+      success: true,
+      action: "createCollection",
+      collection: "users",
+      collectionName: "users",
+      requestId: "req-check-exists",
+      message: "集合已存在，无需重复创建",
+      exists: true,
+    });
+  });
+
+  it("writeNoSqlDatabaseStructure(deleteCollection) should provide clear message for parameter invalid", async () => {
+    mockCommonServiceCall.mockImplementationOnce(async ({ Action }) => {
+      if (Action === "DeleteTable") {
+        throw new Error("parameter invalid");
+      }
+      throw new Error(`Unexpected action: ${Action}`);
+    });
+
+    const { tools } = createMockServer();
+    await expect(
+      tools.writeNoSqlDatabaseStructure.handler({
+        action: "deleteCollection",
+        collectionName: "test-collection",
+      }),
+    ).rejects.toThrow("deleteCollection 参数校验失败");
+  });
+
+  it("readNoSqlDatabaseContent should keep non-document strings untouched", async () => {
+    mockCommonServiceCall.mockImplementationOnce(async () => ({
+      RequestId: "req-query-raw",
+      Data: ["raw-value"],
+      Pager: {
+        Total: 1,
+        Limit: 100,
+        Offset: 0,
+      },
+    }));
+
+    const { tools } = createMockServer();
+    const result = await tools.readNoSqlDatabaseContent.handler({
+      collectionName: "t_nosql_products",
+    });
+    const payload = JSON.parse(result.content[0].text);
+
+    expect(payload.data).toEqual(["raw-value"]);
+  });
+
+  it("readNoSqlDatabaseContent should pass EnvId instead of Tag", async () => {
+    const { tools } = createMockServer();
+
+    await tools.readNoSqlDatabaseContent.handler({
+      collectionName: "t_nosql_products",
+    });
+
+    expect(mockCommonServiceCall).toHaveBeenCalledWith(
+      expect.objectContaining({
+        Action: "QueryRecords",
+        Param: expect.objectContaining({
+          EnvId: "env-test",
+          TableName: "t_nosql_products",
+        }),
+      }),
+    );
+    // Should NOT call getEnvInfo (no longer needed for instanceId)
+    expect(mockGetEnvInfo).not.toHaveBeenCalled();
+  });
+
+  it("writeNoSqlDatabaseContent should pass EnvId in Param", async () => {
+    const { tools } = createMockServer();
+
+    await tools.writeNoSqlDatabaseContent.handler({
+      action: "insert",
+      collectionName: "t_nosql_products",
+      documents: [{ name: "chain_nosql_probe_001", status: "active" }],
+    });
+
+    expect(mockGetEnvInfo).not.toHaveBeenCalled();
+    expect(mockCommonServiceCall).toHaveBeenCalledWith(
+      expect.objectContaining({
+        Action: "PutItem",
+        Param: expect.objectContaining({
+          EnvId: "env-test",
+        }),
+      }),
+    );
+  });
+
+  it("readNoSqlDatabaseContent should not call getEnvInfo for concurrent calls", async () => {
+    const { tools } = createMockServer();
+
+    await Promise.all([
+      tools.readNoSqlDatabaseContent.handler({
+        collectionName: "t_nosql_products",
+      }),
+      tools.readNoSqlDatabaseContent.handler({
+        collectionName: "t_nosql_products",
+      }),
+    ]);
+
+    expect(mockGetEnvInfo).not.toHaveBeenCalled();
+  });
+});

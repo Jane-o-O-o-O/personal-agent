@@ -1,0 +1,174 @@
+name: Push Plugin Repos
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'plugin/cloudbase/**'
+      - 'plugin/cloudbase-sites/**'
+      - 'scripts/build-open-plugin-spec.mjs'
+      - 'scripts/push-plugin-repos.mjs'
+  workflow_dispatch:
+
+jobs:
+  push-plugin-repos:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout source repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.2.2
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '20'
+
+      - name: Require PLUGINS_REPO_TOKEN
+        env:
+          PLUGINS_REPO_TOKEN: ${{ secrets.PLUGINS_REPO_TOKEN }}
+        run: |
+          if [ -z "$PLUGINS_REPO_TOKEN" ]; then
+            echo "::error::PLUGINS_REPO_TOKEN is not configured. Dedicated plugin repos cannot be synced."
+            exit 1
+          fi
+
+      - name: Validate skill-inject artifacts
+        run: |
+          # Do NOT run build-skill-manifest here: promptSignals/retrieval currently
+          # live only in generated/skill-manifest.json (not SKILL.md frontmatter).
+          # Rebuilding from skills would wipe matching data until skill-metadata
+          # persistence lands. Validate the committed artifact instead.
+          node -e "
+            const fs = require('fs');
+            const manifestPath = 'plugin/cloudbase/generated/skill-manifest.json';
+            const synonymsPath = 'plugin/cloudbase/generated/synonyms.json';
+            for (const p of [manifestPath, synonymsPath]) {
+              if (!fs.existsSync(p)) {
+                console.error('Missing required artifact:', p);
+                process.exit(1);
+              }
+            }
+            const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+            const skills = Object.values(manifest.skills || {});
+            if (skills.length === 0) {
+              console.error('skill-manifest.json has no skills');
+              process.exit(1);
+            }
+            const withSignals = skills.filter((s) => (s.promptSignals?.phrases || []).length > 0);
+            if (withSignals.length === 0) {
+              console.error('skill-manifest.json has empty promptSignals — refusing to sync broken hooks data');
+              process.exit(1);
+            }
+            console.log('✓ skill-manifest ok:', skills.length, 'skills,', withSignals.length, 'with promptSignals');
+          "
+
+      - name: Build Open Plugin Spec artifacts
+        run: |
+          node scripts/build-open-plugin-spec.mjs
+
+      - name: Build plugin repo output
+        run: |
+          node scripts/push-plugin-repos.mjs
+          node scripts/push-plugin-repos.mjs --check
+
+      # Same topology as cloudbase-skills:
+      #   MCP → GitHub dedicated OPS repo (this job)
+      #   GitHub dedicated repo → CNB via .github/workflows/sync-to-cnb.yml (git-sync)
+      # Do NOT use [skip ci] — the dedicated repo's Sync to CNB must run on push.
+      # CNB empty repos + CNB_TOKEN on the dedicated GitHub repos are prerequisites
+      # (same as TencentCloudBase/cloudbase-skills).
+      - name: Sync cloudbase-plugin repo
+        env:
+          PLUGINS_REPO_TOKEN: ${{ secrets.PLUGINS_REPO_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          git clone --depth 1 "https://x-access-token:${PLUGINS_REPO_TOKEN}@github.com/TencentCloudBase/cloudbase-plugin.git" /tmp/cloudbase-plugin
+
+          # Clear target (keep .git). Use rsync so Open Plugin Spec dotdirs (.plugin) are included.
+          # `cp -r src/* dest` silently drops hidden paths.
+          # --checksum: version-only bumps often keep identical byte length (e.g. 2.25.5→2.25.6).
+          # Default size+mtime quick check can skip those when build output and clone share a
+          # 1s mtime window, yielding porcelain=0 while dedicated HEAD stays behind.
+          # Output includes .github/workflows/sync-to-cnb.yml (skills-style CNB mirror).
+          rsync -a --checksum --delete --exclude='.git' \
+            "${{ github.workspace }}/.plugin-repo-output/cloudbase/" \
+            /tmp/cloudbase-plugin/
+
+          # Guardrail: OPS-only dedicated repo
+          test -f /tmp/cloudbase-plugin/plugin.json
+          test -f /tmp/cloudbase-plugin/.plugin/plugin.json
+          test -f /tmp/cloudbase-plugin/mcp.json
+          test -f /tmp/cloudbase-plugin/generated/skill-manifest.json
+          test -f /tmp/cloudbase-plugin/generated/synonyms.json
+          test -f /tmp/cloudbase-plugin/.github/workflows/sync-to-cnb.yml
+          test ! -f /tmp/cloudbase-plugin/marketplace.json
+          test ! -d /tmp/cloudbase-plugin/.claude-plugin
+          test ! -d /tmp/cloudbase-plugin/.codex-plugin
+          test ! -d /tmp/cloudbase-plugin/.cursor-plugin
+
+          cd /tmp/cloudbase-plugin
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Stage first: git add hashes content and defeats racy-git false-clean status.
+          git add -A
+
+          # Guardrail: compare build output vs committed HEAD (not WT after rsync).
+          SOURCE_WEB_VER=$(grep -E '^version:' "${{ github.workspace }}/.plugin-repo-output/cloudbase/skills/web-development/SKILL.md" | head -1 | awk '{print $2}')
+          HEAD_WEB_VER=$(git show HEAD:skills/web-development/SKILL.md 2>/dev/null | grep -E '^version:' | head -1 | awk '{print $2}' || true)
+          STAGED_COUNT=$(git diff --cached --name-only | wc -l | tr -d ' ')
+          echo "web-development version source=${SOURCE_WEB_VER} dedicated_HEAD=${HEAD_WEB_VER} staged=${STAGED_COUNT}"
+          if [ -n "$SOURCE_WEB_VER" ] && [ -n "$HEAD_WEB_VER" ] && [ "$SOURCE_WEB_VER" != "$HEAD_WEB_VER" ] && [ "$STAGED_COUNT" = "0" ]; then
+            echo "::error::Plugin sync staged no changes but web-development version diverges (dedicated HEAD ${HEAD_WEB_VER} -> source ${SOURCE_WEB_VER})."
+            exit 1
+          fi
+
+          if ! git diff --cached --quiet; then
+            # No [skip ci]: must trigger Sync to CNB on the dedicated repo (skills pattern).
+            git commit -m "chore: sync from CloudBase-MCP"
+            git push
+            echo "✓ Pushed to cloudbase-plugin"
+          else
+            echo "No changes to push"
+          fi
+
+      - name: Sync cloudbase-sites-plugin repo
+        env:
+          PLUGINS_REPO_TOKEN: ${{ secrets.PLUGINS_REPO_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          git clone --depth 1 "https://x-access-token:${PLUGINS_REPO_TOKEN}@github.com/TencentCloudBase/cloudbase-sites-plugin.git" /tmp/cloudbase-sites-plugin
+
+          # --checksum: same same-size/mtime skip hazard as cloudbase-plugin sync.
+          rsync -a --checksum --delete --exclude='.git' \
+            "${{ github.workspace }}/.plugin-repo-output/cloudbase-sites/" \
+            /tmp/cloudbase-sites-plugin/
+
+          test -f /tmp/cloudbase-sites-plugin/plugin.json
+          test -f /tmp/cloudbase-sites-plugin/.plugin/plugin.json
+          test -f /tmp/cloudbase-sites-plugin/mcp.json
+          test -f /tmp/cloudbase-sites-plugin/.github/workflows/sync-to-cnb.yml
+          test ! -f /tmp/cloudbase-sites-plugin/marketplace.json
+          test ! -d /tmp/cloudbase-sites-plugin/.claude-plugin
+          test ! -d /tmp/cloudbase-sites-plugin/.codex-plugin
+          test ! -d /tmp/cloudbase-sites-plugin/.cursor-plugin
+
+          cd /tmp/cloudbase-sites-plugin
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git add -A
+          if ! git diff --cached --quiet; then
+            git commit -m "chore: sync from CloudBase-MCP"
+            git push
+            echo "✓ Pushed to cloudbase-sites-plugin"
+          else
+            echo "No changes to push"
+          fi

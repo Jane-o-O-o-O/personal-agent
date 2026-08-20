@@ -1,0 +1,881 @@
+import CloudBase from "@cloudbase/manager-node";
+import {
+    buildDeviceAuthChallengePayload,
+    getAuthProgressState,
+    peekLoginState,
+    getLoginState,
+} from './auth.js';
+import { CloudBaseOptions, Logger } from './types.js';
+import { debug, error } from './utils/logger.js';
+import { buildAuthNextStep, throwToolPayloadError } from './utils/tool-result.js';
+import { resolveSiteAndRegion, TCB_QUERY_REGIONS } from './utils/site-map.js';
+import { readProjectEnvId } from './utils/project-config.js';
+import { createLocalCloudApiRequestFn, resolveLocalEndpoint } from './local-endpoint.js';
+
+// Timeout for envId auto-resolution flow.
+// 10 minutes (600 seconds) - matches InteractiveServer timeout
+const ENV_ID_TIMEOUT = 600000;
+
+export type EnvCandidate = {
+    envId: string;
+    alias?: string;
+    region?: string;
+    status?: string;
+    env_type?: string;
+};
+
+function toEnvCandidates(envList: any[]): EnvCandidate[] {
+    if (!Array.isArray(envList)) {
+        return [];
+    }
+
+    return envList
+        .filter((item) => item?.EnvId)
+        .map((item) => ({
+            envId: item.EnvId,
+            alias: item.Alias,
+            region: item.Region,
+            status: item.Status,
+            env_type: item.EnvType,
+        }));
+}
+
+function createManagerFromLoginState(loginState: any, region?: string): CloudBase {
+    return new CloudBase({
+        secretId: loginState.secretId,
+        secretKey: loginState.secretKey,
+        envId: loginState.envId,
+        token: loginState.token,
+        proxy: process.env.http_proxy,
+        region: region ?? resolveSiteAndRegion().region,
+    });
+}
+
+/**
+ * API Key 换取的临时凭据登录态 CAM 能力探测结果：
+ * - capable: DescribeEnvs 调用成功，管理面工具可用
+ * - limited: CAM 明确拒绝（AuthFailure.UnauthorizedOperation / invalid token），管理面工具不可用
+ * - unknown: 超时/网络等其他失败，不做判断（避免误导性警告）
+ */
+export type ApiKeyCamProbeResult = "capable" | "limited" | "unknown";
+
+// 仅缓存确定性结果（capable/limited），unknown 不缓存以便下次重试
+const apiKeyCamProbeCache = new Map<string, boolean>();
+
+const CAM_PROBE_TIMEOUT_MS = 8000;
+
+/**
+ * 轻量探测 API Key 登录态能否调用管理面（CAM）API。
+ * 背景：部分 API Key（如"AI 开发套件"形态的 JWT key）只能完成 tcb-api 网关的登录态换取，
+ * 换出的 STS 凭据不带 CAM 策略，queryEnv/queryAppAuth 等管理类工具会全部失败。
+ * 实测凭据：2026-09-01 国际站认证排查（specs/intl-auth-investigation）。
+ */
+export async function probeApiKeyCamCapability(loginState: {
+    secretId?: string;
+    secretKey?: string;
+    token?: string;
+    envId?: string;
+}): Promise<ApiKeyCamProbeResult> {
+    if (!loginState.secretId || !loginState.secretKey || !loginState.envId) {
+        return "unknown";
+    }
+    const cacheKey = `${loginState.secretId}:${loginState.envId}`;
+    const cached = apiKeyCamProbeCache.get(cacheKey);
+    if (cached !== undefined) {
+        return cached ? "capable" : "limited";
+    }
+    try {
+        const manager = createManagerFromLoginState(loginState);
+        // 查询环境详情（DescribeEnvInfo）：单环境、入参仅 EnvId，比 DescribeEnvs 更贴合
+        // "登录后查环境" 的首个真实调用；Action 名已对照 CAM 资源级策略文档确认
+        const probeCall = manager.commonService("tcb").call({
+            Action: "DescribeEnvInfo",
+            Param: { EnvId: loginState.envId },
+        });
+        const timeout = new Promise((_, reject) => {
+            const timer = setTimeout(
+                () => reject(new Error("probe timeout")),
+                CAM_PROBE_TIMEOUT_MS,
+            );
+            // 不阻塞进程退出
+            (timer as unknown as { unref?: () => void }).unref?.();
+        });
+        await Promise.race([probeCall, timeout]);
+        apiKeyCamProbeCache.set(cacheKey, true);
+        return "capable";
+    } catch (e) {
+        const code = (e as { code?: string })?.code ?? (e instanceof Error ? e.message : String(e));
+        // 仅把 CAM 明确拒绝判定为 limited；超时/网络等 inconclusive 失败归为 unknown
+        if (code.includes("UnauthorizedOperation") || code.includes("invalid token")) {
+            debug("probeApiKeyCamCapability: CAM rejected", { code });
+            apiKeyCamProbeCache.set(cacheKey, false);
+            return "limited";
+        }
+        debug("probeApiKeyCamCapability: inconclusive failure", { code });
+        return "unknown";
+    }
+}
+
+/**
+ * 从 `DescribeEnvInfo` 读取环境归属账号的主账号 uin（`EnvInfo.UserInfo.Uin`）。
+ *
+ * 供遥测的账号级归因兜底：环境级凭证（API Key 换出的临时密钥、hosted OAuth STS）
+ * 自身不带 uin，但该只读接口对它们同样会返回主账号 uin。
+ * 只读、失败（无权限 / 网络 / 超时）一律返回 null——调用方不得据此中断主链路。
+ */
+export async function fetchEnvOwnerUin(loginState: {
+    secretId?: string;
+    secretKey?: string;
+    token?: string;
+    envId?: string;
+    region?: string;
+}): Promise<string | null> {
+    if (!loginState.secretId || !loginState.secretKey || !loginState.envId) {
+        return null;
+    }
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+        const manager = createManagerFromLoginState(
+            loginState,
+            loginState.region && loginState.region !== "unknown" ? loginState.region : undefined,
+        );
+        const call = manager.commonService("tcb", "2018-06-08").call({
+            Action: "DescribeEnvInfo",
+            Param: { EnvId: loginState.envId },
+        });
+        const timeout = new Promise<never>((_, reject) => {
+            timer = setTimeout(() => reject(new Error("fetchEnvOwnerUin timeout")), CAM_PROBE_TIMEOUT_MS);
+            (timer as unknown as { unref?: () => void }).unref?.();
+        });
+        const result = (await Promise.race([call, timeout])) as {
+            EnvInfo?: { UserInfo?: { Uin?: unknown } };
+        };
+        const raw = result?.EnvInfo?.UserInfo?.Uin;
+        const normalized = raw === undefined || raw === null ? "" : String(raw).trim();
+        return /^\d+$/.test(normalized) ? normalized : null;
+    } catch (e) {
+        debug("fetchEnvOwnerUin: failed", {
+            error: e instanceof Error ? e.message : String(e),
+        });
+        return null;
+    } finally {
+        if (timer) {
+            clearTimeout(timer);
+        }
+    }
+}
+
+/**
+ * 探测「当前登录态」能否调用管理面（CAM）API。
+ *
+ * 与 probeApiKeyCamCapability 的区别：那个要求调用方自己准备好 loginState，
+ * 这里负责解析当前登录态（显式凭据优先，否则 peek 本地登录态）再转交探测。
+ *
+ * 典型用途是把「构建/授权跑到一半才抛 UnauthorizedOperation」提前成开始前的明确报错：
+ * 环境级 API Key 与 OAuth 换出的 STS 都不带 CAM 策略，凡是需要 CAM 的路径都会失败。
+ *
+ * 刻意不去推断凭证类型——`CloudBaseOptions` 已明确规定不得用 token 字段的有无推断
+ * 权限范围——而是发一次真实调用按结果判定。探测结果按 secretId+envId 缓存，
+ * 超时/网络失败一律归为 unknown，调用方不应据此拦截，避免误伤。
+ */
+export async function probeCamCapabilityForLogin(
+    cloudBaseOptions?: CloudBaseOptions,
+): Promise<ApiKeyCamProbeResult> {
+    try {
+        const { region: fallbackRegion, site } = resolveSiteAndRegion(cloudBaseOptions ?? {});
+        const loginState =
+            cloudBaseOptions?.secretId && cloudBaseOptions?.secretKey
+                ? cloudBaseOptions
+                : await peekLoginState({ region: fallbackRegion, site });
+        if (!loginState?.secretId || !loginState?.secretKey) {
+            return "unknown";
+        }
+        return await probeApiKeyCamCapability({
+            secretId: loginState.secretId,
+            secretKey: loginState.secretKey,
+            token: (loginState as { token?: string }).token,
+            envId:
+                cloudBaseOptions?.envId ?? (loginState as { envId?: string }).envId,
+        });
+    } catch (e) {
+        debug("probeCamCapabilityForLogin: failed to resolve login state", {
+            error: e instanceof Error ? e.message : String(e),
+        });
+        return "unknown";
+    }
+}
+
+export async function listAvailableEnvCandidates(options?: {
+    cloudBaseOptions?: CloudBaseOptions;
+    loginState?: any;
+    region?: string;
+    ignorePinnedEnvId?: boolean;
+}): Promise<EnvCandidate[]> {
+    const {
+        cloudBaseOptions,
+        loginState: providedLoginState,
+        region: regionOverride,
+        ignorePinnedEnvId,
+    } = options ?? {};
+
+    if (!ignorePinnedEnvId) {
+        // Prefer an explicit envId pin (bound session / API Key).
+        if (cloudBaseOptions?.envId) {
+            return [{
+                envId: cloudBaseOptions.envId,
+                region: cloudBaseOptions.region,
+            }];
+        }
+
+        // When CLOUDBASE_ENV_ID is set and credentials are not explicit, skip DescribeEnvs.
+        const hasExplicitCredentials = !!(cloudBaseOptions?.secretId && cloudBaseOptions?.secretKey);
+        if (process.env.CLOUDBASE_ENV_ID && !hasExplicitCredentials && !cloudBaseOptions?.requestFn && !process.env.CLOUDBASE_LOCAL_ENDPOINT) {
+            return [{
+                envId: process.env.CLOUDBASE_ENV_ID,
+            }];
+        }
+    }
+
+    const region = resolveSiteAndRegion({
+        ...(cloudBaseOptions ?? {}),
+        ...(regionOverride ? { region: regionOverride } : {}),
+    }).region;
+
+    let cloudbase: CloudBase | undefined;
+    if (cloudBaseOptions?.requestFn || (cloudBaseOptions?.secretId && cloudBaseOptions?.secretKey)) {
+        cloudbase = createCloudBaseManagerWithOptions({
+            ...cloudBaseOptions,
+            region,
+        });
+    } else {
+        const loginState = providedLoginState ?? await peekLoginState();
+        if (!loginState?.secretId || !loginState?.secretKey) {
+            return [];
+        }
+        cloudbase = createManagerFromLoginState(loginState, region);
+    }
+
+    try {
+        const result = await cloudbase.commonService("tcb", "2018-06-08").call({
+            Action: "DescribeEnvs",
+            Param: {
+                EnvTypes: ["weda", "baas"],
+                IsVisible: false,
+                Channels: ["dcloud", "iotenable", "tem", "scene_module"],
+            },
+        });
+        const envList = result?.EnvList || result?.Data?.EnvList || [];
+        return toEnvCandidates(envList);
+    } catch (err) {
+        if (resolveLocalEndpoint()) {
+            throw err;
+        }
+        try {
+            const fallback = await cloudbase.env.listEnvs();
+            return toEnvCandidates(fallback?.EnvList || []);
+        } catch {
+            return [];
+        }
+    }
+}
+
+/**
+ * Look up an envId across known TCB regions. Used by set_env so a Singapore
+ * env can be bound even when the current session region is ap-shanghai.
+ */
+export async function resolveEnvCandidateByEnvId(options: {
+    envId: string;
+    cloudBaseOptions?: CloudBaseOptions;
+    loginState?: any;
+}): Promise<EnvCandidate | undefined> {
+    const { envId, cloudBaseOptions, loginState } = options;
+    const seenRegions = new Set<string>();
+    const regionsToProbe = [
+        resolveSiteAndRegion({
+            ...(cloudBaseOptions ?? {}),
+        }).region,
+        ...TCB_QUERY_REGIONS,
+    ];
+
+    for (const region of regionsToProbe) {
+        if (seenRegions.has(region)) {
+            continue;
+        }
+        seenRegions.add(region);
+        const candidates = await listAvailableEnvCandidates({
+            cloudBaseOptions,
+            loginState,
+            region,
+            ignorePinnedEnvId: true,
+        });
+        const matched = candidates.find((item) => item.envId === envId);
+        if (matched) {
+            return {
+                ...matched,
+                region: matched.region || region,
+            };
+        }
+    }
+
+    return undefined;
+}
+
+function throwAuthRequiredError(): never {
+    throwToolPayloadError({
+        ok: false,
+        code: "AUTH_REQUIRED",
+        message: "当前未登录，请先调用 auth 工具完成认证。",
+        next_step: buildAuthNextStep("start_auth", {
+            suggestedArgs: {
+                action: "start_auth",
+                authMode: "device",
+            },
+        }),
+    });
+}
+
+async function throwPendingAuthError() {
+    const authState = await getAuthProgressState();
+    throwToolPayloadError({
+        ok: false,
+        code: "AUTH_PENDING",
+        message: authState.lastError || "设备码授权进行中，请先完成登录后再重试当前工具。",
+        auth_challenge: buildDeviceAuthChallengePayload(authState.authChallenge),
+        next_step: buildAuthNextStep("status", {
+            suggestedArgs: {
+                action: "status",
+            },
+        }),
+    });
+}
+
+async function throwEnvRequiredError(options?: {
+    cloudBaseOptions?: CloudBaseOptions;
+    loginState?: any;
+    envCandidates?: EnvCandidate[];
+}) {
+    const localEndpoint = resolveLocalEndpoint();
+    if (localEndpoint) {
+        throwToolPayloadError({
+            ok: false,
+            code: "LOCAL_ENDPOINT_UNAVAILABLE",
+            message: `CLOUDBASE_LOCAL_ENDPOINT=${localEndpoint} 没有返回可用环境。请求发往 ${localEndpoint}/capi。请先启动这个地址上的本地进程。`,
+        });
+    }
+    const envCandidates =
+        options?.envCandidates ?? (await listAvailableEnvCandidates(options));
+    const singleEnvId = envCandidates.length === 1 ? envCandidates[0].envId : undefined;
+    // 终止性引导：明确「重试当前工具不会成功」，给出可直接执行的替代动作与
+    // 无头/无人值守环境的 fallback（CLOUDBASE_ENV_ID 或宿主配置传入 envId），
+    // 避免客户端把本错误当作可重试错误陷入死循环（2026-08-20 单日 15 万次重试风暴）。
+    const retryHint = "重试当前工具不会成功，请停止原样重试。";
+    const headlessHint =
+        "若运行在无浏览器/无人值守环境而无法交互完成登录绑定，可在启动 MCP 前设置 CLOUDBASE_ENV_ID 环境变量指定默认环境。";
+    const message = envCandidates.length === 0
+        ? `当前已登录，但还没有可用环境。${retryHint}请改为在腾讯云控制台创建 CloudBase 环境后重新绑定；${headlessHint}`
+        : envCandidates.length === 1
+            ? `当前已登录，但尚未绑定环境。${retryHint}请先调用 auth(action="set_env", envId="${singleEnvId}") 完成绑定后再继续；${headlessHint}`
+            : `当前已登录，但尚未绑定环境。${retryHint}请先调用 auth(action="set_env", envId=候选环境之一) 完成绑定后再继续；${headlessHint}`;
+    throwToolPayloadError({
+        ok: false,
+        code: "ENV_REQUIRED",
+        message,
+        env_candidates: envCandidates,
+        next_step: buildAuthNextStep("set_env", {
+            requiredParams: singleEnvId ? undefined : ["envId"],
+            suggestedArgs: singleEnvId
+                ? {
+                    action: "set_env",
+                    envId: singleEnvId,
+                }
+                : {
+                    action: "set_env",
+                },
+        }),
+    });
+}
+
+// 统一的环境ID管理类
+class EnvironmentManager {
+    private cachedEnvId: string | null = null;
+    private envIdPromise: Promise<string> | null = null;
+
+    // 重置缓存
+    reset() {
+        this.cachedEnvId = null;
+        this.envIdPromise = null;
+        delete process.env.CLOUDBASE_ENV_ID;
+    }
+
+    // 获取环境ID的核心逻辑
+    async getEnvId(): Promise<string> {
+        // 1. 优先使用内存缓存
+        if (this.cachedEnvId) {
+            debug('使用内存缓存的环境ID:', { envId: this.cachedEnvId });
+            return this.cachedEnvId;
+        }
+
+        // 2. 如果正在获取中，等待结果
+        if (this.envIdPromise) {
+            return this.envIdPromise;
+        }
+
+        // 3. 开始获取环境ID
+        this.envIdPromise = this._fetchEnvId();
+
+        try {
+            const result = await this.envIdPromise;
+            return result;
+        } catch (err) {
+            this.envIdPromise = null;
+            throw err;
+        }
+    }
+
+    private async _fetchEnvId(): Promise<string> {
+        try {
+            // 1. 检查进程环境变量
+            if (process.env.CLOUDBASE_ENV_ID) {
+                debug('使用进程环境变量的环境ID:', { envId: process.env.CLOUDBASE_ENV_ID });
+                this.cachedEnvId = process.env.CLOUDBASE_ENV_ID;
+                return this.cachedEnvId;
+            }
+
+            // 2. 项目级配置固定的环境（.cloudbase/project.json 的 envId，
+            //    回退 cloudbaserc.json 的字面量/{{env.*}} envId）
+            // 优先于账号级登录态：登录态是全局的，可能指向另一个仓库绑定的环境。
+            const projectEnvId = readProjectEnvId();
+            if (projectEnvId) {
+                debug('使用项目配置(project.json/cloudbaserc.json)的环境ID:', { envId: projectEnvId });
+                this._setCachedEnvId(projectEnvId);
+                return projectEnvId;
+            }
+
+            // 3. 如果登录态里已有 envId，直接复用
+            const loginState = await peekLoginState();
+            if (typeof loginState?.envId === 'string' && loginState.envId.length > 0) {
+                debug('使用登录态中的环境ID:', { envId: loginState.envId });
+                this._setCachedEnvId(loginState.envId);
+                return loginState.envId;
+            }
+
+            // 3.1 未登录必须交回 AUTH_REQUIRED，不能继续往下走「选环境」。
+            // 未登录时拿不到任何环境候选，落到 throwEnvRequiredError 会输出
+            // 「当前已登录，但还没有可用环境」——把「没登录」误诊成「登录了但缺环境」。
+            // 调用方读到这句会去 set_env 选环境，而候选列表永远为空，只能原样重试。
+            // 与 getCloudBaseManager 的登录态分流保持同构。
+            if (!loginState) {
+                throwAuthRequiredError();
+            }
+
+            // 4. 单环境自动绑定；多环境时返回结构化引导，不再触发交互弹窗
+            const envCandidates = await listAvailableEnvCandidates({ loginState });
+            if (envCandidates.length === 1) {
+                const singleEnvId = envCandidates[0].envId;
+                debug('自动绑定唯一环境:', { envId: singleEnvId });
+                this._setCachedEnvId(singleEnvId);
+                return singleEnvId;
+            }
+
+            await throwEnvRequiredError({ loginState, envCandidates });
+            throw new Error('Unreachable after throwEnvRequiredError');
+
+        } catch (err) {
+            // Log the error with full context before re-throwing
+            const errorObj = err instanceof Error ? err : new Error(String(err));
+            error('获取环境ID失败:', {
+                message: errorObj.message,
+                stack: errorObj.stack,
+                name: errorObj.name,
+                failureInfo: (errorObj as any).failureInfo,
+                originalError: (errorObj as any).originalError,
+            });
+            throw errorObj;
+        } finally {
+            this.envIdPromise = null;
+        }
+    }
+
+    // 统一设置缓存的方法
+    private _setCachedEnvId(envId: string) {
+        this.cachedEnvId = envId;
+        process.env.CLOUDBASE_ENV_ID = envId;
+        debug('已更新环境ID缓存:', { envId });
+    }
+
+    // 手动设置环境ID（用于外部调用）
+    async setEnvId(envId: string) {
+        this._setCachedEnvId(envId);
+        debug('手动设置环境ID并更新缓存:', { envId });
+    }
+
+    // Get cached envId without triggering fetch (for optimization)
+    getCachedEnvId(): string | null {
+        return this.cachedEnvId;
+    }
+}
+
+// 全局实例
+const envManager = new EnvironmentManager();
+
+// 导出环境ID获取函数
+export async function getEnvId(cloudBaseOptions?: CloudBaseOptions): Promise<string> {
+    if (cloudBaseOptions?.envId) {
+        debug('使用传入的 envId:', { envId: cloudBaseOptions.envId });
+        return cloudBaseOptions.envId;
+    }
+
+    if (resolveLocalEndpoint()) {
+        return 'local';
+    }
+
+    const cachedEnvId = envManager.getCachedEnvId() || process.env.CLOUDBASE_ENV_ID;
+    if (cachedEnvId) {
+        debug('使用缓存中的 envId:', { envId: cachedEnvId });
+        return cachedEnvId;
+    }
+
+    // 项目级配置固定的环境优先于账号级登录态，保证「打开仓库即连对环境」，
+    // 且同一仓库的每个 Git worktree / 每个新进程都不需要重复 set_env。
+    const projectEnvId = readProjectEnvId();
+    if (projectEnvId) {
+        debug('使用项目配置(.cloudbase/project.json)的 envId:', { envId: projectEnvId });
+        await envManager.setEnvId(projectEnvId);
+        return projectEnvId;
+    }
+
+    const loginState = await peekLoginState();
+    if (typeof loginState?.envId === 'string' && loginState.envId.length > 0) {
+        debug('使用登录态中的 envId:', { envId: loginState.envId });
+        return loginState.envId;
+    }
+
+    // 否则使用默认逻辑
+    return envManager.getEnvId();
+}
+
+// 导出函数保持兼容性
+export function resetCloudBaseManagerCache() {
+    envManager.reset();
+}
+
+// 导出获取缓存环境ID的函数，供遥测模块使用
+export function getCachedEnvId(): string | null {
+    return envManager.getCachedEnvId();
+}
+
+export interface GetManagerOptions {
+    requireEnvId?: boolean;
+    cloudBaseOptions?: CloudBaseOptions;
+    mcpServer?: any; // Reserved for backward compatibility
+    authStrategy?: 'fail_fast' | 'ensure';
+}
+
+type DatabaseInstanceIdResolution = {
+    instanceId: string;
+    source: 'input' | 'cache' | 'envInfo';
+    cacheKey?: string;
+};
+
+type DatabaseInstanceIdCacheEntry = {
+    instanceId?: string;
+    inflightPromise?: Promise<string>;
+};
+
+const databaseInstanceIdCache = new Map<string, DatabaseInstanceIdCacheEntry>();
+
+function buildDatabaseInstanceIdCacheKey(options?: {
+    envId?: string;
+    region?: string;
+    cloudBaseOptions?: CloudBaseOptions;
+}) {
+    const envId = options?.envId ?? options?.cloudBaseOptions?.envId ?? process.env.CLOUDBASE_ENV_ID ?? 'unknown';
+    const region = resolveSiteAndRegion({
+        site: options?.cloudBaseOptions?.site,
+        region: options?.region ?? options?.cloudBaseOptions?.region,
+    }).region;
+    return `${region}:${envId}`;
+}
+
+export function resetDatabaseInstanceIdCache() {
+    databaseInstanceIdCache.clear();
+}
+
+export function invalidateDatabaseInstanceIdCache(options?: {
+    cacheKey?: string;
+    envId?: string;
+    region?: string;
+    cloudBaseOptions?: CloudBaseOptions;
+}) {
+    const cacheKey = options?.cacheKey ?? buildDatabaseInstanceIdCacheKey(options);
+    databaseInstanceIdCache.delete(cacheKey);
+}
+
+export async function getDatabaseInstanceId(options?: {
+    instanceId?: string;
+    cloudBaseOptions?: CloudBaseOptions;
+    cloudbase?: CloudBase;
+}): Promise<DatabaseInstanceIdResolution> {
+    if (options?.instanceId) {
+        return {
+            instanceId: options.instanceId,
+            source: 'input',
+        };
+    }
+
+    const envId = await getEnvId(options?.cloudBaseOptions);
+    const cacheKey = buildDatabaseInstanceIdCacheKey({
+        envId,
+        cloudBaseOptions: options?.cloudBaseOptions,
+    });
+
+    const cachedEntry = databaseInstanceIdCache.get(cacheKey);
+    if (cachedEntry?.instanceId) {
+        return {
+            instanceId: cachedEntry.instanceId,
+            source: 'cache',
+            cacheKey,
+        };
+    }
+
+    if (cachedEntry?.inflightPromise) {
+        const instanceId = await cachedEntry.inflightPromise;
+        return {
+            instanceId,
+            source: 'cache',
+            cacheKey,
+        };
+    }
+
+    const inflightPromise = (async () => {
+        const cloudbase =
+            options?.cloudbase ?? (await getCloudBaseManager({ cloudBaseOptions: options?.cloudBaseOptions }));
+        const { EnvInfo } = await cloudbase.env.getEnvInfo();
+        if (!EnvInfo?.Databases?.[0]?.InstanceId) {
+            throw new Error("无法获取数据库实例ID");
+        }
+        return EnvInfo.Databases[0].InstanceId;
+    })();
+
+    databaseInstanceIdCache.set(cacheKey, {
+        inflightPromise,
+    });
+
+    try {
+        const instanceId = await inflightPromise;
+        databaseInstanceIdCache.set(cacheKey, {
+            instanceId,
+        });
+        return {
+            instanceId,
+            source: 'envInfo',
+            cacheKey,
+        };
+    } catch (error) {
+        databaseInstanceIdCache.delete(cacheKey);
+        throw error;
+    }
+}
+
+/**
+ * 每次都实时获取最新的 token/secretId/secretKey
+ */
+export async function getCloudBaseManager(options: GetManagerOptions = {}): Promise<CloudBase> {
+    const {
+        requireEnvId = true,
+        authStrategy = 'fail_fast',
+    } = options;
+    let cloudBaseOptions = options.cloudBaseOptions;
+    const localEndpoint = resolveLocalEndpoint();
+    if (localEndpoint && !cloudBaseOptions?.requestFn) {
+        cloudBaseOptions = {
+            ...cloudBaseOptions,
+            envId: cloudBaseOptions?.envId || 'local',
+            requestFn: createLocalCloudApiRequestFn(localEndpoint),
+        };
+    }
+
+    const hasDirectCredentials = !!(cloudBaseOptions?.secretId && cloudBaseOptions?.secretKey);
+    const hasRequestFn = !!(cloudBaseOptions?.requestFn);
+
+    // 如果传入了完整凭据或 requestFn，优先使用显式 CloudBase 配置
+    if (cloudBaseOptions && (hasDirectCredentials || hasRequestFn)) {
+        let resolvedEnvId = cloudBaseOptions.envId;
+        if (requireEnvId && !resolvedEnvId) {
+            const envCandidates = await listAvailableEnvCandidates({ cloudBaseOptions });
+            if (envCandidates.length === 1) {
+                const singleEnvId = envCandidates[0].envId;
+                cloudBaseOptions.envId = singleEnvId;
+                resolvedEnvId = singleEnvId;
+                debug('自动绑定唯一环境(显式配置):', { envId: singleEnvId });
+            } else if (authStrategy === 'fail_fast') {
+                await throwEnvRequiredError({ cloudBaseOptions, envCandidates });
+            } else {
+                throwToolPayloadError({
+                    ok: false,
+                    code: "ENV_REQUIRED",
+                    message: "当前显式 CloudBase 凭据未绑定环境，请补充 envId 或先选择环境。",
+                    env_candidates: envCandidates,
+                    next_step: buildAuthNextStep("set_env", {
+                        suggestedArgs: { action: "set_env" },
+                        requiredParams: ["envId"],
+                    }),
+                });
+            }
+        }
+
+        debug('使用传入的 CloudBase 配置');
+        return createCloudBaseManagerWithOptions({
+            ...cloudBaseOptions,
+            envId: resolvedEnvId,
+        });
+    }
+
+    try {
+        // Region priority: explicit option > TCB_REGION/TCB_SITE env > .cloudbase/project.json > ap-shanghai default
+        const { region: fallbackRegion, site } = resolveSiteAndRegion(cloudBaseOptions ?? {});
+        const loginState = authStrategy === 'ensure'
+            ? await getLoginState({ region: fallbackRegion, site })
+            : await peekLoginState({ region: fallbackRegion, site });
+
+        if (!loginState) {
+            const authState = await getAuthProgressState();
+            if (authState.status === 'PENDING') {
+                await throwPendingAuthError();
+            }
+            throwAuthRequiredError();
+            return undefined as never; // unreachable, helps TypeScript narrow
+        }
+        const {
+            envId: loginEnvId,
+            secretId,
+            secretKey,
+            token
+        } = loginState;
+
+        let finalEnvId: string | undefined = cloudBaseOptions?.envId;
+        if (requireEnvId) {
+            if (!finalEnvId) {
+                // Optimize: Check if envManager has cached envId first (fast path)
+                // If cached, use it directly; otherwise check loginEnvId before calling getEnvId()
+                // This avoids unnecessary async calls when we have a valid envId available
+                const cachedEnvId = envManager.getCachedEnvId() || process.env.CLOUDBASE_ENV_ID;
+                const projectEnvId = cachedEnvId ? undefined : readProjectEnvId();
+                if (cachedEnvId) {
+                    debug('使用 envManager 缓存的环境ID:', { cachedEnvId });
+                    finalEnvId = cachedEnvId;
+                } else if (projectEnvId) {
+                    // 项目级绑定优先于全局登录态 envId：后者可能来自另一个仓库
+                    debug('使用项目配置(project.json/cloudbaserc.json)的环境ID:', { projectEnvId });
+                    await envManager.setEnvId(projectEnvId);
+                    finalEnvId = projectEnvId;
+                } else if (loginEnvId) {
+                    // If no cache but loginState has envId, use it directly
+                    debug('使用 loginState 中的环境ID:', { loginEnvId });
+                    finalEnvId = loginEnvId;
+                } else {
+                    if (authStrategy === 'fail_fast') {
+                        const envCandidates = await listAvailableEnvCandidates({ loginState });
+                        if (envCandidates.length === 1) {
+                            const singleEnvId = envCandidates[0].envId;
+                            await envManager.setEnvId(singleEnvId);
+                            finalEnvId = singleEnvId;
+                            debug('自动绑定唯一环境:', { envId: singleEnvId });
+                        } else {
+                            await throwEnvRequiredError({ loginState, envCandidates });
+                        }
+                    } else {
+                        // ensure 模式下也保持非交互：单环境自动绑定，多环境返回 ENV_REQUIRED
+                        finalEnvId = await envManager.getEnvId();
+                    }
+                }
+            }
+        }
+
+        // envId priority: explicit option > envManager cache > loginState.envId
+        const resolvedEnvId = finalEnvId || loginEnvId;
+        // region 直接使用 fallbackRegion（resolveSiteAndRegion 统一解析）
+        // 不再通过 DescribeEnvs 查询 region，以兼容 STS 临时密钥场景
+        const region = fallbackRegion;
+
+        const manager = new CloudBase({
+            secretId,
+            secretKey,
+            envId: resolvedEnvId,
+            token,
+            proxy: process.env.http_proxy,
+            region,
+            // REGION 国际站需要指定 region
+        });
+        return manager;
+    } catch (err) {
+        error('Failed to initialize CloudBase Manager:', err instanceof Error ? err : new Error(String(err)));
+        throw err;
+    }
+}
+
+/**
+ * Create a manager with the provided CloudBase options, without using cache
+ * @param cloudBaseOptions Provided CloudBase options
+ * @returns CloudBase manager instance
+ */
+export function createCloudBaseManagerWithOptions(cloudBaseOptions: CloudBaseOptions): CloudBase {
+    debug('Create manager with provided CloudBase options:', {
+        envId: cloudBaseOptions.envId,
+        region: cloudBaseOptions.region,
+        hasSecretId: !!cloudBaseOptions.secretId,
+        hasSecretKey: !!cloudBaseOptions.secretKey,
+        hasToken: !!cloudBaseOptions.token,
+    });
+
+    // Region priority: explicit option > TCB_REGION/TCB_SITE env > .cloudbase/project.json > ap-shanghai default
+    const region = resolveSiteAndRegion(cloudBaseOptions).region;
+    const manager = new CloudBase({
+        ...cloudBaseOptions,
+        proxy: cloudBaseOptions.proxy || process.env.http_proxy,
+        region
+    });
+
+    return manager;
+}
+
+/**
+ * Extract RequestId from result object
+ */
+export function extractRequestId(result: any): string | undefined {
+    if (!result || typeof result !== 'object') {
+        return undefined;
+    }
+
+    // Try common RequestId field names
+    if ('RequestId' in result && result.RequestId) {
+        return String(result.RequestId);
+    }
+    if ('requestId' in result && result.requestId) {
+        return String(result.requestId);
+    }
+    if ('request_id' in result && result.request_id) {
+        return String(result.request_id);
+    }
+
+    return undefined;
+}
+
+/**
+ * Log CloudBase manager call result with RequestId
+ */
+export function logCloudBaseResult(logger: Logger | undefined, result: any): void {
+    if (!logger) {
+        return;
+    }
+
+    const requestId = extractRequestId(result);
+    logger({
+        type: 'capiResult',
+        requestId,
+        result,
+    });
+}
+
+// 导出环境管理器实例供其他地方使用
+export { envManager };

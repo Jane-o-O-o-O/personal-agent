@@ -1,0 +1,876 @@
+import { z } from "zod";
+import { getCloudBaseManager, getEnvId, logCloudBaseResult } from "../cloudbase-manager.js";
+import type { ExtendedMcpServer } from "../server.js";
+import { jsonContent } from "../utils/json-content.js";
+import { isToolPayloadError } from "../utils/tool-result.js";
+import { t } from "../i18n/index.js";
+
+const QUERY_APP_AUTH_ACTIONS = [
+  "getLoginConfig",
+  "listProviders",
+  "getProvider",
+  "getClientConfig",
+  "getPublishableKey",
+  "getStaticDomain",
+  "listApiKeys",
+] as const;
+
+const MANAGE_APP_AUTH_ACTIONS = [
+  "patchLoginStrategy",
+  "addProvider",
+  "updateProvider",
+  "deleteProvider",
+  "updateClientConfig",
+  "ensurePublishableKey",
+  "createApiKey",
+  "deleteApiKey",
+  "createCustomLoginKeys",
+] as const;
+
+const APP_AUTH_KEY_TYPES = ["publish_key", "api_key"] as const;
+const APP_AUTH_PROVIDER_TYPES = [
+  "OAUTH",
+  "OIDC",
+  "SAML",
+  "WX_MICRO_APP",
+  "WX_QRCODE_MICRO_APP",
+  "WX_CLOUDBASE_MICRO_APP",
+  "WX_MP",
+  "WX_OPEN",
+  "WX_WORK_INTERNAL",
+  "WX_WORK_AGENT",
+  "WX_WORK_THIRD_PARTY",
+  "WX_WORK_THIRD_PARTY_ASSOCIATION",
+  "CUSTOM",
+  "EMAIL",
+] as const;
+
+type QueryAppAuthAction = (typeof QUERY_APP_AUTH_ACTIONS)[number];
+type ManageAppAuthAction = (typeof MANAGE_APP_AUTH_ACTIONS)[number];
+type AppAuthKeyType = (typeof APP_AUTH_KEY_TYPES)[number];
+type AppAuthProviderType = (typeof APP_AUTH_PROVIDER_TYPES)[number];
+
+const SUPABASE_LIKE_SDK_HINTS = {
+  phoneOtp: "auth.signInWithOtp({ phone })",
+  emailOtp: "auth.signInWithOtp({ email })",
+  password: "auth.signInWithPassword({ username|email|phone, password })",
+  signup: "auth.signUp({ phone|email, ... })",
+  verifyOtp:
+    "const { data, error } = await auth.signInWithOtp({ email })\nconst { data: loginData, error: loginError } = await data.verifyOtp({ token })",
+  anonymous: "auth.signInAnonymously()",
+} as const;
+
+/** 输出用 SDK 提示：调用时经 t() 解析 caution，避免把词典 key 直接写入 JSON 输出 */
+function buildSdkHints() {
+  return {
+    ...SUPABASE_LIKE_SDK_HINTS,
+    caution: t("appAuth.sdkHintCaution"),
+  };
+}
+
+function buildErrorEnvelope(error: unknown) {
+  return {
+    success: false,
+    data: {},
+    message: error instanceof Error ? error.message : String(error),
+  };
+}
+
+function buildShortError(error: string) {
+  return {
+    success: false,
+    error,
+  };
+}
+
+function buildShortErrorWithCode(error: string, code: string) {
+  return {
+    success: false,
+    error,
+    code,
+  };
+}
+function normalizePlainObject(
+  value: unknown,
+  label: string,
+): Record<string, unknown> | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error(t("appAuth.mustBeObject", { label }));
+  }
+  return value as Record<string, unknown>;
+}
+
+function normalizeLocalizedMessage(
+  value: unknown,
+  label: string,
+  fallback?: string,
+): Record<string, unknown> {
+  if (typeof value === "string") {
+    return { Message: value };
+  }
+
+  const normalized = normalizePlainObject(value, label);
+  if (normalized) {
+    return normalized;
+  }
+
+  if (fallback) {
+    return { Message: fallback };
+  }
+
+  throw new Error(t("appAuth.mustBeStringOrObject", { label }));
+}
+
+function omitKeys(
+  value: Record<string, unknown> | undefined,
+  keys: string[],
+): Record<string, unknown> | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  return Object.fromEntries(
+    Object.entries(value).filter(([key]) => !keys.includes(key)),
+  );
+}
+
+function extractLoginStrategyState(value: unknown): Record<string, unknown> {
+  const source = normalizePlainObject(value, "loginStrategy") ?? {};
+  const data = normalizePlainObject(source.Data, "loginStrategy.Data") ?? source;
+
+  return {
+    PhoneNumberLogin: Boolean(data.PhoneNumberLogin ?? data.PhoneLogin ?? false),
+    EmailLogin: Boolean(data.EmailLogin ?? false),
+    AnonymousLogin: Boolean(data.AnonymousLogin ?? false),
+    UserNameLogin: Boolean(data.UserNameLogin ?? data.UsernameLogin ?? false),
+    ...(data.SmsVerificationConfig ? { SmsVerificationConfig: data.SmsVerificationConfig } : {}),
+    ...(typeof data.Mfa === "boolean" ? { Mfa: data.Mfa } : {}),
+    ...(data.MfaConfig ? { MfaConfig: data.MfaConfig } : {}),
+    ...(data.PwdUpdateStrategy ? { PwdUpdateStrategy: data.PwdUpdateStrategy } : {}),
+  };
+}
+
+function normalizeLoginConfigPatch(value: Record<string, unknown>) {
+  const {
+    PhoneLogin,
+    UsernameLogin,
+    usernamePassword,
+    email,
+    anonymous,
+    phone,
+    ...rest
+  } = value;
+
+  return {
+    ...rest,
+    ...(typeof PhoneLogin === "boolean" ? { PhoneNumberLogin: PhoneLogin } : {}),
+    ...(typeof UsernameLogin === "boolean" ? { UserNameLogin: UsernameLogin } : {}),
+    ...(typeof usernamePassword === "boolean" ? { UserNameLogin: usernamePassword } : {}),
+    ...(typeof email === "boolean" ? { EmailLogin: email } : {}),
+    ...(typeof anonymous === "boolean" ? { AnonymousLogin: anonymous } : {}),
+    ...(typeof phone === "boolean" ? { PhoneNumberLogin: phone } : {}),
+  };
+}
+
+function buildLoginMethods(value: unknown) {
+  const state = extractLoginStrategyState(value);
+  return {
+    usernamePassword: Boolean(state.UserNameLogin),
+    email: Boolean(state.EmailLogin),
+    anonymous: Boolean(state.AnonymousLogin),
+    phone: Boolean(state.PhoneNumberLogin),
+  };
+}
+
+function buildWebSdkHint(loginMethods: ReturnType<typeof buildLoginMethods>) {
+  if (!loginMethods.usernamePassword) {
+    return {
+      blocked: true,
+      reason: t("appAuth.webSdkBlockedReason"),
+      nextStep: 'manageAppAuth({ action: "patchLoginStrategy", patch: { usernamePassword: true } })',
+      accountInputType: "text",
+      avoidEmailHelpers: true,
+    };
+  }
+
+  return {
+    blocked: false,
+    register: t("appAuth.webSdkRegisterHint"),
+    login: "auth.signInWithPassword({ username, password })",
+    accountInputType: "text",
+    avoidEmailHelpers: true,
+  };
+}
+
+function buildLoginConfigNextStep(loginMethods: ReturnType<typeof buildLoginMethods>) {
+  if (loginMethods.usernamePassword) {
+    return undefined;
+  }
+
+  return {
+    tool: "manageAppAuth",
+    action: "patchLoginStrategy",
+    patch: {
+      usernamePassword: true,
+    },
+  };
+}
+
+/**
+ * 短信验证码默认通道提示：开启 phone 登录后即可用云开发默认短信通道收发验证码，
+ * 不需要配置短信签名/模板/自定义 Provider。仅当需要自定义模板、签名或更换短信服务商时，
+ * 才需要配置 SmsVerificationConfig / 自定义短信通道。
+ */
+function buildSmsHint(loginMethods: ReturnType<typeof buildLoginMethods>) {
+  if (!loginMethods.phone) {
+    return undefined;
+  }
+
+  return {
+    defaultChannelReady: true,
+    message: t("appAuth.smsHint"),
+  };
+}
+
+function extractProviders(value: unknown): Array<Record<string, unknown>> {
+  const payload = normalizePlainObject(value, "providersResult");
+  const providers = payload?.Providers ?? payload?.ProviderList ?? payload?.Data ?? [];
+  return Array.isArray(providers) ? (providers as Array<Record<string, unknown>>) : [];
+}
+
+function extractStaticStores(value: unknown): Array<Record<string, unknown>> {
+  const payload = normalizePlainObject(value, "staticStoreResult");
+  const stores = payload?.Data ?? [];
+  return Array.isArray(stores) ? (stores as Array<Record<string, unknown>>) : [];
+}
+
+function getNonEmptyString(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function resolveStaticStoreDomain(store: Record<string, unknown> | undefined): string | null {
+  return getNonEmptyString(store?.CdnDomain) ?? getNonEmptyString(store?.StaticDomain) ?? null;
+}
+
+function extractApiKeyList(value: unknown): Array<Record<string, unknown>> {
+  const payload = normalizePlainObject(value, "apiKeyResult");
+  const items = payload?.ApiKeyList ?? payload?.Data ?? [];
+  return Array.isArray(items) ? (items as Array<Record<string, unknown>>) : [];
+}
+
+function findPublishableKey(value: unknown): Record<string, unknown> | null {
+  const apiKeys = extractApiKeyList(value);
+  return (
+    apiKeys.find(
+      (item) =>
+        item.Name === "publish_key" ||
+        item.KeyName === "publish_key" ||
+        item.KeyType === "publish_key",
+    ) ?? null
+  );
+}
+
+function buildPublishableKeyResponse(
+  envId: string,
+  record: Record<string, unknown> | null,
+  options?: { created?: boolean },
+) {
+  return {
+    success: true,
+    envId,
+    sdkStyle: "supabase-like",
+    sdkHints: buildSdkHints(),
+    publishableKey:
+      typeof record?.ApiKey === "string" ? record.ApiKey : null,
+    keyId: typeof record?.KeyId === "string" ? record.KeyId : null,
+    keyName:
+      typeof record?.Name === "string"
+        ? record.Name
+        : typeof record?.KeyName === "string"
+          ? record.KeyName
+          : record
+            ? "publish_key"
+            : null,
+    expireAt: typeof record?.ExpireAt === "string" ? record.ExpireAt : null,
+    createdAt: typeof record?.CreateAt === "string" ? record.CreateAt : null,
+    ...(typeof options?.created === "boolean" ? { created: options.created } : {}),
+  };
+}
+
+function buildSupabaseLikeAuthResponse(payload: Record<string, unknown>) {
+  return {
+    ...payload,
+    sdkStyle: "supabase-like",
+    sdkHints: buildSdkHints(),
+  };
+}
+
+function buildClientConfigResponse(
+  envId: string,
+  clientId: string,
+  clientConfig: unknown,
+) {
+  return {
+    success: true,
+    envId,
+    clientId,
+    clientConfig,
+  };
+}
+
+async function getActiveEnvId(cloudBaseOptions?: Record<string, unknown>) {
+  try {
+    return await getEnvId(cloudBaseOptions as any);
+  } catch (error) {
+    const payload =
+      isToolPayloadError(error)
+        ? error.payload
+        : normalizePlainObject((error as any)?.payload, "error.payload");
+    if (payload?.code === "ENV_REQUIRED") {
+      const nextError = new Error(t("appAuth.noActiveEnv"));
+      (nextError as Error & { code?: string }).code = "ENV_REQUIRED";
+      throw nextError;
+    }
+    if (payload?.code === "AUTH_REQUIRED") {
+      const nextError = new Error(t("appAuth.authRequired"));
+      (nextError as Error & { code?: string }).code = "AUTH_REQUIRED";
+      throw nextError;
+    }
+    throw error;
+  }
+}
+
+function isResourceInUseError(error: unknown) {
+  if (!error || typeof error !== "object") {
+    return false;
+  }
+
+  const candidate = error as { code?: unknown; message?: unknown; name?: unknown };
+  const code = typeof candidate.code === "string" ? candidate.code : "";
+  const name = typeof candidate.name === "string" ? candidate.name : "";
+  const message = typeof candidate.message === "string" ? candidate.message : "";
+  const haystack = `${code} ${name} ${message}`;
+
+  return /ResourceInUse/i.test(haystack);
+}
+export function registerAppAuthTools(server: ExtendedMcpServer) {
+  const cloudBaseOptions = server.cloudBaseOptions;
+  const getManager = () => getCloudBaseManager({ cloudBaseOptions });
+
+  const withEnvelope = async (handler: () => Promise<Record<string, unknown>>) => {
+    try {
+      return jsonContent(await handler());
+    } catch (error) {
+      if (error instanceof Error && (error.message === t("appAuth.noActiveEnv") || error.message === t("appAuth.authRequired"))) {
+        const code = (error as Error & { code?: string }).code;
+        if (code) {
+          return jsonContent(buildShortErrorWithCode(error.message, code));
+        }
+        return jsonContent(buildShortError(error.message));
+      }
+      return jsonContent(buildErrorEnvelope(error));
+    }
+  };
+
+  // Best-effort inventory read used to verify whether CreateApiKey really produced a new key.
+  // A failure here must not block key creation, so it returns null to mark "unknown"
+  // rather than an empty list, which would be indistinguishable from "no keys exist".
+  const listApiKeyRecords = async (
+    cloudbase: Awaited<ReturnType<typeof getManager>>,
+    keyType: AppAuthKeyType,
+  ): Promise<Array<Record<string, unknown>> | null> => {
+    try {
+      const result = await cloudbase.env.describeApiKeyList({
+        KeyType: keyType,
+        PageNumber: 1,
+        PageSize: 50,
+      });
+      return extractApiKeyList(result);
+    } catch {
+      return null;
+    }
+  };
+
+  const listApiKeyIds = async (
+    cloudbase: Awaited<ReturnType<typeof getManager>>,
+    keyType: AppAuthKeyType,
+  ) => {
+    const records = await listApiKeyRecords(cloudbase, keyType);
+    if (records === null) {
+      return null;
+    }
+    return new Set(
+      records
+        .map((item) => (typeof item.KeyId === "string" ? item.KeyId : null))
+        .filter((item): item is string => item !== null),
+    );
+  };
+
+  const describePublishableKey = async (cloudbase: Awaited<ReturnType<typeof getManager>>, envId: string) => {
+    const result = await cloudbase.env.describeApiKeyList({ KeyType: "publish_key", PageNumber: 1, PageSize: 10 });
+
+    return {
+      result,
+      record: findPublishableKey(result),
+    };
+  };
+
+  server.registerTool?.(
+    "queryAppAuth",
+    {
+      title: "appAuth.queryTitle",
+      description: "appAuth.queryDescription",
+      inputSchema: {
+        action: z.enum(QUERY_APP_AUTH_ACTIONS),
+        providerId: z.string().optional().describe("appAuth.schema.queryProviderId"),
+        clientId: z
+          .string()
+          .optional()
+          .describe("appAuth.schema.queryClientId"),
+        keyType: z
+          .enum(APP_AUTH_KEY_TYPES)
+          .optional()
+          .describe("appAuth.schema.queryKeyType"),
+        pageNumber: z.number().int().positive().optional().describe("appAuth.schema.pageNumber"),
+        pageSize: z.number().int().positive().optional().describe("appAuth.schema.pageSize"),
+      },
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        openWorldHint: false,
+        category: "auth",
+      },
+    },
+    async ({
+      action,
+      providerId,
+      clientId,
+      keyType,
+      pageNumber,
+      pageSize,
+    }: {
+      action: QueryAppAuthAction;
+      providerId?: string;
+      clientId?: string;
+      keyType?: AppAuthKeyType;
+      pageNumber?: number;
+      pageSize?: number;
+    }) =>
+      withEnvelope(async () => {
+        const envId = await getActiveEnvId(cloudBaseOptions as Record<string, unknown>);
+        const cloudbase = await getManager();
+
+        switch (action) {
+          case "getLoginConfig": {
+            const result = await cloudbase.env.getLoginConfig();
+            logCloudBaseResult(server.logger, result);
+            const loginMethods = buildLoginMethods(result);
+            const nextStep = buildLoginConfigNextStep(loginMethods);
+            const webSdkHint = buildWebSdkHint(loginMethods);
+            const smsHint = buildSmsHint(loginMethods);
+            return buildSupabaseLikeAuthResponse({
+              success: true,
+              envId,
+              loginMethods,
+              ...(nextStep ? { next_step: nextStep } : {}),
+              ...(webSdkHint ? { webSdkHint } : {}),
+              ...(smsHint ? { smsHint } : {}),
+            });
+          }
+          case "listProviders": {
+            const result = await cloudbase.env.getProviders();
+            return {
+              success: true,
+              envId,
+              providers: extractProviders(result),
+            };
+          }
+          case "getProvider": {
+            if (!providerId) {
+              throw new Error(t("appAuth.paramRequired", { action: "getProvider", param: "providerId" }));
+            }
+
+            const result = await cloudbase.env.getProviders();
+            const provider =
+              extractProviders(result).find(
+                (item) => item.Id === providerId || item.id === providerId,
+              ) ?? null;
+
+            return {
+              success: true,
+              envId,
+              providerId,
+              provider,
+            };
+          }
+          case "getClientConfig": {
+            const clientRecordId = clientId ?? envId;
+            const result = await cloudbase.env.describeClient(clientRecordId);
+            return buildClientConfigResponse(envId, clientRecordId, result);
+          }
+          case "getPublishableKey": {
+            const { record } = await describePublishableKey(cloudbase, envId);
+            return buildPublishableKeyResponse(envId, record);
+          }
+          case "getStaticDomain": {
+            const service = cloudbase.commonService("tcb", "2018-06-08");
+            const result = await service.call({
+              Action: "DescribeStaticStore",
+              Param: { EnvId: envId },
+            });
+            logCloudBaseResult(server.logger, result);
+            const stores = extractStaticStores(result);
+            const primaryDomain = resolveStaticStoreDomain(stores[0]);
+
+            return {
+              success: true,
+              envId,
+              cdnDomain: primaryDomain,
+              staticDomain: primaryDomain,
+              staticStores: stores,
+            };
+          }
+          case "listApiKeys": {
+            const currentPageNumber = pageNumber ?? 1;
+            const currentPageSize = pageSize ?? 20;
+            const result = await cloudbase.env.describeApiKeyList({
+              ...(keyType ? { KeyType: keyType } : {}),
+              PageNumber: currentPageNumber,
+              PageSize: currentPageSize,
+            });
+            logCloudBaseResult(server.logger, result);
+            const apiKeys = extractApiKeyList(result);
+
+            return {
+              success: true,
+              envId,
+              ...(keyType ? { keyType } : {}),
+              apiKeys,
+              total: typeof (result as { Total?: unknown }).Total === "number"
+                ? (result as { Total: number }).Total
+                : apiKeys.length,
+              pageNumber: currentPageNumber,
+              pageSize: currentPageSize,
+            };
+          }
+        }
+      }),
+  );
+
+  server.registerTool?.(
+    "manageAppAuth",
+    {
+      title: "appAuth.manageTitle",
+      description: "appAuth.manageDescription",
+      inputSchema: {
+        action: z.enum(MANAGE_APP_AUTH_ACTIONS),
+        patch: z
+          .record(z.any())
+          .optional()
+          .describe("appAuth.schema.patch"),
+        providerId: z.string().optional().describe("appAuth.schema.manageProviderId"),
+        providerType: z
+          .enum(APP_AUTH_PROVIDER_TYPES)
+          .optional()
+          .describe("appAuth.schema.providerType"),
+        displayName: z
+          .union([z.string(), z.record(z.any())])
+          .optional()
+          .describe("appAuth.schema.displayName"),
+        clientId: z
+          .string()
+          .optional()
+          .describe("appAuth.schema.manageClientId"),
+        config: z.record(z.any()).optional().describe("appAuth.schema.config"),
+        keyType: z
+          .enum(APP_AUTH_KEY_TYPES)
+          .optional()
+          .describe("appAuth.schema.manageKeyType"),
+        keyName: z
+          .string()
+          .optional()
+          .describe("appAuth.schema.keyName"),
+        expireIn: z
+          .number()
+          .int()
+          .min(0)
+          .optional()
+          .describe("appAuth.schema.expireIn"),
+        keyId: z.string().optional().describe("appAuth.schema.keyId"),
+      },
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: false,
+        openWorldHint: false,
+        category: "auth",
+      },
+    },
+    async ({
+      action,
+      patch,
+      providerId,
+      providerType,
+      displayName,
+      clientId,
+      config,
+      keyType,
+      keyName,
+      expireIn,
+      keyId,
+    }: {
+      action: ManageAppAuthAction;
+      patch?: Record<string, unknown>;
+      providerId?: string;
+      providerType?: AppAuthProviderType;
+      displayName?: string | Record<string, unknown>;
+      clientId?: string;
+      config?: Record<string, unknown>;
+      keyType?: AppAuthKeyType;
+      keyName?: string;
+      expireIn?: number;
+      keyId?: string;
+    }) =>
+      withEnvelope(async () => {
+        const envId = await getActiveEnvId(cloudBaseOptions as Record<string, unknown>);
+        const cloudbase = await getManager();
+
+        switch (action) {
+          case "patchLoginStrategy": {
+            const input = normalizePlainObject(patch, "patch");
+            const normalized = input ? normalizeLoginConfigPatch(input) : undefined;
+            if (!normalized) {
+              throw new Error(t("appAuth.paramRequired", { action: "patchLoginStrategy", param: "patch" }));
+            }
+
+            const current = await cloudbase.env.getLoginConfig();
+            const merged = {
+              ...extractLoginStrategyState(current),
+              ...normalized,
+            };
+            const result = await cloudbase.env.modifyLoginConfig(merged as any);
+            logCloudBaseResult(server.logger, result);
+
+            const confirmed = await cloudbase.env.getLoginConfig();
+            logCloudBaseResult(server.logger, confirmed);
+            const loginMethods = buildLoginMethods(confirmed);
+            const nextStep = buildLoginConfigNextStep(loginMethods);
+            const webSdkHint = buildWebSdkHint(loginMethods);
+            const smsHint = buildSmsHint(loginMethods);
+            return buildSupabaseLikeAuthResponse({
+              success: true,
+              envId,
+              loginMethods,
+              ...(nextStep ? { next_step: nextStep } : {}),
+              ...(webSdkHint ? { webSdkHint } : {}),
+              ...(smsHint ? { smsHint } : {}),
+            });
+          }
+          case "addProvider": {
+            const normalized = omitKeys(normalizePlainObject(config, "config"), ["EnvId"]);
+            if (!providerType) {
+              throw new Error(t("appAuth.paramRequired", { action: "addProvider", param: "providerType" }));
+            }
+
+            const localizedDisplayName = normalizeLocalizedMessage(
+              displayName,
+              "displayName",
+              providerId ?? providerType,
+            );
+            const result = await cloudbase.env.addProvider({
+              ...(providerId ? { Id: providerId } : {}),
+              Name: localizedDisplayName as any,
+              ProviderType: providerType,
+              ...(normalized ? { Config: normalized as any } : {}),
+            } as any);
+            logCloudBaseResult(server.logger, result);
+            const addProviderResult = normalizePlainObject(result, "addProviderResult") ?? {};
+
+            return {
+              success: true,
+              envId,
+              providerId:
+                providerId ??
+                (typeof addProviderResult.Id === "string" ? addProviderResult.Id : null),
+              providerType,
+            };
+          }
+          case "updateProvider": {
+            const normalized = omitKeys(normalizePlainObject(config, "config"), ["EnvId", "Id"]);
+            if (!providerId) {
+              throw new Error(t("appAuth.paramRequired", { action: "updateProvider", param: "providerId" }));
+            }
+            if (!normalized) {
+              throw new Error(t("appAuth.paramRequired", { action: "updateProvider", param: "config" }));
+            }
+
+            await cloudbase.env.modifyProvider({ Id: providerId, ...normalized });
+
+            return {
+              success: true,
+              envId,
+              providerId,
+            };
+          }
+          case "deleteProvider": {
+            if (!providerId) {
+              throw new Error(t("appAuth.paramRequired", { action: "deleteProvider", param: "providerId" }));
+            }
+
+            const result = await cloudbase.env.deleteProvider(providerId);
+            logCloudBaseResult(server.logger, result);
+
+            return {
+              success: true,
+              envId,
+              providerId,
+              deleted: true,
+            };
+          }
+          case "updateClientConfig": {
+            const normalized = omitKeys(normalizePlainObject(config, "config"), ["EnvId", "Id"]);
+            if (!normalized) {
+              throw new Error(t("appAuth.paramRequired", { action, param: "config" }));
+            }
+
+            const clientRecordId = clientId ?? envId;
+            await cloudbase.env.modifyClient({ Id: clientRecordId, ...normalized });
+            const confirmed = await cloudbase.env.describeClient(clientRecordId);
+
+            return buildClientConfigResponse(envId, clientRecordId, confirmed);
+          }
+          case "ensurePublishableKey": {
+            const existing = await describePublishableKey(cloudbase, envId);
+            if (existing.record) {
+              return buildPublishableKeyResponse(envId, existing.record, { created: false });
+            }
+
+            let created: unknown;
+            try {
+              created = await cloudbase.env.createApiKey({ KeyType: "publish_key" });
+            } catch (error) {
+              if (!isResourceInUseError(error)) {
+                throw error;
+              }
+
+              const reread = await describePublishableKey(cloudbase, envId);
+              if (!reread.record) {
+                throw error;
+              }
+              return buildPublishableKeyResponse(envId, reread.record, { created: false });
+            }
+
+            return buildPublishableKeyResponse(envId, normalizePlainObject(created, "createdApiKey") ?? null, {
+              created: true,
+            });
+          }
+          case "createApiKey": {
+            const effectiveKeyType = keyType ?? "publish_key";
+            const before = await listApiKeyIds(cloudbase, effectiveKeyType);
+
+            const result = await cloudbase.env.createApiKey({
+              KeyType: effectiveKeyType,
+              ...(keyName ? { KeyName: keyName } : {}),
+              ...(typeof expireIn === "number" ? { ExpireIn: expireIn } : {}),
+            });
+            logCloudBaseResult(server.logger, result);
+            const createApiKeyResult = normalizePlainObject(result, "createApiKeyResult") ?? {};
+
+            const resultKeyId =
+              typeof createApiKeyResult.KeyId === "string" ? createApiKeyResult.KeyId : null;
+            const created =
+              before === null || resultKeyId === null ? null : !before.has(resultKeyId);
+
+            // The backend is the only source of truth for the stored name / expiry:
+            // re-read the key record instead of echoing back the request parameters.
+            const serverRecord = resultKeyId
+              ? (await listApiKeyRecords(cloudbase, effectiveKeyType))?.find(
+                  (item) => item.KeyId === resultKeyId,
+                ) ?? null
+              : null;
+
+            const keyNameSource = serverRecord ?? createApiKeyResult;
+            const resolvedKeyName =
+              getNonEmptyString(keyNameSource.Name) ??
+              getNonEmptyString(keyNameSource.KeyName) ??
+              null;
+            const resolvedExpireAt =
+              getNonEmptyString(serverRecord?.ExpireAt) ??
+              getNonEmptyString(createApiKeyResult.ExpireAt) ??
+              null;
+            const resolvedCreatedAt =
+              getNonEmptyString(serverRecord?.CreateAt) ??
+              getNonEmptyString(createApiKeyResult.CreateAt) ??
+              null;
+
+            const warnings: string[] = [];
+            if (created === false) {
+              warnings.push(
+                t("appAuth.warnKeyReused", { keyType: effectiveKeyType, keyId: resultKeyId ?? "unknown" }),
+              );
+            }
+            if (keyName && resolvedKeyName !== null && resolvedKeyName !== keyName) {
+              warnings.push(
+                t("appAuth.warnKeyNameIgnored", { keyName, resolvedKeyName }),
+              );
+            }
+            if (typeof expireIn === "number" && created === false) {
+              warnings.push(
+                t("appAuth.warnExpireInIgnored", {
+                  expireIn,
+                  expireAt: resolvedExpireAt ?? "unknown",
+                }),
+              );
+            }
+
+            return {
+              success: true,
+              envId,
+              keyType: effectiveKeyType,
+              keyId: resultKeyId,
+              keyName: resolvedKeyName,
+              apiKey:
+                typeof createApiKeyResult.ApiKey === "string" ? createApiKeyResult.ApiKey : null,
+              expireAt: resolvedExpireAt,
+              createdAt: resolvedCreatedAt,
+              ...(typeof created === "boolean" ? { created } : {}),
+              ...(warnings.length > 0 ? { warnings } : {}),
+            };
+          }
+          case "deleteApiKey": {
+            if (!keyId) {
+              throw new Error(t("appAuth.paramRequired", { action: "deleteApiKey", param: "keyId" }));
+            }
+
+            const result = await cloudbase.env.deleteApiKey(keyId);
+            logCloudBaseResult(server.logger, result);
+
+            return {
+              success: true,
+              envId,
+              keyId,
+              deleted: true,
+            };
+          }
+          case "createCustomLoginKeys": {
+            const result = await cloudbase.env.createCustomLoginKeys();
+            logCloudBaseResult(server.logger, result);
+            return {
+              success: true,
+              envId,
+              privateKey: result.PrivateKey,
+              keyId: result.KeyID,
+            };
+          }
+        }
+      }),
+  );
+}

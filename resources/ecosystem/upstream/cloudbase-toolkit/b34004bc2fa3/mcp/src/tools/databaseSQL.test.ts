@@ -1,0 +1,826 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { ExtendedMcpServer } from "../server.js";
+import { registerSQLDatabaseTools } from "./databaseSQL.js";
+
+const {
+  mockGetCloudBaseManager,
+  mockGetEnvId,
+  mockLogCloudBaseResult,
+  mockGetEnvInfo,
+  mockCommonServiceCall,
+} = vi.hoisted(() => ({
+  mockGetCloudBaseManager: vi.fn(),
+  mockGetEnvId: vi.fn(),
+  mockLogCloudBaseResult: vi.fn(),
+  mockGetEnvInfo: vi.fn(),
+  mockCommonServiceCall: vi.fn(),
+}));
+
+vi.mock("../cloudbase-manager.js", () => ({
+  getCloudBaseManager: mockGetCloudBaseManager,
+  getEnvId: mockGetEnvId,
+  logCloudBaseResult: mockLogCloudBaseResult,
+}));
+
+function createMockServer() {
+  const tools: Record<
+    string,
+    {
+      meta: any;
+      handler: (args: any) => Promise<any>;
+    }
+  > = {};
+
+  const server: ExtendedMcpServer = {
+    cloudBaseOptions: {
+      envId: "env-test",
+      region: "ap-guangzhou",
+    },
+    logger: vi.fn(),
+    registerTool: vi.fn(
+      (name: string, meta: any, handler: (args: any) => Promise<any>) => {
+        tools[name] = { meta, handler };
+      },
+    ),
+  } as unknown as ExtendedMcpServer;
+
+  registerSQLDatabaseTools(server);
+
+  return { tools };
+}
+
+describe("SQL database tools", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockGetEnvId.mockResolvedValue("env-test");
+    mockGetEnvInfo.mockResolvedValue({
+      EnvInfo: {
+        Databases: [
+          {
+            InstanceId: "default",
+            Status: "ONLINE",
+          },
+        ],
+      },
+    });
+    mockCommonServiceCall.mockResolvedValue({
+      RequestId: "req-1",
+      RowsAffected: 0,
+      Items: ['{"id":1}'],
+      Infos: ['{"Field":"id"}'],
+    });
+    mockGetCloudBaseManager.mockResolvedValue({
+      env: {
+        getEnvInfo: mockGetEnvInfo,
+      },
+      commonService: vi.fn(() => ({
+        call: mockCommonServiceCall,
+      })),
+    });
+  });
+
+  it("registers the new SQL tool names only", () => {
+    const { tools } = createMockServer();
+
+    expect(typeof tools.queryMysqlDatabase?.handler).toBe("function");
+    expect(typeof tools.manageMysqlDatabase?.handler).toBe("function");
+    expect(tools.executeReadOnlySQL).toBeUndefined();
+    expect(tools.executeWriteSQL).toBeUndefined();
+  });
+
+  it("queryMysqlDatabase(runQuery) rejects mutating SQL", async () => {
+    const { tools } = createMockServer();
+
+    const result = await tools.queryMysqlDatabase.handler({
+      action: "runQuery",
+      sql: "DELETE FROM users",
+    });
+    const payload = JSON.parse(result.content[0].text);
+
+    expect(payload).toMatchObject({
+      success: false,
+      errorCode: "READ_ONLY_SQL_REQUIRED",
+    });
+    expect(mockCommonServiceCall).not.toHaveBeenCalled();
+  });
+
+  it("queryMysqlDatabase(runQuery) sends ReadOnly to RunSql", async () => {
+    const { tools } = createMockServer();
+
+    await tools.queryMysqlDatabase.handler({
+      action: "runQuery",
+      sql: "SELECT 1",
+    });
+
+    expect(mockCommonServiceCall).toHaveBeenCalledWith(
+      expect.objectContaining({
+        Action: "RunSql",
+        Param: expect.objectContaining({
+          EnvId: "env-test",
+          Sql: "SELECT 1",
+          ReadOnly: true,
+          DbInstance: expect.objectContaining({
+            EnvId: "env-test",
+            InstanceId: "default",
+            Schema: "env-test",
+          }),
+        }),
+      }),
+    );
+  });
+
+  it("manageMysqlDatabase(provisionMySQL) requires explicit confirmation", async () => {
+    const { tools } = createMockServer();
+
+    const result = await tools.manageMysqlDatabase.handler({
+      action: "provisionMySQL",
+    });
+    const payload = JSON.parse(result.content[0].text);
+
+    expect(payload).toMatchObject({
+      success: false,
+      errorCode: "CONFIRM_REQUIRED",
+    });
+  });
+
+  it("manageMysqlDatabase(destroyMySQL) requires explicit confirmation", async () => {
+    const { tools } = createMockServer();
+
+    const result = await tools.manageMysqlDatabase.handler({
+      action: "destroyMySQL",
+    });
+    const payload = JSON.parse(result.content[0].text);
+
+    expect(payload).toMatchObject({
+      success: false,
+      errorCode: "CONFIRM_REQUIRED",
+    });
+  });
+
+  it("queryMysqlDatabase(getInstanceInfo) suggests provisioning when instance is missing", async () => {
+    mockCommonServiceCall.mockImplementation(async ({ Action }: { Action: string }) => {
+      if (Action === "DescribeCreateMySQLResult") {
+        return {
+          RequestId: "req-create",
+          Status: "NOT_FOUND",
+        };
+      }
+      throw Object.assign(new Error("not found"), {
+        code: "FailedOperation.DataSourceNotExist",
+      });
+    });
+
+    const { tools } = createMockServer();
+    const result = await tools.queryMysqlDatabase.handler({
+      action: "getInstanceInfo",
+    });
+    const payload = JSON.parse(result.content[0].text);
+
+    expect(payload).toMatchObject({
+      success: true,
+      data: {
+        exists: false,
+        status: "NOT_CREATED",
+      },
+    });
+    expect(payload.nextActions?.[0]).toMatchObject({
+      tool: "manageMysqlDatabase",
+      action: "provisionMySQL",
+    });
+  });
+
+  it("queryMysqlDatabase(describeInstance) should behave as getInstanceInfo alias", async () => {
+    mockCommonServiceCall.mockImplementation(async ({ Action }: { Action: string }) => {
+      if (Action === "DescribeCreateMySQLResult") {
+        return {
+          RequestId: "req-create",
+          Status: "NOT_FOUND",
+        };
+      }
+      throw Object.assign(new Error("not found"), {
+        code: "FailedOperation.DataSourceNotExist",
+      });
+    });
+
+    const { tools } = createMockServer();
+    const result = await tools.queryMysqlDatabase.handler({
+      action: "describeInstance",
+    });
+    const payload = JSON.parse(result.content[0].text);
+
+    expect(payload).toMatchObject({
+      success: true,
+      data: {
+        exists: false,
+        status: "NOT_CREATED",
+      },
+    });
+  });
+
+  it("manageMysqlDatabase(initializeSchema) blocks when MySQL is not ready", async () => {
+    mockCommonServiceCall.mockImplementation(async ({ Action }: { Action: string }) => {
+      if (Action === "DescribeCreateMySQLResult") {
+        return {
+          RequestId: "req-create",
+          Status: "PENDING",
+        };
+      }
+      if (Action === "DescribeMySQLClusterDetail") {
+        throw Object.assign(new Error("cluster not ready"), {
+          code: "FailedOperation.DataSourceNotExist",
+        });
+      }
+      return {
+        RequestId: "req-1",
+      };
+    });
+
+    const { tools } = createMockServer();
+    const result = await tools.manageMysqlDatabase.handler({
+      action: "initializeSchema",
+      statements: ["CREATE TABLE users(id INT)"],
+    });
+    const payload = JSON.parse(result.content[0].text);
+
+    expect(payload).toMatchObject({
+      success: false,
+      errorCode: "MYSQL_NOT_READY",
+    });
+  });
+
+  it("queryMysqlDatabase(describeTaskStatus) maps success to READY", async () => {
+    mockCommonServiceCall.mockImplementation(async ({ Action }: { Action: string }) => {
+      if (Action === "DescribeMySQLTaskStatus") {
+        return {
+          RequestId: "req-task",
+          Data: {
+            Status: "success",
+          },
+        };
+      }
+      return {
+        RequestId: "req-1",
+      };
+    });
+
+    const { tools } = createMockServer();
+    const result = await tools.queryMysqlDatabase.handler({
+      action: "describeTaskStatus",
+      request: { TaskId: "38654" },
+    });
+    const payload = JSON.parse(result.content[0].text);
+
+    expect(payload).toMatchObject({
+      success: true,
+      data: {
+        status: "READY",
+        rawStatus: "success",
+      },
+    });
+    expect(payload.nextActions?.[0]).toMatchObject({
+      tool: "manageMysqlDatabase",
+      action: "initializeSchema",
+    });
+  });
+
+  it("queryMysqlDatabase(describeCreateResult) suggests polling the create result again", async () => {
+    mockCommonServiceCall.mockImplementation(async ({ Action }: { Action: string }) => {
+      if (Action === "DescribeCreateMySQLResult") {
+        return {
+          RequestId: "req-create",
+          Data: {
+            Status: "doing",
+            TaskId: "38661",
+          },
+        };
+      }
+      return {
+        RequestId: "req-1",
+      };
+    });
+
+    const { tools } = createMockServer();
+    const result = await tools.queryMysqlDatabase.handler({
+      action: "describeCreateResult",
+      request: { TaskId: "38661" },
+    });
+    const payload = JSON.parse(result.content[0].text);
+
+    expect(payload).toMatchObject({
+      success: true,
+      data: {
+        status: "PENDING",
+        rawStatus: "doing",
+        task: {
+          request: {
+            TaskId: "38661",
+          },
+        },
+      },
+    });
+    expect(payload.nextActions?.[0]).toMatchObject({
+      tool: "queryMysqlDatabase",
+      action: "describeCreateResult",
+      suggested_args: {
+        action: "describeCreateResult",
+        request: {
+          TaskId: "38661",
+        },
+      },
+    });
+  });
+
+  it("queryMysqlDatabase(describeTaskStatus) suggests getInstanceInfo for destroy tasks", async () => {
+    mockCommonServiceCall.mockImplementation(async ({ Action }: { Action: string }) => {
+      if (Action === "DescribeMySQLTaskStatus") {
+        return {
+          RequestId: "req-task",
+          Data: {
+            Status: "SUCCESS",
+          },
+        };
+      }
+      return {
+        RequestId: "req-1",
+      };
+    });
+
+    const { tools } = createMockServer();
+    const result = await tools.queryMysqlDatabase.handler({
+      action: "describeTaskStatus",
+      request: {
+        TaskId: "16710",
+        TaskName: "DeleteDataHub",
+      },
+    });
+    const payload = JSON.parse(result.content[0].text);
+
+    expect(payload).toMatchObject({
+      success: true,
+      data: {
+        status: "READY",
+      },
+    });
+    expect(payload.nextActions?.[0]).toMatchObject({
+      tool: "queryMysqlDatabase",
+      action: "getInstanceInfo",
+    });
+  });
+
+  it("queryMysqlDatabase(describeTaskStatus) returns failed destroy tasks without next actions", async () => {
+    mockCommonServiceCall.mockImplementation(async ({ Action }: { Action: string }) => {
+      if (Action === "DescribeMySQLTaskStatus") {
+        return {
+          RequestId: "req-task",
+          Data: {
+            Status: "FAILED",
+          },
+        };
+      }
+      return {
+        RequestId: "req-1",
+      };
+    });
+
+    const { tools } = createMockServer();
+    const result = await tools.queryMysqlDatabase.handler({
+      action: "describeTaskStatus",
+      request: {
+        TaskId: "16710",
+        TaskName: "DeleteDataHub",
+      },
+    });
+    const payload = JSON.parse(result.content[0].text);
+
+    expect(payload).toMatchObject({
+      success: false,
+      errorCode: "MYSQL_TASK_FAILED",
+      data: {
+        status: "FAILED",
+      },
+    });
+    expect(payload.nextActions).toEqual([]);
+  });
+
+  it("manageMysqlDatabase(provisionMySQL) sends DbInstanceType and carries TaskId forward", async () => {
+    mockCommonServiceCall.mockImplementation(async ({ Action }: { Action: string }) => {
+      if (Action === "DescribeCreateMySQLResult") {
+        return {
+          RequestId: "req-create",
+          Data: {
+            Status: "notexist",
+          },
+        };
+      }
+      if (Action === "CreateMySQL") {
+        return {
+          RequestId: "req-provision",
+          Data: {
+            TaskId: "38661",
+          },
+        };
+      }
+      throw new Error(`unexpected action: ${Action}`);
+    });
+
+    const { tools } = createMockServer();
+    const result = await tools.manageMysqlDatabase.handler({
+      action: "provisionMySQL",
+      confirm: true,
+    });
+    const payload = JSON.parse(result.content[0].text);
+
+    expect(mockCommonServiceCall).toHaveBeenCalledWith(
+      expect.objectContaining({
+        Action: "CreateMySQL",
+        Param: expect.objectContaining({
+          EnvId: "env-test",
+          DbInstanceType: "MYSQL",
+        }),
+      }),
+    );
+    expect(payload).toMatchObject({
+      success: true,
+      data: {
+        task: {
+          request: {
+            TaskId: "38661",
+          },
+        },
+      },
+    });
+    expect(payload.nextActions?.[0]).toMatchObject({
+      tool: "queryMysqlDatabase",
+      action: "describeCreateResult",
+      suggested_args: {
+        action: "describeCreateResult",
+        request: {
+          TaskId: "38661",
+        },
+      },
+    });
+  });
+
+  it("manageMysqlDatabase(destroyMySQL) blocks when no instance exists", async () => {
+    mockCommonServiceCall.mockImplementation(async ({ Action }: { Action: string }) => {
+      if (Action === "DescribeCreateMySQLResult") {
+        return {
+          RequestId: "req-create",
+          Data: {
+            Status: "notexist",
+          },
+        };
+      }
+      throw new Error(`unexpected action: ${Action}`);
+    });
+
+    const { tools } = createMockServer();
+    const result = await tools.manageMysqlDatabase.handler({
+      action: "destroyMySQL",
+      confirm: true,
+    });
+    const payload = JSON.parse(result.content[0].text);
+
+    expect(payload).toMatchObject({
+      success: false,
+      errorCode: "MYSQL_NOT_CREATED",
+    });
+  });
+
+  it("manageMysqlDatabase(destroyMySQL) sends DestroyMySQL and carries task request forward", async () => {
+    mockCommonServiceCall.mockImplementation(async ({ Action }: { Action: string }) => {
+      if (Action === "DescribeCreateMySQLResult") {
+        return {
+          RequestId: "req-create",
+          Data: {
+            Status: "success",
+          },
+        };
+      }
+      if (Action === "DescribeMySQLClusterDetail") {
+        return {
+          RequestId: "req-cluster",
+          Data: {
+            DbClusterId: "cluster-1",
+            DbInfo: {
+              ClusterStatus: "running",
+            },
+          },
+        };
+      }
+      if (Action === "DestroyMySQL") {
+        return {
+          RequestId: "req-destroy",
+          Data: {
+            IsSuccess: true,
+            TaskId: "16710",
+            TaskName: "DeleteDataHub",
+          },
+        };
+      }
+      throw new Error(`unexpected action: ${Action}`);
+    });
+
+    const { tools } = createMockServer();
+    const result = await tools.manageMysqlDatabase.handler({
+      action: "destroyMySQL",
+      confirm: true,
+    });
+    const payload = JSON.parse(result.content[0].text);
+
+    expect(mockCommonServiceCall).toHaveBeenCalledWith(
+      expect.objectContaining({
+        Action: "DestroyMySQL",
+        Param: expect.objectContaining({
+          EnvId: "env-test",
+        }),
+      }),
+    );
+    expect(payload).toMatchObject({
+      success: true,
+      data: {
+        status: "RUNNING",
+        task: {
+          request: {
+            TaskId: "16710",
+            TaskName: "DeleteDataHub",
+          },
+        },
+      },
+    });
+    expect(payload.nextActions?.[0]).toMatchObject({
+      tool: "queryMysqlDatabase",
+      action: "describeTaskStatus",
+      suggested_args: {
+        action: "describeTaskStatus",
+        request: {
+          TaskId: "16710",
+          TaskName: "DeleteDataHub",
+        },
+      },
+    });
+  });
+
+  it("queryMysqlDatabase(getInstanceInfo) returns lifecycle context without connection payloads", async () => {
+    mockCommonServiceCall.mockImplementation(async ({ Action }: { Action: string }) => {
+      if (Action === "DescribeCreateMySQLResult") {
+        return {
+          RequestId: "req-create",
+          Data: {
+            Status: "success",
+          },
+        };
+      }
+      if (Action === "DescribeMySQLClusterDetail") {
+        return {
+          RequestId: "req-cluster",
+          Data: {
+            DbClusterId: "cluster-1",
+            InstanceId: "inst-1",
+            DbInfo: {
+              ClusterStatus: "running",
+              Host: "10.0.0.8",
+              Port: 3306,
+              User: "root",
+              Password: "secret-password",
+            },
+          },
+        };
+      }
+      return {
+        RequestId: "req-1",
+      };
+    });
+
+    const { tools } = createMockServer();
+    const result = await tools.queryMysqlDatabase.handler({
+      action: "getInstanceInfo",
+    });
+    const payload = JSON.parse(result.content[0].text);
+
+    expect(payload).toMatchObject({
+      success: true,
+      data: {
+        exists: true,
+        clusterId: "cluster-1",
+        instanceId: "inst-1",
+        status: "READY",
+      },
+    });
+    expect(payload.data.clusterDetail).toBeUndefined();
+    expect(payload.data.createResult).toBeUndefined();
+    expect(JSON.stringify(payload)).not.toContain("secret-password");
+    expect(JSON.stringify(payload)).not.toContain("10.0.0.8");
+  });
+
+  it("queryMysqlDatabase(getConnectionInfo) passthroughs raw connection payloads including credentials", async () => {
+    mockCommonServiceCall.mockImplementation(async ({ Action }: { Action: string }) => {
+      if (Action === "DescribeCreateMySQLResult") {
+        return {
+          RequestId: "req-create",
+          Data: {
+            Status: "success",
+          },
+        };
+      }
+      if (Action === "DescribeMySQLClusterDetail") {
+        return {
+          RequestId: "req-cluster",
+          Data: {
+            DbClusterId: "cluster-1",
+            InstanceId: "inst-1",
+            DbInfo: {
+              ClusterStatus: "running",
+              Host: "10.0.0.8",
+              Port: 3306,
+              User: "root",
+              Password: "secret-password",
+            },
+          },
+        };
+      }
+      return {
+        RequestId: "req-1",
+      };
+    });
+
+    const { tools } = createMockServer();
+    expect(tools.queryMysqlDatabase.meta.inputSchema.action._def.values).toContain(
+      "getConnectionInfo",
+    );
+
+    const result = await tools.queryMysqlDatabase.handler({
+      action: "getConnectionInfo",
+    });
+    const payload = JSON.parse(result.content[0].text);
+
+    expect(payload).toMatchObject({
+      success: true,
+      data: {
+        exists: true,
+        clusterId: "cluster-1",
+        instanceId: "inst-1",
+        status: "READY",
+        clusterDetail: {
+          DbClusterId: "cluster-1",
+          DbInfo: {
+            Host: "10.0.0.8",
+            Password: "secret-password",
+          },
+        },
+      },
+    });
+    expect(payload.message).toMatch(/TCP 迁移/);
+    expect(payload.nextActions?.[0]).toMatchObject({
+      tool: "queryMysqlDatabase",
+      action: "runQuery",
+    });
+  });
+
+  it("queryMysqlDatabase(getConnectionInfo) fails when MySQL is not provisioned", async () => {
+    mockCommonServiceCall.mockImplementation(async ({ Action }: { Action: string }) => {
+      if (Action === "DescribeCreateMySQLResult") {
+        return {
+          RequestId: "req-create",
+          Status: "NOT_FOUND",
+        };
+      }
+      throw Object.assign(new Error("not found"), {
+        code: "FailedOperation.DataSourceNotExist",
+      });
+    });
+
+    const { tools } = createMockServer();
+    const result = await tools.queryMysqlDatabase.handler({
+      action: "getConnectionInfo",
+    });
+    const payload = JSON.parse(result.content[0].text);
+
+    expect(payload).toMatchObject({
+      success: false,
+      errorCode: "MYSQL_NOT_CREATED",
+    });
+    expect(payload.data?.clusterDetail).toBeUndefined();
+  });
+
+  it("queryMysqlDatabase(describeInstanceSlowQueries) maps SDK describeInstanceSlowQueries", async () => {
+    const mockDescribeInstanceSlowQueries = vi.fn().mockResolvedValue({
+      TotalCount: 1,
+      SlowQueries: [{ SqlText: "SELECT 1", QueryTime: 1.2 }],
+      RequestId: "req-slow",
+    });
+    mockCommonServiceCall.mockImplementation(async ({ Action }: { Action: string }) => {
+      if (Action === "DescribeCreateMySQLResult") {
+        return { RequestId: "req-create", Status: "SUCCESS" };
+      }
+      if (Action === "DescribeMySQLClusterDetail") {
+        return {
+          RequestId: "req-cluster",
+          Data: {
+            DbClusterId: "cluster-1",
+            InstanceId: "cynosdbmysql-abc",
+            DbInfo: { Status: "running" },
+          },
+        };
+      }
+      return {};
+    });
+    mockGetCloudBaseManager.mockResolvedValue({
+      env: { getEnvInfo: mockGetEnvInfo },
+      commonService: vi.fn(() => ({ call: mockCommonServiceCall })),
+      mysql: { describeInstanceSlowQueries: mockDescribeInstanceSlowQueries },
+    });
+
+    const { tools } = createMockServer();
+    const result = await tools.queryMysqlDatabase.handler({
+      action: "describeInstanceSlowQueries",
+      startTime: "2026-04-01 00:00:00",
+      endTime: "2026-04-01 23:59:59",
+      orderBy: "QueryTime",
+      orderByType: "desc",
+      limit: 5,
+    });
+    const payload = JSON.parse(result.content[0].text);
+
+    expect(mockDescribeInstanceSlowQueries).toHaveBeenCalledWith({
+      InstanceId: "cynosdbmysql-abc",
+      StartTime: "2026-04-01 00:00:00",
+      EndTime: "2026-04-01 23:59:59",
+      Limit: 5,
+      Offset: undefined,
+      Username: undefined,
+      Host: undefined,
+      Database: undefined,
+      OrderBy: "QueryTime",
+      OrderByType: "desc",
+      SqlText: undefined,
+    });
+    expect(payload).toMatchObject({
+      success: true,
+      data: {
+        action: "describeInstanceSlowQueries",
+        instanceId: "cynosdbmysql-abc",
+        totalCount: 1,
+      },
+    });
+  });
+
+  it("queryMysqlDatabase(describeInstanceErrorLogs) maps SDK describeInstanceErrorLogs", async () => {
+    const mockDescribeInstanceErrorLogs = vi.fn().mockResolvedValue({
+      TotalCount: 2,
+      ErrorLogs: [{ Content: "disk full", Level: "error" }],
+      RequestId: "req-err",
+    });
+    mockCommonServiceCall.mockImplementation(async ({ Action }: { Action: string }) => {
+      if (Action === "DescribeCreateMySQLResult") {
+        return { RequestId: "req-create", Status: "SUCCESS" };
+      }
+      if (Action === "DescribeMySQLClusterDetail") {
+        return {
+          RequestId: "req-cluster",
+          Data: {
+            DbClusterId: "cluster-1",
+            InstanceId: "cynosdbmysql-xyz",
+            DbInfo: { Status: "running" },
+          },
+        };
+      }
+      return {};
+    });
+    mockGetCloudBaseManager.mockResolvedValue({
+      env: { getEnvInfo: mockGetEnvInfo },
+      commonService: vi.fn(() => ({ call: mockCommonServiceCall })),
+      mysql: { describeInstanceErrorLogs: mockDescribeInstanceErrorLogs },
+    });
+
+    const { tools } = createMockServer();
+    const result = await tools.queryMysqlDatabase.handler({
+      action: "describeInstanceErrorLogs",
+      logLevels: ["error", "warning"],
+      keyWords: ["disk"],
+      orderBy: "Timestamp",
+      orderByType: "DESC",
+    });
+    const payload = JSON.parse(result.content[0].text);
+
+    expect(mockDescribeInstanceErrorLogs).toHaveBeenCalledWith({
+      InstanceId: "cynosdbmysql-xyz",
+      Limit: undefined,
+      Offset: undefined,
+      StartTime: undefined,
+      EndTime: undefined,
+      OrderBy: "Timestamp",
+      OrderByType: "DESC",
+      LogLevels: ["error", "warning"],
+      KeyWords: ["disk"],
+    });
+    expect(payload).toMatchObject({
+      success: true,
+      data: {
+        action: "describeInstanceErrorLogs",
+        instanceId: "cynosdbmysql-xyz",
+        totalCount: 2,
+      },
+    });
+  });
+});

@@ -1,0 +1,346 @@
+import { defineModule } from "../types.js";
+
+export const hosting = defineModule(
+  {
+    queryTitle: "查询 CloudBase 静态托管",
+    queryDescription:
+      "查询 CloudBase 静态托管的只读信息。适合 AI 先做发现再决定下一步：action=websiteConfig 查询首页/错误页/路由规则与站点域名信息；action=status 查询托管服务状态；action=findFiles 按前缀查找文件；action=listFiles 列出全部托管文件；action=domainStatus 查询自定义域名的当前状态与配置。该工具不会产生任何副作用。",
+    manageTitle: "管理 CloudBase 静态托管",
+    manageDescription:
+      "管理 CloudBase 静态托管的变更操作。action=upload 上传本地构建产物到共享域名（域名格式：<envId>-<appId>.tcloudbaseapp.com/<cloudPath>）；action=delete 删除托管文件或目录（必须 confirm=true）；action=setWebsiteDocument 设置首页/错误页/路由规则；action=enableService 开通静态托管；action=bindDomain / unbindDomain / updateDomain 管理自定义域名；action=downloadFile / downloadDirectory 下载托管内容到本地。⚠️ 底层每次托管操作都会请求 DescribeStaticStore 管控接口（20 次/秒 QPS 限制）：批量删除多个文件请逐次调用并保持间隔（建议每秒不超过 10 次），同一目录下多个文件可优先用 isDir=true 一次删除整个目录；若报错含 \"frequency limit\" 说明触发了限流，请等待 1-2 秒后重试，不要连续快速重试。⚠️ 本工具没有关闭默认域名（*.tcloudbaseapp.com）的 action；要禁用该默认公网域名，请用 manageGateway(action=\"disableRoute\", domain=该 STATIC_STORE IsDefault 域名, path=\"/\")（底层 ModifyHTTPServiceRoute，不是 ModifyGatewayRoute）。⚠️ 新项目部署优先使用 manageApps（部署到独立子域名），本工具适合已有老项目继续使用或作为 manageApps 的 fallback。manageApps 与 manageHosting 域名不同，切换会导致老链接失效。若任务只是查看配置、文件或域名状态，请改用 queryHosting。",
+    manageDescriptionCloud:
+      "管理 CloudBase 静态托管的变更操作（cloud mode 版本）。⚠️ 依赖本地文件路径的 action 在 cloud mode 下不可用：action=upload / downloadFile / downloadDirectory 会直接报错，请勿调用。部署静态站点请改用 manageApps 云端链路：queryApps(action=\"getUploadUrl\", serviceName=\"<应用名>\") 获取预签名上传 URL → 将代码 zip PUT 上传到 uploadUrl（带 uploadHeaders 与 Content-Type: application/zip）→ manageApps(action=\"deployApp\", serviceName, cosTimestamp=<返回的 unixTimestamp>) 触发部署。可正常使用的远端管理操作：action=delete 删除托管文件或目录（必须 confirm=true）；action=setWebsiteDocument 设置首页/错误页/路由规则；action=enableService 开通静态托管；action=bindDomain / unbindDomain / updateDomain 管理自定义域名。⚠️ 底层每次托管操作都会请求 DescribeStaticStore 管控接口（20 次/秒 QPS 限制）：批量删除多个文件请逐次调用并保持间隔（建议每秒不超过 10 次）；若报错含 \"frequency limit\" 说明触发了限流，请等待 1-2 秒后重试。若任务只是查看配置、文件或域名状态，请改用 queryHosting。",
+    commonServiceUnsupported:
+      "当前 CloudBase Manager 实例不支持 commonService.call，无法执行 {action}。",
+    managerUnavailable: "CloudBase Manager 实例不可用。",
+    hostingStoreMissing:
+      "当前环境 {envId} 未发现静态托管资源配置，无法上传文件。请先确认 MCP 已绑定到已开通静态托管的 CloudBase 环境；如需切换环境，请调用 auth(action=\"set_env\", envId=\"目标环境ID\") 后重试。",
+    cloudModeLocalActionUnavailable:
+      "manageHosting(action=\"{action}\") 在 cloud mode 下不可用，因为该操作依赖本地文件路径。若需要部署静态站点，请改用 manageApps 云端链路：queryApps(action=\"getUploadUrl\", serviceName=\"<应用名>\") 获取预签名上传 URL → 将代码 zip PUT 上传到 uploadUrl（带 uploadHeaders 与 Content-Type: application/zip）→ manageApps(action=\"deployApp\", serviceName, cosTimestamp=<返回的 unixTimestamp>) 触发部署；若只是要上传/下载已有托管文件且无本地文件系统，该操作在云端没有替代路径，请改用本地模式执行。远端管理操作（delete / setWebsiteDocument / enableService / bindDomain / unbindDomain / updateDomain）不受影响，可继续使用。",
+    uploadArgsRequired:
+      "manageHosting(action=\"upload\") 需要提供 localPath + cloudPath，或提供 files 多文件上传列表。",
+    uploadSuccess:
+      "静态托管文件上传成功。若需要校验上传结果，请继续调用 queryHosting(action=\"findFiles\") 或 queryHosting(action=\"listFiles\")。",
+    uploadRouteDisabledWithFallback:
+      "静态托管文件上传成功。默认静态托管域名的网关路由已禁用（访问会返回 GATEWAY_ROUTE_DISABLED），已改用其他可达域名作为 accessUrl。可用 manageGateway(action=\"updateRoute\", route.enable=true) 重新启用默认域路由。",
+    uploadRouteDisabledNoAccess:
+      "静态托管文件上传成功，但默认静态托管域名的网关路由已禁用（GATEWAY_ROUTE_DISABLED），当前没有可达的 accessUrl。请用 manageGateway(action=\"updateRoute\", domain=\"<静态域名>\", path=\"/\", upstreamResourceType=\"STATIC_STORE\", targetName=\"staticstore\", route.enable=true) 启用路由，或改用已启用的自定义域名 / CloudBase Sites 域名访问。",
+    uploadErrorWrapper: "[manageHosting(upload)] {message}\n建议：{suggestions}",
+    uploadErrorPathSuggestion: "请先确认本地路径 `{localPath}` 存在且当前进程有读取权限。",
+    uploadErrorAssetSuggestion:
+      "如果报错的是构建产物中的某个静态资源文件，请检查构建后的资源引用路径是否正确。",
+    uploadErrorPublicPathSuggestion:
+      "若站点部署到子路径，请确认 publicPath、base、assetPrefix 等配置没有把资源指向不存在的位置。",
+    uploadErrorDefaultSuggestion: "请检查上传目录、文件权限和构建产物完整性后重试。",
+    notReadyGuidance:
+      "{message}\n原因：静态托管开通是异步任务，资源尚未就绪（状态为「初始化中」或「处理中」），此时任何读写操作都会被拒绝，与本次操作的内容无关。\n处理建议：\n1) 用 queryHosting(action=\"status\") 查询当前状态，等状态变为 online 后重试；\n2) 开通通常在几分钟内完成，请勿高频轮询（DescribeStaticStore 有 20 次/秒 QPS 限制）；\n3) 若状态长时间停留在「处理中」或变为 create_fail，说明开通任务异常，需到云开发控制台查看。",
+    notEnabledGuidance:
+      "{message}\n原因：该环境尚未开通静态托管，托管的读写接口均不可用。\n处理建议：\n1) 调用 manageHosting(action=\"enableService\") 开通；\n2) 开通是异步任务，之后用 queryHosting(action=\"status\") 等待状态变为 online 再重试本次操作。",
+    deleteErrorWrapper: "[manageHosting(delete)] {message}",
+    deleteRateLimitGuidance:
+      "[manageHosting(delete)] {message}\n原因：静态托管底层 DescribeStaticStore 管控接口有 20 次/秒的 QPS 限制，连续快速删除多个文件（或失败后立即重试）容易触发限流，删除操作本身可能已经部分生效。\n处理建议：\n1) 等待 1-2 秒后重试本次删除，不要立即连续重试；\n2) 批量删除多个文件时，逐次调用并保持间隔（建议每秒不超过 10 次），不要并发或循环快速重试；\n3) 同一目录下的多个文件可改用 isDir=true 一次删除整个目录，减少调用次数；\n4) 若不确定删除是否已生效，可调用 queryHosting(action=\"findFiles\") 核对。",
+    deleteCloudPathRequired: "manageHosting(action=\"delete\") 需要提供 cloudPath。",
+    deleteConfirmRequired:
+      "manageHosting(action=\"delete\") 是破坏性操作，必须显式传 confirm=true。",
+    deleteVerificationIncomplete: "删除请求未生效：{errors}",
+    deleteVerifyFailed: "删除后验证失败：文件仍在静态托管中",
+    deleteSuccess: "已删除静态托管{type} `{cloudPath}`。",
+    deleteUnverified:
+      "删除操作已提交，但验证发现文件可能未完全删除。可能原因：底层 COS 删除请求失败（如文件不存在、存储桶权限不足），或触发 DescribeStaticStore 限流后删除未生效。建议：1) 等待 1-2 秒后用 queryHosting(action=\"findFiles\", prefix=\"{cloudPath}\") 核对文件状态；2) 若确认文件仍存在，重新调用 manageHosting(action=\"delete\", confirm=true) 重试；3) 批量删除多个文件请逐次调用并保持间隔（DescribeStaticStore 有 20 次/秒 QPS 限制）。",
+    typeDirectory: "目录",
+    typeFile: "文件",
+    setWebsiteDocumentIndexRequired:
+      "manageHosting(action=\"setWebsiteDocument\") 需要提供 indexDocument，例如 index.html。",
+    setWebsiteDocumentSuccess:
+      "静态托管网站文档配置已提交。若需要确认最终配置，请继续调用 queryHosting(action=\"websiteConfig\")。",
+    enableServiceSuccess:
+      "静态托管服务开通请求已提交。请继续调用 queryHosting(action=\"status\") 确认服务是否已可用。",
+    bindDomainArgsRequired: "manageHosting(action=\"bindDomain\") 需要提供 domain 和 certId。",
+    unbindDomainArgsRequired: "manageHosting(action=\"unbindDomain\") 需要提供 domain。",
+    unbindDomainConfirmRequired:
+      "manageHosting(action=\"unbindDomain\") 会解绑现有自定义域名，必须显式传 confirm=true。",
+    updateDomainArgsRequired:
+      "manageHosting(action=\"updateDomain\") 需要同时提供 domain、domainId 和 domainConfig。",
+    downloadFileArgsRequired:
+      "manageHosting(action=\"downloadFile\") 需要同时提供 cloudPath 和 localPath，localPath 应包含目标文件名。",
+    downloadFileSuccess: "已将静态托管文件 `{cloudPath}` 下载到本地路径 `{localPath}`。",
+    downloadDirectoryArgsRequired:
+      "manageHosting(action=\"downloadDirectory\") 需要同时提供 cloudPath 和 localPath，localPath 应为本地目录路径。",
+    downloadDirectorySuccess: "已将静态托管目录 `{cloudPath}` 下载到本地目录 `{localPath}`。",
+    domainMutationSubmitted:
+      "静态托管域名{actionLabel}请求已提交。域名配置、证书校验和边缘侧传播通常需要 30 秒到 10 分钟，请继续调用 queryHosting(action=\"domainStatus\") 确认最终结果。",
+    domainActionBind: "绑定",
+    domainActionUnbind: "解绑",
+    domainActionUpdate: "修改",
+    domainSuccessIndicatorBind:
+      "继续调用 queryHosting(action=\"domainStatus\", domains=[\"{domain}\"])，直到返回中出现该域名，并且相关状态字段显示为已生效。",
+    domainSuccessIndicatorUnbind:
+      "继续调用 queryHosting(action=\"domainStatus\", domains=[\"{domain}\"])，直到返回中不再出现该域名。",
+    domainSuccessIndicatorUpdate:
+      "继续调用 queryHosting(action=\"domainStatus\", domains=[\"{domain}\"])，确认返回中的配置字段已更新为最新值。",
+    websiteConfigSuccess: "已获取静态托管网站文档配置与站点域名信息。",
+    statusEnabled: "已获取静态托管服务状态。",
+    statusNotEnabled: "静态托管服务当前未返回可用实例信息，可能尚未开通。",
+    findFilesPrefixRequired:
+      "queryHosting(action=\"findFiles\") 需要提供 prefix，用于按前缀查找托管文件。",
+    findFilesSuccess: "已按前缀 `{prefix}` 查询静态托管文件，共 {count} 个。{more}",
+    findFilesMore: " 还有更多文件，可使用 nextMarker 继续查询。",
+    listFilesSuccess: "已列出静态托管中的文件（第 {start}-{end} 个，共 {count} 个）。{more}",
+    domainStatusDomainsRequired:
+      "queryHosting(action=\"domainStatus\") 需要提供 domains 数组，例如 [\"www.example.com\"]。",
+    domainStatusSuccessIndicator: "目标域名出现在返回结果中，并且相关状态字段显示为已生效。",
+    domainStatusAllMatched:
+      "已查询到目标静态托管域名配置。若这是绑定或修改后的确认步骤，请继续核对状态字段、证书信息和配置内容是否符合预期。",
+    domainStatusPending:
+      "部分目标静态托管域名尚未在查询结果中出现。若这是绑定后的确认步骤，请继续调用 queryHosting(action=\"domainStatus\") 直到结果收敛或达到超时。",
+    queryRateLimitGuidance:
+      "{message}\n原因：静态托管底层 DescribeStaticStore 管控接口有 20 次/秒的 QPS 限制，连续快速调用（或失败后立即重试）容易触发限流，本次查询/操作可能没有完整生效。\n处理建议：等待 1-2 秒后重试，不要连续快速重试；多个文件操作请逐次调用并保持间隔。",
+    // Input schema parameter descriptions
+    "schema.routingRule.keyPrefixEquals":
+      "匹配前缀规则，例如 app/ 或 assets/。与 httpErrorCodeReturnedEquals 二选一或按 CloudBase 规则组合使用。",
+    "schema.routingRule.httpErrorCodeReturnedEquals":
+      "匹配 HTTP 错误码，例如 404。SPA 回退常用 404。",
+    "schema.routingRule.replaceKeyWith":
+      "把匹配结果替换为固定文件路径，例如 index.html。",
+    "schema.routingRule.replaceKeyPrefixWith": "把匹配前缀替换成新的前缀路径。",
+    "schema.domainConfig.refer": "Referer 防盗链配置。",
+    "schema.domainConfig.refer.switch": "Referer 防盗链开关：on=开启，off=关闭。",
+    "schema.domainConfig.refer.rules": "Referer 规则列表。",
+    "schema.domainConfig.refer.rules.type":
+      "Referer 规则类型：blacklist=黑名单，whitelist=白名单。",
+    "schema.domainConfig.refer.rules.referers": "Referer 规则值列表。",
+    "schema.domainConfig.refer.rules.allowEmpty": "是否允许空 Referer。",
+    "schema.domainConfig.cache": "CDN 缓存规则列表。",
+    "schema.domainConfig.cache.ruleType":
+      "缓存规则类型：fileType=文件类型，path=路径。",
+    "schema.domainConfig.cache.ruleValue": "规则匹配值。",
+    "schema.domainConfig.cache.cacheTtl": "缓存 TTL，单位秒。",
+    "schema.domainConfig.ipFilter": "IP 访问控制配置。",
+    "schema.domainConfig.ipFilter.switch": "IP 访问控制开关：on=开启，off=关闭。",
+    "schema.domainConfig.ipFilter.filterType":
+      "过滤类型：blacklist=黑名单，whitelist=白名单。",
+    "schema.domainConfig.ipFilter.filters": "IP 规则列表。",
+    "schema.domainConfig.ipFreqLimit": "IP 频控配置。",
+    "schema.domainConfig.ipFreqLimit.switch": "IP 频控开关：on=开启，off=关闭。",
+    "schema.domainConfig.ipFreqLimit.qps": "每个 IP 的 QPS 上限。",
+    "schema.query.action":
+      "查询类型：websiteConfig=查询静态托管网站文档配置与站点域名信息，status=查询静态托管服务状态，findFiles=按前缀查找托管文件，listFiles=列出静态托管中的全部文件，domainStatus=查询自定义域名配置与生效状态。该工具严格只读，不会修改任何资源。",
+    "schema.query.prefix":
+      "文件前缀过滤条件。仅 action=findFiles 时使用，例如 app/ 或 assets/logo。",
+    "schema.query.marker":
+      "分页起始标记。仅 action=findFiles 时使用，用于续查上一页之后的结果。",
+    "schema.query.maxKeys": "单次返回的最大文件条数。仅 action=findFiles 时使用。",
+    "schema.query.domains":
+      "要查询的自定义域名列表。仅 action=domainStatus 时使用，例如 [\"www.example.com\"]。",
+    "schema.manage.action":
+      "管理类型：upload=上传本地构建产物到静态托管，delete=删除静态托管文件或目录，setWebsiteDocument=设置首页/错误页/路由规则，enableService=开通静态托管服务，bindDomain=绑定自定义域名，unbindDomain=解绑自定义域名，updateDomain=更新域名缓存/防盗链/IP 规则，downloadFile=下载单个托管文件到本地，downloadDirectory=下载托管目录到本地。",
+    "schema.manage.localPath":
+      "本地路径。action=upload 时表示要上传的本地文件/目录路径；action=downloadFile 或 downloadDirectory 时表示下载到本地的目标路径。建议传绝对路径。",
+    "schema.manage.cloudPath":
+      "静态托管中的目标路径。action=upload 时表示上传后的托管路径；action=delete/downloadFile/downloadDirectory 时表示托管侧文件或目录路径。",
+    "schema.manage.files":
+      "多文件上传配置。仅 action=upload 时可选；传入后会逐项上传，不再依赖单个 localPath/cloudPath。",
+    "schema.manage.files.localPath": "单个待上传文件的本地绝对路径。",
+    "schema.manage.files.cloudPath": "该文件上传到静态托管后的托管路径。",
+    "schema.manage.ignore":
+      "上传时忽略的文件模式。仅 action=upload 时可选，例如 node_modules 或 [\"**/*.map\", \"**/.DS_Store\"]。",
+    "schema.manage.isDir":
+      "是否把 cloudPath 视为目录。仅 action=delete 时使用；true=删除目录，false=删除单个文件。",
+    "schema.manage.confirm":
+      "高风险操作确认开关。action=delete 和 action=unbindDomain 时必须显式传 true，避免误删文件或误解绑域名。",
+    "schema.manage.indexDocument":
+      "网站首页文档名称。仅 action=setWebsiteDocument 时必填，例如 index.html。",
+    "schema.manage.errorDocument":
+      "错误页文档名称。仅 action=setWebsiteDocument 时可选，例如 404.html。",
+    "schema.manage.routingRules":
+      "网站路由规则列表。仅 action=setWebsiteDocument 时可选。SPA 常见配置是将 404 重写到 index.html。",
+    "schema.manage.domain":
+      "自定义域名。action=bindDomain / unbindDomain / updateDomain 时使用，例如 www.example.com。",
+    "schema.manage.certId": "证书 ID。仅 action=bindDomain 时必填。",
+    "schema.manage.domainId":
+      "域名 ID。仅 action=updateDomain 时必填，用于精确更新指定域名配置。",
+    "schema.manage.domainConfig":
+      "域名配置。仅 action=updateDomain 时必填，支持缓存、Referer、防盗链、IP 规则与频控。",
+  },
+  {
+    queryTitle: "Query CloudBase static hosting",
+    queryDescription:
+      "Read-only information about CloudBase static hosting. Lets the AI discover state first and then decide the next step: action=websiteConfig queries the index/error document, routing rules, and site domain info; action=status queries the hosting service status; action=findFiles finds files by prefix; action=listFiles lists all hosted files; action=domainStatus queries the current status and configuration of custom domains. This tool has no side effects.",
+    manageTitle: "Manage CloudBase static hosting",
+    manageDescription:
+      "Mutation operations for CloudBase static hosting. action=upload uploads local build artifacts to the shared domain (domain format: <envId>-<appId>.tcloudbaseapp.com/<cloudPath>); action=delete deletes hosted files or directories (confirm=true required); action=setWebsiteDocument sets the index/error document and routing rules; action=enableService enables static hosting; action=bindDomain / unbindDomain / updateDomain manage custom domains; action=downloadFile / downloadDirectory download hosted content to local disk. ⚠️ Every hosting operation calls the DescribeStaticStore control-plane API underneath (20 req/s QPS limit): when deleting multiple files, call sequentially with intervals (no more than 10 calls per second recommended); for multiple files in the same directory, prefer isDir=true to delete the whole directory in one call. If the error contains \"frequency limit\", rate limiting was triggered — wait 1-2 seconds and retry; do not retry in rapid succession. ⚠️ This tool has no action to disable the default domain (*.tcloudbaseapp.com); to disable that default public domain, use manageGateway(action=\"disableRoute\", domain=the STATIC_STORE IsDefault domain, path=\"/\") (backed by ModifyHTTPServiceRoute, not ModifyGatewayRoute). ⚠️ For new projects prefer manageApps (deploys to a dedicated subdomain); this tool suits existing legacy projects or as a fallback for manageApps. manageApps and manageHosting use different domains, so switching invalidates old links. If the task is only inspecting config, files, or domain status, use queryHosting instead.",
+    manageDescriptionCloud:
+      "Mutation operations for CloudBase static hosting (cloud mode variant). ⚠️ Actions that depend on local file paths are unavailable in cloud mode: action=upload / downloadFile / downloadDirectory will fail immediately — do not call them. To deploy a static site, use the manageApps cloud path instead: queryApps(action=\"getUploadUrl\", serviceName=\"<app name>\") to get a presigned upload URL → PUT the code zip to uploadUrl (with uploadHeaders and Content-Type: application/zip) → manageApps(action=\"deployApp\", serviceName, cosTimestamp=<returned unixTimestamp>) to trigger deployment. Remote-only management actions remain available: action=delete deletes hosted files or directories (confirm=true required); action=setWebsiteDocument sets the index/error document and routing rules; action=enableService enables static hosting; action=bindDomain / unbindDomain / updateDomain manage custom domains. ⚠️ Every hosting operation calls the DescribeStaticStore control-plane API underneath (20 req/s QPS limit): when deleting multiple files, call sequentially with intervals (no more than 10 calls per second recommended); if the error contains \"frequency limit\", rate limiting was triggered — wait 1-2 seconds and retry. If the task is only inspecting config, files, or domain status, use queryHosting instead.",
+    commonServiceUnsupported:
+      "The current CloudBase Manager instance does not support commonService.call; cannot execute {action}.",
+    managerUnavailable: "CloudBase manager is unavailable.",
+    hostingStoreMissing:
+      "No static hosting storage config found for environment {envId}; cannot upload files. Make sure MCP is bound to a CloudBase environment with static hosting enabled; to switch environments, call auth(action=\"set_env\", envId=\"<target env ID>\") and retry.",
+    cloudModeLocalActionUnavailable:
+      "manageHosting(action=\"{action}\") is unavailable in cloud mode because the operation depends on local file paths. To deploy a static site, use the manageApps cloud path instead: queryApps(action=\"getUploadUrl\", serviceName=\"<app name>\") to get a presigned upload URL → PUT the code zip to uploadUrl (with uploadHeaders and Content-Type: application/zip) → manageApps(action=\"deployApp\", serviceName, cosTimestamp=<returned unixTimestamp>) to trigger deployment. If you only need to upload/download existing hosted files and there is no local filesystem, there is no cloud alternative for this action — run MCP in local mode instead. Remote-only management actions (delete / setWebsiteDocument / enableService / bindDomain / unbindDomain / updateDomain) are unaffected and remain available.",
+    uploadArgsRequired:
+      "manageHosting(action=\"upload\") requires localPath + cloudPath, or a files list for multi-file upload.",
+    uploadSuccess:
+      "Static hosting files uploaded. To verify the upload result, call queryHosting(action=\"findFiles\") or queryHosting(action=\"listFiles\").",
+    uploadRouteDisabledWithFallback:
+      "Static hosting files uploaded. The gateway route for the default static hosting domain is disabled (access returns GATEWAY_ROUTE_DISABLED); another reachable domain is used as accessUrl. Use manageGateway(action=\"updateRoute\", route.enable=true) to re-enable the default domain route.",
+    uploadRouteDisabledNoAccess:
+      "Static hosting files uploaded, but the gateway route for the default static hosting domain is disabled (GATEWAY_ROUTE_DISABLED) and no reachable accessUrl exists. Use manageGateway(action=\"updateRoute\", domain=\"<static domain>\", path=\"/\", upstreamResourceType=\"STATIC_STORE\", targetName=\"staticstore\", route.enable=true) to enable the route, or access via an enabled custom domain / CloudBase Sites domain.",
+    uploadErrorWrapper: "[manageHosting(upload)] {message}\nSuggestions: {suggestions}",
+    uploadErrorPathSuggestion:
+      "First confirm the local path `{localPath}` exists and the current process has read permission.",
+    uploadErrorAssetSuggestion:
+      "If the failing file is a static asset inside the build output, check that the post-build asset reference paths are correct.",
+    uploadErrorPublicPathSuggestion:
+      "If the site is deployed under a sub-path, confirm that publicPath, base, assetPrefix, and similar settings do not point assets to a non-existent location.",
+    uploadErrorDefaultSuggestion:
+      "Check the upload directory, file permissions, and build output integrity, then retry.",
+    notReadyGuidance:
+      "{message}\nReason: enabling static hosting is an asynchronous task and the resource is not ready yet (status is `init` or `process`). While in this state every hosting read/write is rejected, regardless of what this operation was doing.\nSuggestions:\n1) Call queryHosting(action=\"status\") and retry once the status becomes `online`;\n2) Enabling usually finishes within a few minutes; do not poll aggressively (DescribeStaticStore has a 20 req/s QPS limit);\n3) If the status stays `process` for a long time or turns into `create_fail`, the enabling task failed and needs to be checked in the CloudBase console.",
+    notEnabledGuidance:
+      "{message}\nReason: static hosting is not enabled for this environment, so all hosting read/write APIs are unavailable.\nSuggestions:\n1) Call manageHosting(action=\"enableService\") to enable it;\n2) Enabling is asynchronous — wait for queryHosting(action=\"status\") to report `online` before retrying this operation.",
+    deleteErrorWrapper: "[manageHosting(delete)] {message}",
+    deleteRateLimitGuidance:
+      "[manageHosting(delete)] {message}\nReason: the underlying DescribeStaticStore control-plane API has a 20 req/s QPS limit; deleting multiple files in rapid succession (or retrying immediately after a failure) easily triggers rate limiting, and the deletion itself may have partially taken effect.\nSuggestions:\n1) Wait 1-2 seconds and retry this deletion; do not retry immediately in a tight loop;\n2) When deleting multiple files, call sequentially with intervals (no more than 10 calls per second recommended); do not retry concurrently or in fast loops;\n3) For multiple files in the same directory, use isDir=true to delete the whole directory in one call;\n4) To verify whether the deletion took effect, call queryHosting(action=\"findFiles\").",
+    deleteCloudPathRequired: "manageHosting(action=\"delete\") requires cloudPath.",
+    deleteConfirmRequired:
+      "manageHosting(action=\"delete\") is a destructive operation and requires explicit confirm=true.",
+    deleteVerificationIncomplete: "Deletion request did not take effect: {errors}",
+    deleteVerifyFailed:
+      "Post-delete verification failed: file still exists in static hosting",
+    deleteSuccess: "Deleted static hosting {type} `{cloudPath}`.",
+    deleteUnverified:
+      "The deletion was submitted, but verification suggests the files may not be fully deleted. Possible causes: the underlying COS delete request failed (e.g. file not found, insufficient bucket permissions), or the deletion did not take effect after DescribeStaticStore rate limiting. Suggestions: 1) Wait 1-2 seconds and check the file status with queryHosting(action=\"findFiles\", prefix=\"{cloudPath}\"); 2) If the files still exist, call manageHosting(action=\"delete\", confirm=true) again; 3) When deleting multiple files, call sequentially with intervals (DescribeStaticStore has a 20 req/s QPS limit).",
+    typeDirectory: "directory",
+    typeFile: "file",
+    setWebsiteDocumentIndexRequired:
+      "manageHosting(action=\"setWebsiteDocument\") requires indexDocument, e.g. index.html.",
+    setWebsiteDocumentSuccess:
+      "Static hosting website document config submitted. To confirm the final config, call queryHosting(action=\"websiteConfig\").",
+    enableServiceSuccess:
+      "Static hosting service enablement request submitted. Call queryHosting(action=\"status\") to confirm the service is available.",
+    bindDomainArgsRequired:
+      "manageHosting(action=\"bindDomain\") requires domain and certId.",
+    unbindDomainArgsRequired: "manageHosting(action=\"unbindDomain\") requires domain.",
+    unbindDomainConfirmRequired:
+      "manageHosting(action=\"unbindDomain\") unbinds an existing custom domain and requires explicit confirm=true.",
+    updateDomainArgsRequired:
+      "manageHosting(action=\"updateDomain\") requires domain, domainId, and domainConfig together.",
+    downloadFileArgsRequired:
+      "manageHosting(action=\"downloadFile\") requires cloudPath and localPath together; localPath should include the target file name.",
+    downloadFileSuccess:
+      "Downloaded static hosting file `{cloudPath}` to local path `{localPath}`.",
+    downloadDirectoryArgsRequired:
+      "manageHosting(action=\"downloadDirectory\") requires cloudPath and localPath together; localPath should be a local directory path.",
+    downloadDirectorySuccess:
+      "Downloaded static hosting directory `{cloudPath}` to local directory `{localPath}`.",
+    domainMutationSubmitted:
+      "Static hosting domain {actionLabel} request submitted. Domain configuration, certificate validation, and edge propagation usually take 30 seconds to 10 minutes; keep calling queryHosting(action=\"domainStatus\") to confirm the final result.",
+    domainActionBind: "bind",
+    domainActionUnbind: "unbind",
+    domainActionUpdate: "update",
+    domainSuccessIndicatorBind:
+      "Keep calling queryHosting(action=\"domainStatus\", domains=[\"{domain}\"]) until the domain appears in the response and the related status fields show it has taken effect.",
+    domainSuccessIndicatorUnbind:
+      "Keep calling queryHosting(action=\"domainStatus\", domains=[\"{domain}\"]) until the domain no longer appears in the response.",
+    domainSuccessIndicatorUpdate:
+      "Keep calling queryHosting(action=\"domainStatus\", domains=[\"{domain}\"]) and confirm the config fields in the response have been updated to the latest values.",
+    websiteConfigSuccess:
+      "Retrieved static hosting website document config and site domain info.",
+    statusEnabled: "Retrieved static hosting service status.",
+    statusNotEnabled:
+      "The static hosting service returned no available instance info; it may not be enabled yet.",
+    findFilesPrefixRequired:
+      "queryHosting(action=\"findFiles\") requires prefix to find hosted files by prefix.",
+    findFilesSuccess:
+      "Found {count} static hosting files under prefix `{prefix}`.{more}",
+    findFilesMore: " More files are available; use nextMarker to continue.",
+    listFilesSuccess:
+      "Listed static hosting files (items {start}-{end} of {count}).{more}",
+    domainStatusDomainsRequired:
+      "queryHosting(action=\"domainStatus\") requires a domains array, e.g. [\"www.example.com\"].",
+    domainStatusSuccessIndicator:
+      "The target domains appear in the response and the related status fields show they have taken effect.",
+    domainStatusAllMatched:
+      "Retrieved the target static hosting domain configs. If this is a confirmation step after binding or updating, keep checking the status fields, certificate info, and config values against expectations.",
+    domainStatusPending:
+      "Some target static hosting domains have not appeared in the query results yet. If this is a confirmation step after binding, keep calling queryHosting(action=\"domainStatus\") until the results converge or the timeout is reached.",
+    queryRateLimitGuidance:
+      "{message}\nReason: the underlying DescribeStaticStore control-plane API has a 20 req/s QPS limit; rapid successive calls (or immediate retries after failures) easily trigger rate limiting, and this query/operation may not have fully taken effect.\nSuggestions: wait 1-2 seconds before retrying and avoid rapid successive retries; for multi-file operations, call sequentially with intervals.",
+    // Input schema parameter descriptions
+    "schema.routingRule.keyPrefixEquals":
+      "Prefix match rule, e.g. app/ or assets/. Use either this or httpErrorCodeReturnedEquals, or combine them per CloudBase rules.",
+    "schema.routingRule.httpErrorCodeReturnedEquals":
+      "HTTP error code to match, e.g. 404. SPA fallback commonly uses 404.",
+    "schema.routingRule.replaceKeyWith":
+      "Replace the match with a fixed file path, e.g. index.html.",
+    "schema.routingRule.replaceKeyPrefixWith":
+      "Replace the matched prefix with a new prefix path.",
+    "schema.domainConfig.refer": "Referer hotlink protection config.",
+    "schema.domainConfig.refer.switch":
+      "Referer hotlink protection switch: on=enabled, off=disabled.",
+    "schema.domainConfig.refer.rules": "Referer rule list.",
+    "schema.domainConfig.refer.rules.type":
+      "Referer rule type: blacklist=deny list, whitelist=allow list.",
+    "schema.domainConfig.refer.rules.referers": "Referer rule values.",
+    "schema.domainConfig.refer.rules.allowEmpty":
+      "Whether an empty Referer is allowed.",
+    "schema.domainConfig.cache": "CDN cache rule list.",
+    "schema.domainConfig.cache.ruleType":
+      "Cache rule type: fileType=file type, path=path.",
+    "schema.domainConfig.cache.ruleValue": "Rule match value.",
+    "schema.domainConfig.cache.cacheTtl": "Cache TTL in seconds.",
+    "schema.domainConfig.ipFilter": "IP access control config.",
+    "schema.domainConfig.ipFilter.switch":
+      "IP access control switch: on=enabled, off=disabled.",
+    "schema.domainConfig.ipFilter.filterType":
+      "Filter type: blacklist=deny list, whitelist=allow list.",
+    "schema.domainConfig.ipFilter.filters": "IP rule list.",
+    "schema.domainConfig.ipFreqLimit": "IP rate limit config.",
+    "schema.domainConfig.ipFreqLimit.switch":
+      "IP rate limit switch: on=enabled, off=disabled.",
+    "schema.domainConfig.ipFreqLimit.qps": "QPS cap per IP.",
+    "schema.query.action":
+      "Query type: websiteConfig=query the static hosting website document config and site domain info, status=query the static hosting service status, findFiles=find hosted files by prefix, listFiles=list all files in static hosting, domainStatus=query custom domain config and effective status. This tool is strictly read-only and never modifies resources.",
+    "schema.query.prefix":
+      "File prefix filter. Used only with action=findFiles, e.g. app/ or assets/logo.",
+    "schema.query.marker":
+      "Pagination start marker. Used only with action=findFiles to continue after the previous page.",
+    "schema.query.maxKeys":
+      "Maximum number of files returned per call. Used only with action=findFiles.",
+    "schema.query.domains":
+      "Custom domains to query. Used only with action=domainStatus, e.g. [\"www.example.com\"].",
+    "schema.manage.action":
+      "Management type: upload=upload local build artifacts to static hosting, delete=delete hosted files or directories, setWebsiteDocument=set the index/error document and routing rules, enableService=enable the static hosting service, bindDomain=bind a custom domain, unbindDomain=unbind a custom domain, updateDomain=update domain cache/hotlink protection/IP rules, downloadFile=download a single hosted file locally, downloadDirectory=download a hosted directory locally.",
+    "schema.manage.localPath":
+      "Local path. With action=upload it is the local file/directory to upload; with action=downloadFile or downloadDirectory it is the local download target. An absolute path is recommended.",
+    "schema.manage.cloudPath":
+      "Target path in static hosting. With action=upload it is the hosted path after upload; with action=delete/downloadFile/downloadDirectory it is the hosted file or directory path.",
+    "schema.manage.files":
+      "Multi-file upload config. Optional and only for action=upload; when provided, files are uploaded one by one and the single localPath/cloudPath is no longer used.",
+    "schema.manage.files.localPath":
+      "Absolute local path of a single file to upload.",
+    "schema.manage.files.cloudPath":
+      "Hosted path of this file after it is uploaded to static hosting.",
+    "schema.manage.ignore":
+      "File patterns to ignore during upload. Optional and only for action=upload, e.g. node_modules or [\"**/*.map\", \"**/.DS_Store\"].",
+    "schema.manage.isDir":
+      "Whether to treat cloudPath as a directory. Used only with action=delete; true=delete the directory, false=delete a single file.",
+    "schema.manage.confirm":
+      "High-risk operation confirmation switch. Must be explicitly true for action=delete and action=unbindDomain to avoid deleting files or unbinding domains by mistake.",
+    "schema.manage.indexDocument":
+      "Website index document name. Required only with action=setWebsiteDocument, e.g. index.html.",
+    "schema.manage.errorDocument":
+      "Error document name. Optional and only for action=setWebsiteDocument, e.g. 404.html.",
+    "schema.manage.routingRules":
+      "Website routing rule list. Optional and only for action=setWebsiteDocument. A common SPA setup rewrites 404 to index.html.",
+    "schema.manage.domain":
+      "Custom domain. Used with action=bindDomain / unbindDomain / updateDomain, e.g. www.example.com.",
+    "schema.manage.certId":
+      "Certificate ID. Required only with action=bindDomain.",
+    "schema.manage.domainId":
+      "Domain ID. Required only with action=updateDomain to update the specified domain config precisely.",
+    "schema.manage.domainConfig":
+      "Domain config. Required only with action=updateDomain; supports cache, Referer, hotlink protection, IP rules, and rate limiting.",
+  },
+);

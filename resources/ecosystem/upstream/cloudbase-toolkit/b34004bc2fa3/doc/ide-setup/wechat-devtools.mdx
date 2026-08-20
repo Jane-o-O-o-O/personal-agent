@@ -1,0 +1,147 @@
+import IDESelector from '../components/IDESelector';
+import RelatedResources from '../components/RelatedResources';
+
+# 微信开发者工具配置指南
+
+微信云开发 AI ToolKit 帮助你用自然语言构建、调试和部署小程序。先看 [用 AI 写微信小程序](../tutorials/ai-develop-miniprogram)；微信官方说明：[开发者工具 Skills](https://developers.weixin.qq.com/miniprogram/dev/devtools/Skills.html)。
+
+![](https://7463-tcb-advanced-a656fc-1257967285.tcb.qcloud.la/imgs/wechat-ide-extension/ide-extension.png)
+
+**例如：**
+
+- "用云开发做一个微信小程序点餐系统" - AI 搭页面、建云数据库、写云函数并引导预览
+- "做一个预约管理系统，支持用户下单和后台改状态" - AI 用 CloudBase PostgreSQL 建模、配权限并接好前后端
+- "给 Web 应用加上手机号登录" - AI 启用认证方式并接入 CloudBase SDK
+
+无需切换到云控制台，所有操作都可以用自然语言完成。
+
+## 前置条件
+
+在开始配置之前，请确保满足以下条件：
+
+<details>
+<summary><strong>已安装微信开发者工具 Nightly</strong></summary>
+
+AI 预览 / 调试能力在 **Nightly** 中提供，稳定版往往没有。Nightly 只影响本机开发，不是另一套发版渠道。
+
+- 下载：[Nightly Build](https://developers.weixin.qq.com/miniprogram/dev/devtools/nightly_backup.html)
+- 扫码登录，开发时保持工具打开
+- 版本与菜单以 [开发者工具 Skills](https://developers.weixin.qq.com/miniprogram/dev/devtools/Skills.html) 为准
+
+</details>
+
+<details>
+<summary><strong>已准备好云开发环境</strong></summary>
+
+**云开发环境：** 请参考文档 [开通云开发环境](../../../quick-start/create-env)。新用户可以免费开通体验。
+
+</details>
+
+---
+
+## 把开发者工具接到你的 AI
+
+两条路：开发者工具内置 AI，或外部 Agent（CodeBuddy、Cursor 等）并导入 Skill。步骤见 [用 AI 写微信小程序](../tutorials/ai-develop-miniprogram)；菜单与版本以微信 [开发者工具 Skills](https://developers.weixin.qq.com/miniprogram/dev/devtools/Skills.html) 为准。
+
+### 选择并配置 AI 工具
+
+<IDESelector
+  defaultIDE="wechat-devtools"
+  customPrompt="检查开发者工具是否已登录；然后用微信小程序 + 云开发做一个带登录和列表页的示例，并帮我预览"
+  collapsibleInstallSteps={true}
+/>
+
+### 外部 Agent：导入开发者工具 Skill
+
+1. Nightly 已登录并保持打开。
+2. 菜单栏 → **导出开发者工具 Skill** → 导入到 Agent；或运行 `wechatide`，把输出的路径交给 Agent。
+3. 首次弹窗授权必须点允许。
+4. 说：「检查开发者工具是否已登录，并预览当前小程序。」
+
+走上方选择器「微信开发者工具」内置入口时，一般不用再导出 Skill。
+
+<details>
+<summary>本机命令（排查用）</summary>
+
+```bash
+wechatide
+
+wechatide -c CodeBuddy -t check_devtools_status --skill-version <versionFromSkillYaml>
+
+wechatide -c CodeBuddy -t cloud_env_list --help
+```
+
+把 `CodeBuddy` 换成你的 Agent 名。
+
+</details>
+
+## 常用技巧
+
+### 切换权限模式
+
+CodeBuddy 提供多种权限模式用于控制 AI 工具的使用授权，通过快捷键可以快速切换：
+
+| 快捷键 | 说明 |
+| --- | --- |
+| `Shift+Tab` (macOS/Linux) | 切换权限模式 |
+| `Alt+M` (Windows) | 切换权限模式 |
+
+循环顺序：`default` → `bypassPermissions` → `acceptEdits` → `auto`（可用时） → `plan` → `delegate`
+
+| 模式 | 说明 |
+| --- | --- |
+| **default（默认）** | 根据权限规则询问工具使用确认 |
+| **bypassPermissions** | 跳过所有权限检查 |
+| **acceptEdits** | 自动批准文件编辑操作，其他工具仍需确认 |
+| **plan** | AI 制定计划并等待批准后再执行 |
+
+> 参考文档：[交互模式](http://codebuddy.cn/docs/cli/interactive-mode)
+
+### 其他常用快捷键
+
+| 快捷键 | 说明 |
+| --- | --- |
+| `Ctrl+O` | 切换详细输出，显示工具使用和执行信息 |
+| `Ctrl+L` | 清除终端屏幕，保留对话历史 |
+| `Tab` | 切换思考模式（思考开启/关闭） |
+| `Option+P` (macOS) / `Alt+P` (Windows/Linux) | 快速切换模型 |
+
+## 常用示例提示词
+
+以下是你可以直接复制使用的示例提示词，尝试用自然语言描述需求，AI 会自动完成开发任务。
+
+### 页面与功能开发
+
+- "帮我创建一个商品列表页面，包含图片、标题、价格和加入购物车按钮"
+- "帮我完善这个函数，实现商品搜索功能"
+
+### 代码优化与重构
+
+- "优化这个页面的间隔，提升信息密度"
+- "完善云函数调用的错误处理代码"
+
+## 配置云开发 AI 模型
+
+你可以使用云开发提供的 AI 模型来驱动 CodeBuddy，具体配置步骤如下：
+
+1. 在 [AI 控制台](https://tcb.cloud.tencent.com/dev#/ai?tab=text-aiModel) 中开启所需模型，并获取 `Base URL` 和 `API Key`
+2. 打开 CodeBuddy，点击 **打开 Agents**
+3. 在对话面板大模型列表中，选择 **配置自定义模型**
+4. 填写复制的 `Base URL`、`API Key` 和模型名称，保存后即可使用
+
+> 参考文档：[CodeBuddy 配置云开发模型](https://docs.cloudbase.net/ai/ai-tools/codebuddy) | [models.json 配置指南](https://www.codebuddy.cn/docs/cli/models)
+
+## 常见问题
+
+**Q: 无法使用 AI ToolKit？**
+A: 请安装并登录 [Nightly](https://developers.weixin.qq.com/miniprogram/dev/devtools/nightly_backup.html)，用菜单 **导出开发者工具 Skill**（或 `wechatide`）把 Skill 导入你的 Agent，并在首次弹窗中授权。也可让 Agent「检查开发者工具是否已登录」。
+
+**Q: 装了微信开发者工具，但 Agent 连不上 / 没有 Skills？**
+A: 请用 [Nightly](https://developers.weixin.qq.com/miniprogram/dev/devtools/nightly_backup.html)，不要只装稳定版；外部 Agent 需导入 Skill，并确认首次授权弹窗已点允许。版本要求以 [开发者工具 Skills](https://developers.weixin.qq.com/miniprogram/dev/devtools/Skills.html) 为准。
+
+**Q: 如何切换权限模式？**
+A: 使用 `Shift+Tab`（macOS/Linux）或 `Alt+M`（Windows）在模式之间循环切换。Windows 用户必须使用 `Alt+M`。
+
+更多问题请查看：[完整 FAQ](../faq)
+
+<RelatedResources ideName="CodeBuddy" ideDocUrl="https://www.codebuddy.ai/docs/zh/ide/Config%20MCP" />

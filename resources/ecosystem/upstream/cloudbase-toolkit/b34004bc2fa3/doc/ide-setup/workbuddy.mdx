@@ -1,0 +1,84 @@
+import IDESelector from '../components/IDESelector';
+import RelatedResources from '../components/RelatedResources';
+
+# WorkBuddy 配置指南
+
+配置后，你可以在 WorkBuddy 的 AI 对话中直接操作 CloudBase 服务。
+
+**例如：**
+
+- "用云开发做一个微信小程序点餐系统" - AI 搭页面、建云数据库、写云函数并引导预览
+- "做一个预约管理系统，支持用户下单和后台改状态" - AI 用 CloudBase PostgreSQL 建模、配权限并接好前后端
+- "给 Web 应用加上手机号登录" - AI 启用认证方式并接入 CloudBase SDK
+
+无需切换到云控制台，所有操作都可以在 WorkBuddy 中用自然语言完成。
+
+## 前置条件
+
+在开始配置之前，请确保满足以下条件：
+
+<details>
+<summary><strong>已准备好Node.js 环境和云开发环境</strong></summary>
+
+**Node.js 环境：** 确保已安装 Node.js v18.15.0 或更高版本：
+
+```bash
+node --version
+```
+
+如果未安装，请从 [Node.js 官网](https://nodejs.org/en/download) 下载安装。
+
+**云开发环境：** 请参考文档 [开通云开发环境](../../../quick-start/create-env)。新用户可以免费开通体验。
+
+</details>
+
+---
+
+<IDESelector defaultIDE="workbuddy" />
+
+## 使用内置连接器（推荐）
+
+WorkBuddy 已内置 CloudBase MCP 连接器，可以通过对话界面一键启用：
+
+1. 在 WorkBuddy 对话界面中，点击输入框左下角的 **连接器** 按钮
+2. 在弹窗中找到 **腾讯云 CloudBase**，点击进入详情页，点击 **连接** 启用
+
+![WorkBuddy 内置 CloudBase 连接器](https://7463-tcb-advanced-a656fc-1257967285.tcb.qcloud.la/assets/workbuddy-connector-full.png)
+
+![CloudBase 连接器详情](https://7463-tcb-advanced-a656fc-1257967285.tcb.qcloud.la/assets/workbuddy-connector-detail.png)
+
+启用后，即可在对话中直接使用 CloudBase 的各项能力。
+
+### 使用快捷命令
+
+你也可以在对话中直接输入 `/cloudbase` 选择 CloudBase Skill，然后输入你想要创建的内容需求：
+
+![在对话中输入 /cloudbase 选择 CloudBase Skill](https://7463-tcb-advanced-a656fc-1257967285.tcb.qcloud.la/assets/workbuddy-cloudbase-skill.png)
+
+选择 CloudBase Skill 后，输入你的需求开始开发：
+
+![输入需求开始 CloudBase 开发](https://7463-tcb-advanced-a656fc-1257967285.tcb.qcloud.la/assets/workbuddy-cloudbase-input.png)
+
+WorkBuddy 会自动加载 CloudBase MCP 能力，查询环境并开始执行你的需求：
+
+![CloudBase Skill 对话演示](https://7463-tcb-advanced-a656fc-1257967285.tcb.qcloud.la/assets/workbuddy-cloudbase-demo.png)
+
+开发完成后，WorkBuddy 会展示项目总结，包含技术架构、功能清单和部署地址：
+
+![项目总结与架构展示](https://7463-tcb-advanced-a656fc-1257967285.tcb.qcloud.la/assets/workbuddy-cloudbase-architecture.png)
+
+点击部署地址即可访问最终上线的应用：
+
+![部署上线的完整应用](https://7463-tcb-advanced-a656fc-1257967285.tcb.qcloud.la/assets/workbuddy-cloudbase-final.png)
+
+## 常见问题
+
+**Q: MCP 连接失败？**
+A: 检查配置文件格式是否正确，重启 WorkBuddy，确认网络连接正常。
+
+**Q: 工具数量显示为 0？**
+A: 请参考[常见问题](../faq#mcp-显示工具数量为-0-怎么办)。
+
+更多问题请查看：[完整 FAQ](../faq)
+
+<RelatedResources ideName="WorkBuddy" ideDocUrl="https://www.codebuddy.cn/docs/workbuddy/From-Beginner-to-Expert-Guide/Function-Description/MCP-Guide" />

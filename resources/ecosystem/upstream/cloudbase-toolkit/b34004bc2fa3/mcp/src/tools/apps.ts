@@ -1,0 +1,746 @@
+import { z } from "zod";
+import { getCloudBaseManager, getEnvId, logCloudBaseResult } from "../cloudbase-manager.js";
+import type { ExtendedMcpServer } from "../server.js";
+import { jsonContent } from "../utils/json-content.js";
+import { isCloudMode } from "../utils/cloud-mode.js";
+import { preferGatewayOrFallback, resolveGatewayAccessUrls } from "../utils/gateway-access-urls.js";
+import { t } from "../i18n/index.js";
+
+const QUERY_APP_ACTIONS = ["listApps", "getApp", "listAppVersions", "getAppVersion", "getBuildLog", "getUploadUrl"] as const;
+const MANAGE_APP_ACTIONS = ["deployApp", "getUploadUrl", "deleteApp", "deleteAppVersion"] as const;
+const APP_FRAMEWORKS = ["vue", "react", "next", "nuxt", "vite", "angular", "static"] as const;
+
+type QueryAppAction = (typeof QUERY_APP_ACTIONS)[number];
+type ManageAppAction = (typeof MANAGE_APP_ACTIONS)[number];
+
+type ToolEnvelope = {
+  success: boolean;
+  data: Record<string, unknown>;
+  message: string;
+  code?: string;
+};
+
+function buildEnvelope(data: Record<string, unknown>, message: string): ToolEnvelope {
+  return {
+    success: true,
+    data,
+    message,
+  };
+}
+
+function buildErrorEnvelope(error: unknown, code?: string): ToolEnvelope {
+  return {
+    success: false,
+    data: code ? { code } : {},
+    message: error instanceof Error ? error.message : String(error),
+    ...(code ? { code } : {}),
+  };
+}
+
+const CLOUD_MODE_UNSUPPORTED_ACTION = "CLOUD_MODE_UNSUPPORTED_ACTION";
+
+function buildCloudModeUnsupportedDeployEnvelope(serviceName: string, reason: "localPath" | "missingCosTimestamp"): ToolEnvelope {
+  const message =
+    reason === "localPath"
+      ? t("apps.cloudModeLocalPathUnsupported")
+      : t("apps.cloudModeCosTimestampRequired");
+
+  return {
+    success: false,
+    code: CLOUD_MODE_UNSUPPORTED_ACTION,
+    data: {
+      code: CLOUD_MODE_UNSUPPORTED_ACTION,
+      action: "deployApp",
+      serviceName,
+      reason,
+      nextStep: {
+        tool: "manageApps",
+        args: { action: "getUploadUrl", serviceName },
+        hint: "getUploadUrl → PUT zip to uploadUrl → deployApp(cosTimestamp)",
+      },
+    },
+    message,
+  };
+}
+
+function getCloudAppService(cloudbase: any) {
+  return cloudbase.cloudAppService ?? cloudbase.getCloudAppService?.();
+}
+
+function normalizeAccessUrlFromDomain(domain: unknown): { domain?: string; accessUrl?: string } {
+  if (typeof domain !== "string" || !domain.trim()) return {};
+  const trimmed = domain.trim();
+  const withProtocol = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+  try {
+    const url = new URL(withProtocol);
+    url.hash = "";
+    url.search = "";
+    url.pathname = url.pathname === "/" ? "" : url.pathname.replace(/\/+$/, "");
+    return {
+      domain: url.host,
+      accessUrl: url.toString().replace(/\/$/, ""),
+    };
+  } catch {
+    return {};
+  }
+}
+
+export function registerAppTools(server: ExtendedMcpServer) {
+  const cloudBaseOptions = server.cloudBaseOptions;
+  const getManager = () => getCloudBaseManager({ cloudBaseOptions });
+
+  server.registerTool?.(
+    "queryApps",
+    {
+      title: "apps.queryTitle",
+      description: "apps.queryDescription",
+      inputSchema: {
+        action: z.enum(QUERY_APP_ACTIONS),
+        serviceName: z
+          .string()
+          .optional()
+          .describe("apps.schema.queryServiceName"),
+        searchKey: z.string().optional().describe("apps.schema.searchKey"),
+        pageNo: z.number().optional().describe("apps.schema.pageNo"),
+        pageSize: z.number().optional().describe("apps.schema.pageSize"),
+        versionName: z
+          .string()
+          .optional()
+          .describe("apps.schema.queryVersionName"),
+        buildId: z
+          // ⚠️ 同一字段驱动两条链路、类型要求不同（F13）：
+          //   getAppVersion → SDK describeAppVersion，收 **string**
+          //   getBuildLog   → 云 API DescribeCloudBaseRunBuildLog，BuildId 是 **Integer(int64)**
+          // 收 string | number 并统一归一成 string（保证 getAppVersion 链路不回退），
+          // getBuildLog 分支再转 number 传给云 API。
+          .union([z.string(), z.number()])
+          .transform((value) => String(value).trim())
+          .optional()
+          .describe("apps.schema.buildId"),
+        start: z
+          .number()
+          .optional()
+          .describe("apps.schema.start"),
+      },
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        openWorldHint: false,
+        category: "apps",
+      },
+    },
+    async ({
+      action,
+      serviceName,
+      searchKey,
+      pageNo,
+      pageSize,
+      versionName,
+      buildId,
+      start,
+    }: {
+      action: QueryAppAction;
+      serviceName?: string;
+      searchKey?: string;
+      pageNo?: number;
+      pageSize?: number;
+      versionName?: string;
+      /** schema 已归一成 string；放宽为 string | number 兼容直接调用 handler 的内部/测试路径。 */
+      buildId?: string | number;
+      start?: number;
+    }) => {
+      try {
+        const cloudbase = await getManager();
+        const appService = getCloudAppService(cloudbase);
+        if (!appService) {
+          throw new Error(t("apps.noCloudAppService"));
+        }
+
+        if (action === "listApps") {
+          const result = await appService.describeAppList({
+            deployType: "static-hosting",
+            pageNo: pageNo ?? 1,
+            pageSize: pageSize ?? 20,
+            searchKey,
+          });
+          logCloudBaseResult(server.logger, result);
+          return jsonContent(
+            buildEnvelope(
+              {
+                action,
+                apps: result.ServiceList ?? [],
+                total: result.Total ?? 0,
+                raw: result,
+              },
+              t("apps.listSuccess"),
+            ),
+          );
+        }
+
+        if (!serviceName) {
+          throw new Error(t("apps.serviceNameRequired", { action }));
+        }
+
+        // getUploadUrl — 只读获取预签名上传 URL（cloud mode 上传通道第一步）
+        // 语义说明：本 action 是"铸造一张 staging 范围的上传凭据"而非纯查询，挂在只读工具下
+        // 是有意为之（cloud agent 可能只有只读权限）。凭据只能 PUT 到该 serviceName 的构建
+        // staging key，且时效短；真正改变状态的 deployApp 必须再经 manageApps（非只读）二次授权。
+        if (action === "getUploadUrl") {
+          const cosInfoResult = await appService.describeCosInfo({
+            deployType: "static-hosting",
+            serviceName,
+            suffix: ".zip",
+          });
+          // 只记录 RequestId：UploadUrl / UploadHeaders 含预签名凭据（Authorization），不能进日志
+          logCloudBaseResult(server.logger, { RequestId: cosInfoResult.RequestId });
+
+          return jsonContent(
+            buildEnvelope(
+              {
+                action,
+                serviceName,
+                uploadUrl: cosInfoResult.UploadUrl,
+                uploadHeaders: cosInfoResult.UploadHeaders,
+                unixTimestamp: cosInfoResult.UnixTimestamp,
+                usage: {
+                  method: "PUT",
+                  contentType: "application/zip",
+                  steps: [
+                    t("apps.uploadStep1"),
+                    t("apps.uploadStep2"),
+                    t("apps.uploadStep3", { serviceName }),
+                  ],
+                  followup: {
+                    tool: "manageApps",
+                    args: {
+                      action: "deployApp",
+                      serviceName,
+                      cosTimestamp: cosInfoResult.UnixTimestamp,
+                    },
+                  },
+                },
+              },
+              t("apps.getUploadUrlSuccess"),
+            ),
+          );
+        }
+
+        if (action === "getApp") {
+          const result = await appService.describeAppInfo({
+            deployType: "static-hosting",
+            serviceName,
+          });
+          logCloudBaseResult(server.logger, result);
+          return jsonContent(
+            buildEnvelope(
+              {
+                action,
+                serviceName,
+                app: result,
+              },
+              t("apps.getSuccess"),
+            ),
+          );
+        }
+
+        if (action === "listAppVersions") {
+          const result = await appService.describeAppVersionList({
+            deployType: "static-hosting",
+            serviceName,
+            pageNo: pageNo ?? 1,
+            pageSize: pageSize ?? 20,
+          });
+          logCloudBaseResult(server.logger, result);
+          return jsonContent(
+            buildEnvelope(
+              {
+                action,
+                serviceName,
+                versions: result.VersionList ?? [],
+                total: result.Total ?? 0,
+                raw: result,
+              },
+              t("apps.listVersionsSuccess"),
+            ),
+          );
+        }
+
+        if (action === "getBuildLog") {
+          if (buildId === undefined || buildId === null || String(buildId).trim() === "") {
+            throw new Error(t("apps.buildIdRequired"));
+          }
+          // DescribeCloudBaseRunBuildLog 的 BuildId 是 Integer(int64)（官方文档 876/135707），
+          // 传 string 会被后端拒：The value type of parameter BuildId is not valid, input type
+          // should be int64。schema 侧已归一成 string（getAppVersion 需要 string），此处转 number。
+          const numericBuildId = Number(String(buildId).trim());
+          if (!Number.isInteger(numericBuildId) || numericBuildId <= 0) {
+            throw new Error(t("apps.buildIdMustBeNumeric", { buildId: String(buildId) }));
+          }
+          const result = await cloudbase.commonService("tcb", "2018-06-08").call({
+            Action: "DescribeCloudBaseRunBuildLog",
+            Param: {
+              EnvId: cloudBaseOptions?.envId || process.env.CLOUDBASE_ENV_ID,
+              ServiceName: serviceName,
+              BuildId: numericBuildId,
+              Start: start ?? 0,
+            },
+          });
+          logCloudBaseResult(server.logger, result);
+          const logs = result.Response?.LogList || [];
+          return jsonContent(
+            buildEnvelope(
+              {
+                action,
+                serviceName,
+                buildId: String(numericBuildId),
+                logs,
+                total: result.Response?.Total || logs.length,
+                nextStart: result.Response?.NextStart,
+                raw: result,
+              },
+              logs.length > 0
+                ? t("apps.buildLogFound", { count: logs.length })
+                : t("apps.buildLogEmpty"),
+            ),
+          );
+        }
+
+        const result = await appService.describeAppVersion({
+          deployType: "static-hosting",
+          serviceName,
+          versionName,
+          // 该链路要 string（SDK 类型 IDescribeCloudAppVersionParams.BuildId: string）
+          buildId: buildId === undefined ? undefined : String(buildId),
+        });
+        logCloudBaseResult(server.logger, result);
+
+        // Platform may return Failed/failed; normalize before matching.
+        const isFailed =
+          typeof result.Status === "string" &&
+          result.Status.toLowerCase() === "failed";
+        const payload: Record<string, unknown> = {
+          action,
+          serviceName,
+          status: result.Status,
+          buildId: result.BuildId,
+          failReason: result.FailReason,
+          buildDuration: result.BuildDuration,
+          version: result,
+        };
+
+        if (isFailed) {
+          payload.nextStep = {
+            action: t("apps.nextStepQueryBuildLog"),
+            tool: "queryApps",
+            args: {
+              action: "getBuildLog",
+              serviceName,
+              buildId: result.BuildId,
+            },
+            hint: t("apps.buildFailedHint", {
+              serviceName,
+              buildId: result.BuildId,
+            }),
+          };
+        }
+
+        return jsonContent(
+          buildEnvelope(
+            payload,
+            t("apps.getVersionSuccess", {
+              status: result.Status,
+              extra: `${result.FailReason ? t("apps.versionFailReason", { reason: result.FailReason }) : ""}${isFailed ? t("apps.versionBuildLogAvailable") : ""}`,
+            }),
+          ),
+        );
+      } catch (error) {
+        return jsonContent(buildErrorEnvelope(error));
+      }
+    },
+  );
+
+  server.registerTool?.(
+    "manageApps",
+    {
+      title: "apps.manageTitle",
+      description: "apps.manageDescription",
+      inputSchema: {
+        action: z.enum(MANAGE_APP_ACTIONS),
+        serviceName: z
+          .string()
+          .describe("apps.schema.manageServiceName"),
+        filePath: z
+          .string()
+          .optional()
+          .describe("apps.schema.filePath"),
+        cosTimestamp: z
+          // ⚠️ 不能用 z.coerce.number()：SDK 的 StaticConfig.CosTimestamp（manager-node
+          // types/cloudApp/types.d.ts `CosTimestamp?: string | null`）与后端 CreateCloudApp
+          // 都要求 **string**。coerce 会把外部传入的值（含 getUploadUrl 返回的 unixTimestamp）
+          // 强制转成 number，后端直接拒绝：
+          //   The value type of parameter `StaticConfig.CosTimestamp` is not valid,
+          //   input type should be `string`
+          // 本地路径不受影响，是因为 cosTs 来自 SDK uploadCode() 的 string 返回值、不经 zod。
+          // 因此这里收 string | number，统一归一成 string 后再透传。
+          .union([z.string(), z.number()])
+          .transform((value) => String(value).trim())
+          .refine((value) => /^[1-9]\d*$/.test(value), {
+            message:
+              "cosTimestamp 必须是由数字组成的正整数时间戳，字符串或数字均可；直接使用 getUploadUrl 返回的 unixTimestamp 即可。",
+          })
+          .optional()
+          .describe("apps.schema.cosTimestamp"),
+        appPath: z
+          .string()
+          .optional()
+          .describe("apps.schema.appPath"),
+        buildPath: z
+          .string()
+          .optional()
+          .describe("apps.schema.buildPath"),
+        framework: z
+          .enum(APP_FRAMEWORKS)
+          .optional()
+          .describe("apps.schema.framework"),
+        nodeJsVersion: z
+          .string()
+          .optional()
+          .describe("apps.schema.nodeJsVersion"),
+        installCmd: z
+          .string()
+          .optional()
+          .describe("apps.schema.installCmd"),
+        buildCmd: z
+          .string()
+          .optional()
+          .describe("apps.schema.buildCmd"),
+        deployCmd: z
+          .string()
+          .optional()
+          .describe("apps.schema.deployCmd"),
+        ignore: z.array(z.string()).optional().describe("apps.schema.ignore"),
+        versionName: z
+          .string()
+          .optional()
+          .describe("apps.schema.manageVersionName"),
+      },
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: false,
+        openWorldHint: false,
+        category: "apps",
+      },
+    },
+    async ({
+      action,
+      serviceName,
+      filePath,
+      cosTimestamp,
+      appPath,
+      buildPath,
+      framework,
+      nodeJsVersion,
+      installCmd,
+      buildCmd,
+      deployCmd,
+      ignore,
+      versionName,
+    }: {
+      action: ManageAppAction;
+      serviceName: string;
+      filePath?: string;
+      /** schema 已归一成 string；此处放宽为 string | number 以兼容直接调用 handler 的内部/测试路径。 */
+      cosTimestamp?: string | number;
+      appPath?: string;
+      buildPath?: string;
+      framework?: string;
+      nodeJsVersion?: string;
+      installCmd?: string;
+      buildCmd?: string;
+      deployCmd?: string;
+      ignore?: string[];
+      versionName?: string;
+    }) => {
+      try {
+        const cloudbase = await getManager();
+        const appService = getCloudAppService(cloudbase);
+        if (!appService) {
+          throw new Error(t("apps.noCloudAppService"));
+        }
+
+        // 默认排除的大目录（2026-08-14 实证：ato 项目 target/ 54GB 被整个打进 zip）
+        // tcb app deploy 打包的是项目根目录（localPath）而非 outputDir，必须排除构建产物
+        const defaultPackIgnore = [
+          "node_modules/**",
+          ".git/**",
+          ".DS_Store",
+          "**/.DS_Store",
+          "**/target/**",
+          "**/.next/**",
+          "**/.next.bak/**",
+        ];
+
+        // getUploadUrl — 获取预签名上传 URL（cloud mode 专用）
+        if (action === "getUploadUrl") {
+          if (!serviceName) {
+            throw new Error(t("apps.uploadServiceNameRequired"));
+          }
+          const cosInfoResult = await appService.describeCosInfo({
+            deployType: "static-hosting",
+            serviceName,
+          });
+          // 只记录 RequestId：UploadUrl / UploadHeaders 含预签名凭据（Authorization），不能进日志
+          logCloudBaseResult(server.logger, { RequestId: cosInfoResult.RequestId });
+
+          const defaultIgnore = defaultPackIgnore;
+          // eslint-disable-next-line max-len
+          const zipCmd = "zip -r upload.zip . -x 'node_modules/**' -x '.git/**' -x '.DS_Store' -x '**/.DS_Store' -x '**/target/**' -x '**/.next/**' -x '**/.next.bak/**'";
+          const followupArgs: Record<string, unknown> = {
+            action: "deployApp",
+            serviceName,
+            cosTimestamp: cosInfoResult.UnixTimestamp,
+          };
+
+          return jsonContent(
+            buildEnvelope(
+              {
+                action,
+                serviceName,
+                uploadUrl: cosInfoResult.UploadUrl,
+                uploadHeaders: cosInfoResult.UploadHeaders,
+                cosTimestamp: cosInfoResult.UnixTimestamp,
+                method: "PUT",
+                ignore: defaultIgnore,
+                zipCommand: zipCmd,
+                nextAction: {
+                  action: t("apps.nextActionUploadTitle"),
+                  hint: t("apps.nextActionUploadHint"),
+                  details: [
+                    t("apps.packDetail", { cmd: zipCmd }),
+                    t("apps.uploadDetail", { url: cosInfoResult.UploadUrl }),
+                    t("apps.deployDetail", {
+                      serviceName,
+                      cosTimestamp: cosInfoResult.UnixTimestamp,
+                    }),
+                  ],
+                  followup: {
+                    tool: "manageApps",
+                    args: followupArgs,
+                  },
+                },
+              },
+              t("apps.getUploadUrlShort"),
+            ),
+          );
+        }
+
+        if (action === "deployApp") {
+          // Per-action cloud gate: never read caller-controlled local paths in cloud mode.
+          // Upload channel: getUploadUrl → agent HTTP PUT zip → deployApp(cosTimestamp).
+          if (isCloudMode()) {
+            // 云端模式保持 #984 语义：带 localPath 一律拒绝（即使同时传了 cosTimestamp）；
+            // 仅「不带 localPath 且带 cosTimestamp」的路径放行。
+            if (filePath) {
+              return jsonContent(buildCloudModeUnsupportedDeployEnvelope(serviceName, "localPath"));
+            }
+            if (!cosTimestamp) {
+              return jsonContent(buildCloudModeUnsupportedDeployEnvelope(serviceName, "missingCosTimestamp"));
+            }
+          } else {
+            // 本地模式：filePath 与 cosTimestamp 严格二选一，都传或都不传都报错
+            if (filePath && cosTimestamp) {
+              throw new Error(t("apps.bothPathAndTimestamp"));
+            }
+            if (!filePath && !cosTimestamp) {
+              throw new Error(t("apps.pathOrTimestampRequired"));
+            }
+          }
+
+          // Local stdio only: pack directory and upload. Cloud mode must never reach uploadCode.
+          // ⚠️ 类型契约（F12）：SDK `StaticConfig.CosTimestamp` 与后端 CreateCloudApp 都要求
+          // **string**。本地路径拿到的 `uploadResult.cosTimestamp` 本就是 SDK 给的 string；
+          // 外部传入的可能是 number（MCP 客户端按 JSON Schema 传数字），这里统一归一。
+          let cosTs = cosTimestamp === undefined ? undefined : String(cosTimestamp);
+          if (!isCloudMode() && filePath) {
+            // Default excludes large build dirs (empirically target/ can be tens of GB).
+            // Merge caller ignore with defaults so explicit ignore does not drop safety excludes.
+            const mergedIgnore = Array.from(new Set([
+              ...defaultPackIgnore,
+              ...(ignore ?? []),
+            ]));
+            const uploadResult = await appService.uploadCode({
+              deployType: "static-hosting",
+              serviceName,
+              localPath: filePath,
+              ignore: mergedIgnore,
+            });
+            logCloudBaseResult(server.logger, uploadResult);
+            cosTs = uploadResult.cosTimestamp === undefined
+              ? undefined
+              : String(uploadResult.cosTimestamp);
+          }
+
+          // 构建命令智能默认值
+          const resolvedInstallCmd = installCmd ?? "npm install";
+          const resolvedBuildCmd = buildCmd ?? "npm run build";
+          const resolvedDeployPath = appPath || "/";
+          const resolvedBuildPath = buildPath || "";
+          // ⚠️ 远端构建系统在有 buildPath 时 cd 到此目录再执行 tcb hosting deploy
+          // 部署命令用 "." 避免 dist/dist 重复。framework=static 无构建步骤，用根目录
+          const resolvedDeployCmd = deployCmd || (
+            resolvedBuildPath || framework === "static"
+              ? `tcb hosting deploy . ${resolvedDeployPath}`
+              : `tcb hosting deploy dist ${resolvedDeployPath}`);
+
+          // 触发远端构建
+          const result = await appService.createApp({
+            deployType: "static-hosting",
+            serviceName,
+            buildType: "ZIP",
+            staticConfig: {
+              appPath: resolvedDeployPath,
+              buildPath: resolvedBuildPath,
+              framework,
+              nodeJsVersion,
+              cosTimestamp: cosTs,
+              staticCmd: {
+                installCmd: resolvedInstallCmd,
+                buildCmd: resolvedBuildCmd,
+                deployCmd: resolvedDeployCmd,
+              },
+            },
+          });
+          logCloudBaseResult(server.logger, result);
+
+          const { BuildId, VersionName } = result;
+          let appInfo: Record<string, unknown> | undefined;
+          let domain: string | undefined;
+          let accessUrl: string | undefined;
+          let accessUrls: string[] = [];
+          let accessUrlSource: string | undefined;
+          let accessUrlLookupWarning: string | undefined;
+          try {
+            appInfo = await appService.describeAppInfo({
+              deployType: "static-hosting",
+              serviceName,
+            });
+            logCloudBaseResult(server.logger, appInfo);
+            ({ domain, accessUrl } = normalizeAccessUrlFromDomain(appInfo?.Domain));
+            const envId = await getEnvId(cloudBaseOptions);
+            const gateway = await resolveGatewayAccessUrls({
+              envId,
+              upstreamResourceName: serviceName,
+              upstreamResourceTypes: ["STATIC_STORE"],
+              getManager: async () => {
+                const manager = await getManager();
+                if (!manager) {
+                  throw new Error(t("apps.managerUnavailable"));
+                }
+                return manager as any;
+              },
+            });
+            const preferred = preferGatewayOrFallback({
+              gateway,
+              fallbackUrl: accessUrl,
+              fallbackSource: "describeAppInfo.Domain",
+            });
+            accessUrl = preferred.accessUrl;
+            accessUrls = preferred.accessUrls;
+            accessUrlSource = preferred.accessUrlSource;
+          } catch (error) {
+            accessUrlLookupWarning = error instanceof Error ? error.message : String(error);
+            if (accessUrl) {
+              accessUrls = [accessUrl];
+              accessUrlSource = "describeAppInfo.Domain";
+            }
+          }
+
+          return jsonContent(
+            buildEnvelope(
+              {
+                action,
+                serviceName,
+                versionName: VersionName,
+                buildId: BuildId,
+                domain,
+                accessUrl,
+                accessUrls: accessUrls.length > 0 ? accessUrls : undefined,
+                accessUrlSource,
+                accessUrlLookupWarning,
+                app: appInfo,
+                upload: { cosTimestamp: cosTs },
+                deployment: result,
+                buildConfig: {
+                  installCmd: resolvedInstallCmd,
+                  buildCmd: resolvedBuildCmd,
+                  deployCmd: resolvedDeployCmd,
+                },
+                nextStep: {
+                  action: t("apps.nextStepPollTitle"),
+                  tool: "queryApps",
+                  args: {
+                    action: "getAppVersion",
+                    serviceName,
+                    buildId: BuildId,
+                  },
+                  hint: accessUrl
+                    ? t("apps.deployHintWithUrl", {
+                        serviceName,
+                        buildId: BuildId,
+                        accessUrl,
+                      })
+                    : t("apps.deployHintNoUrl", { serviceName, buildId: BuildId }),
+                },
+              },
+              accessUrl
+                ? t("apps.deploySuccessWithUrl")
+                : t("apps.deploySuccessNoUrl"),
+            ),
+          );
+        }
+
+        if (action === "deleteApp") {
+          const result = await appService.deleteApp({
+            deployType: "static-hosting",
+            serviceName,
+          });
+          logCloudBaseResult(server.logger, result);
+          return jsonContent(
+            buildEnvelope(
+              {
+                action,
+                serviceName,
+                raw: result,
+              },
+              t("apps.deleteSuccess"),
+            ),
+          );
+        }
+
+        if (!versionName) {
+          throw new Error(t("apps.versionNameRequired"));
+        }
+        const result = await appService.deleteAppVersion({
+          deployType: "static-hosting",
+          serviceName,
+          versionName,
+        });
+        logCloudBaseResult(server.logger, result);
+        return jsonContent(
+          buildEnvelope(
+            {
+              action,
+              serviceName,
+              versionName,
+              raw: result,
+            },
+            t("apps.deleteVersionSuccess"),
+          ),
+        );
+      } catch (error) {
+        return jsonContent(buildErrorEnvelope(error));
+      }
+    },
+  );
+}

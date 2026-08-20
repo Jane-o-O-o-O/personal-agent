@@ -1,0 +1,1304 @@
+import { z } from "zod";
+import { ExtendedMcpServer } from "../server.js";
+import {
+  CloudApiRequestFn,
+  MsgPushAction,
+  MsgPushQbaseResponse,
+} from "../types.js";
+import { buildJsonToolResult } from "../utils/tool-result.js";
+import { t } from "../i18n/index.js";
+
+const CATEGORY = "消息推送";
+
+/** 消息推送 qbase CGI 对应的 Cloud API service 名（宿主按后端契约确认） */
+const MSG_PUSH_SERVICE = "qbase";
+/** 消息推送 Cloud API version（宿主按后端契约确认） */
+const MSG_PUSH_VERSION = "2018-06-08";
+
+/**
+ * 虚拟支付默认事件集合。
+ * manageMessagePush(action=subscribe) 未传 event_types 时默认订阅这 7 个事件。
+ */
+export const XPAY_EVENT_TYPES = [
+  "xpay_goods_deliver_notify",
+  "xpay_coin_pay_notify",
+  "xpay_complaint_notify",
+  "xpay_subscribe_signing_result_notify",
+  "xpay_subscribe_pay_fail_notify",
+  "xpay_subscribe_ios_refund_query_notify",
+  "xpay_refund_notify",
+] as const;
+
+/** 配置不存在的业务码（getappconfig 返回该码时视为空配置） */
+const RET_CONFIG_NOT_EXISTS = 80209;
+/**
+ * uploadappconfig version 乐观锁冲突业务码（实测：用旧 version 覆盖写返回 ret=80208）。
+ * Prefer structured ret over errmsg regex; regex remains a fallback.
+ */
+const RET_VERSION_CONFLICT = 80208;
+/** 消息推送条目类型（虚拟支付回调等事件均为 event） */
+const MSG_TYPE_EVENT = "event";
+/**
+ * manageMessagePush 可操作的消息类型。
+ * - event：事件类（需 event_types；event 字段为具体事件名）
+ * - text/image/voice/video/miniprogrampage：消息类型条目（event 固定空串 ""）
+ */
+export const MSG_TYPES = [
+  "event",
+  "text",
+  "image",
+  "voice",
+  "video",
+  "miniprogrampage",
+] as const;
+export type MsgType = (typeof MSG_TYPES)[number];
+/** Empty event field for non-event message-type callback entries */
+const EMPTY_EVENT = "";
+
+/** 单条消息推送回调配置（对应 uploadappconfig.config.callbacks 条目） */
+export interface CallbackEntry {
+  msgType: string;
+  event: string;
+  env: string;
+  functionName: string;
+  enable?: boolean;
+}
+
+/** getappconfig 解析后的消息推送配置状态 */
+export interface CallbackConfigState {
+  version: number;
+  enable: boolean;
+  list: CallbackEntry[];
+}
+
+/** getcallbacksupportlist 返回的合法事件约束 */
+export interface SupportedEventConstraint {
+  msgType: string;
+  event?: string;
+}
+
+/** 消息推送 merge 结果（声明式期望集合，对齐 kubectl apply 幂等语义） */
+export interface MergeResult {
+  list: CallbackEntry[];
+  changed: boolean;
+  added: string[];
+  rebound: string[];
+  removed: string[];
+  matched: string[];
+}
+
+/** qbase CGI 业务错误（code 为 ret 或内部错误码） */
+export class QbaseError extends Error {
+  code: number | string;
+  constructor(code: number | string, message: string) {
+    super(message);
+    this.name = "QbaseError";
+    this.code = code;
+  }
+}
+
+function canonicalEntry(entry: CallbackEntry): string {
+  return JSON.stringify([
+    entry.msgType,
+    entry.event,
+    entry.env,
+    entry.functionName,
+    entry.enable ?? false,
+  ]);
+}
+
+function sameCallbackList(a: CallbackEntry[], b: CallbackEntry[]): boolean {
+  if (a.length !== b.length) return false;
+  const sortedA = a.map(canonicalEntry).sort();
+  const sortedB = b.map(canonicalEntry).sort();
+  return sortedA.every((v, i) => v === sortedB[i]);
+}
+
+/**
+ * subscribe 幂等 merge：对每个目标事件，
+ * - 已存在完全相同 (msgType, event, env, functionName) 的条目 → 保留原条目（含 enable，幂等）
+ * - 该事件已绑定到其他云函数 → 移除旧条目并重绑到目标函数（一事一函数）；重绑保留原 enable
+ * - 全新事件条目 → 默认 enable=true
+ * 未变化时 changed=false，调用方跳过 POST。
+ */
+export function mergeSubscribeList(
+  current: CallbackEntry[],
+  targets: string[],
+  envId: string,
+  functionName: string,
+  msgType = MSG_TYPE_EVENT,
+): MergeResult {
+  const uniqueTargets = [...new Set(targets)];
+  const kept: CallbackEntry[] = [];
+  const keptEvents = new Set<string>();
+  const rebound: string[] = [];
+  /** enable to preserve when rebinding an existing event onto a different function */
+  const reboundEnableByEvent = new Map<string, boolean>();
+
+  for (const entry of current) {
+    if (entry.msgType === msgType && uniqueTargets.includes(entry.event)) {
+      if (entry.env === envId && entry.functionName === functionName) {
+        if (keptEvents.has(entry.event)) {
+          continue; // 防御：同事件重复条目只保留一条
+        }
+        keptEvents.add(entry.event);
+        kept.push(entry);
+      } else {
+        rebound.push(entry.event);
+        if (!reboundEnableByEvent.has(entry.event)) {
+          reboundEnableByEvent.set(entry.event, entry.enable ?? false);
+        }
+      }
+    } else {
+      kept.push(entry);
+    }
+  }
+
+  const added: string[] = [];
+  for (const target of uniqueTargets) {
+    const exists = kept.some(
+      (e) =>
+        e.msgType === msgType &&
+        e.event === target &&
+        e.env === envId &&
+        e.functionName === functionName,
+    );
+    if (!exists) {
+      // Rebound keeps prior enable; brand-new events default to enabled
+      const enable = reboundEnableByEvent.has(target)
+        ? reboundEnableByEvent.get(target)!
+        : true;
+      kept.push({ msgType, event: target, env: envId, functionName, enable });
+      added.push(target);
+    }
+  }
+
+  return {
+    list: kept,
+    changed: !sameCallbackList(current, kept),
+    added,
+    rebound: [...new Set(rebound)],
+    removed: [],
+    matched: [],
+  };
+}
+
+/**
+ * unsubscribe merge：仅移除匹配 (msgType, event, env, functionName) 的条目，
+ * 其他配置全部保留；无匹配条目时 changed=false（幂等 no-op）。
+ */
+export function mergeUnsubscribeList(
+  current: CallbackEntry[],
+  targets: string[],
+  envId: string,
+  functionName: string,
+  msgType = MSG_TYPE_EVENT,
+): MergeResult {
+  const uniqueTargets = new Set(targets);
+  const removed: string[] = [];
+  const list = current.filter((entry) => {
+    if (
+      entry.msgType === msgType &&
+      uniqueTargets.has(entry.event) &&
+      entry.env === envId &&
+      entry.functionName === functionName
+    ) {
+      removed.push(entry.event);
+      return false;
+    }
+    return true;
+  });
+
+  return {
+    list,
+    changed: !sameCallbackList(current, list),
+    added: [],
+    rebound: [],
+    removed: [...new Set(removed)],
+    matched: [],
+  };
+}
+
+/**
+ * setEnable merge：翻转匹配条目的 enable 字段；无匹配条目或值未变化时 changed=false。
+ */
+export function mergeSetEnableList(
+  current: CallbackEntry[],
+  targets: string[],
+  envId: string,
+  functionName: string,
+  enable: boolean,
+  msgType = MSG_TYPE_EVENT,
+): MergeResult {
+  const uniqueTargets = new Set(targets);
+  const matched: string[] = [];
+  const list = current.map((entry) => {
+    if (
+      entry.msgType === msgType &&
+      uniqueTargets.has(entry.event) &&
+      entry.env === envId &&
+      entry.functionName === functionName
+    ) {
+      matched.push(entry.event);
+      if ((entry.enable ?? false) === enable) return entry;
+      return { ...entry, enable };
+    }
+    return entry;
+  });
+
+  return {
+    list,
+    changed: !sameCallbackList(current, list),
+    added: [],
+    rebound: [],
+    removed: [],
+    matched: [...new Set(matched)],
+  };
+}
+
+function getTransport(server: ExtendedMcpServer): CloudApiRequestFn | undefined {
+  return server.cloudBaseOptions?.requestFn;
+}
+
+function parseConfigString(config: unknown): { enable: boolean; callbacks: CallbackEntry[] } {
+  if (typeof config !== "string" || !config) {
+    throw new QbaseError("PARSE_ERROR", t("msgPush.configEmptyOrInvalid"));
+  }
+  try {
+    const parsed = JSON.parse(config);
+    return {
+      enable: parsed?.enable !== false,
+      callbacks: Array.isArray(parsed?.callbacks) ? parsed.callbacks : [],
+    };
+  } catch (e) {
+    throw new QbaseError(
+      "PARSE_ERROR",
+      t("msgPush.configParseFailed", {
+        message: e instanceof Error ? e.message : String(e),
+      }),
+    );
+  }
+}
+
+/**
+ * 经现有 CloudApiRequestFn（cloudBaseOptions.requestFn）领域语义调用 qbase CGI。
+ * 与 databaseNoSQL/functions 完全一致：包内只表达 service/action/payload，不感知 URL；
+ * 由宿主（微信 IDE）注入的 requestFn 负责路由到 wxa-dev-qbase/apihttpagent 并附加登录态。
+ */
+async function callQbase(
+  server: ExtendedMcpServer,
+  appid: string,
+  action: MsgPushAction,
+  payload: Record<string, unknown>,
+): Promise<MsgPushQbaseResponse> {
+  const requestFn = getTransport(server);
+  if (!requestFn) {
+    throw new QbaseError(
+      "TRANSPORT_UNAVAILABLE",
+      t("msgPush.transportNotInjected"),
+    );
+  }
+  const service = server.pluginOptions?.msgPush?.service ?? MSG_PUSH_SERVICE;
+  try {
+    // Pass appid as a top-level optional field so hosts can select the correct
+    // WeChat login session in multi-appid scenarios (additive, non-breaking).
+    const result = await requestFn({
+      service,
+      action,
+      version: MSG_PUSH_VERSION,
+      region: "",
+      payload,
+      appid,
+    });
+    return (result ?? {}) as MsgPushQbaseResponse;
+  } catch (e) {
+    throw new QbaseError(
+      "TRANSPORT_ERROR",
+      t("msgPush.qbaseRequestFailed", {
+        service,
+        action,
+        message: e instanceof Error ? e.message : String(e),
+      }),
+    );
+  }
+}
+
+/** 读取当前消息推送配置（乐观锁：version + 全量列表） */
+async function readCallbackConfig(
+  server: ExtendedMcpServer,
+  appid: string,
+): Promise<CallbackConfigState> {
+  const resp = await callQbase(server, appid, "getAppConfig", { type: 1 });
+  const ret = resp.base_resp?.ret;
+  if (ret !== undefined && ret !== 0) {
+    if (ret === RET_CONFIG_NOT_EXISTS) {
+      return { version: 0, enable: false, list: [] };
+    }
+    throw new QbaseError(
+      ret,
+      t("msgPush.getAppConfigFailed", {
+        ret,
+        errmsg: resp.base_resp?.errmsg ?? t("msgPush.unknownError"),
+      }),
+    );
+  }
+  const config = parseConfigString(resp.config);
+  return {
+    version: Number(resp.version ?? 0),
+    enable: config.enable,
+    list: config.callbacks,
+  };
+}
+
+/** 读取合法事件约束列表 */
+async function fetchSupportedEvents(
+  server: ExtendedMcpServer,
+  appid: string,
+): Promise<SupportedEventConstraint[]> {
+  const resp = await callQbase(server, appid, "getCallbackSupportList", {});
+  const ret = resp.base_resp?.ret;
+  if (ret !== undefined && ret !== 0) {
+    throw new QbaseError(
+      ret,
+      t("msgPush.getCallbackSupportListFailed", {
+        ret,
+        errmsg: resp.base_resp?.errmsg ?? t("msgPush.unknownError"),
+      }),
+    );
+  }
+  const raw = resp.data;
+  if (typeof raw === "string") {
+    try {
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed?.list) ? parsed.list : [];
+    } catch {
+      return [];
+    }
+  }
+  if (typeof raw === "object" && raw !== null && Array.isArray((raw as any).list)) {
+    return (raw as any).list;
+  }
+  return [];
+}
+
+/** 全量覆盖写入配置（带 version 乐观锁；冲突时抛 VERSION_CONFLICT） */
+async function uploadCallbackConfig(
+  server: ExtendedMcpServer,
+  appid: string,
+  state: CallbackConfigState,
+): Promise<void> {
+  const resp = await callQbase(server, appid, "uploadAppConfig", {
+    type: 1,
+    version: state.version,
+    config: JSON.stringify({ enable: state.enable, callbacks: state.list }),
+  });
+  const ret = resp.base_resp?.ret;
+  if (ret !== undefined && ret !== 0) {
+    const errmsg = resp.base_resp?.errmsg ?? "";
+    // Prefer structured ret (80208); fall back to errmsg regex for older/unknown backends
+    const isVersionConflict =
+      ret === RET_VERSION_CONFLICT || /version|版本|conflict|冲突/i.test(errmsg);
+    if (isVersionConflict) {
+      throw new QbaseError(
+        "VERSION_CONFLICT",
+        t("msgPush.versionConflict", {
+          ret,
+          localVersion: state.version,
+          errmsg: errmsg || "system error",
+        }),
+      );
+    }
+    throw new QbaseError(
+      ret,
+      t("msgPush.uploadAppConfigFailed", {
+        ret,
+        errmsg: errmsg || t("msgPush.unknownError"),
+      }),
+    );
+  }
+}
+
+interface ContainerCallbackConfig {
+  qbase_open?: boolean;
+  qbase_env?: string;
+  qbase_container_path?: string;
+  text_mode?: number;
+  [key: string]: unknown;
+}
+
+/** Push mode derived from getContainerCallbackConfig.qbase_open */
+export type MsgPushMode = "cloudfunction" | "container";
+
+export function resolvePushMode(
+  container: ContainerCallbackConfig | null | undefined,
+): MsgPushMode {
+  return container?.qbase_open === true ? "container" : "cloudfunction";
+}
+
+/** Public subset of container callback fields returned to agents */
+export function pickContainerConfigPublic(
+  container: ContainerCallbackConfig | null | undefined,
+): {
+  qbase_container_path?: string;
+  qbase_env?: string;
+  text_mode?: number;
+  qbase_open?: boolean;
+} | undefined {
+  if (!container) return undefined;
+  return {
+    qbase_open: container.qbase_open === true,
+    qbase_container_path:
+      typeof container.qbase_container_path === "string"
+        ? container.qbase_container_path
+        : undefined,
+    qbase_env:
+      typeof container.qbase_env === "string" ? container.qbase_env : undefined,
+    text_mode:
+      typeof container.text_mode === "number" ? container.text_mode : undefined,
+  };
+}
+
+/** 云托管模式提示：调用时经 t() 解析，避免模块加载期固定语言 */
+function containerModeBlockNote(): string {
+  return t("msgPush.containerModeBlockNote");
+}
+
+function containerModeWriteError(): string {
+  return t("msgPush.containerModeWriteError");
+}
+
+/** 读取云托管消息推送配置；无配置（云函数模式）返回 null */
+async function readContainerConfig(
+  server: ExtendedMcpServer,
+  appid: string,
+): Promise<ContainerCallbackConfig | null> {
+  const resp = await callQbase(server, appid, "getContainerCallbackConfig", {});
+  const ret = resp.base_resp?.ret;
+  if (ret !== undefined && ret !== 0) {
+    if (ret === RET_CONFIG_NOT_EXISTS) {
+      return null;
+    }
+    throw new QbaseError(
+      ret,
+      t("msgPush.getContainerConfigFailed", {
+        ret,
+        errmsg: resp.base_resp?.errmsg ?? t("msgPush.unknownError"),
+      }),
+    );
+  }
+  const { base_resp: _base, ...config } = resp;
+  return config as ContainerCallbackConfig;
+}
+
+async function setContainerConfig(
+  server: ExtendedMcpServer,
+  appid: string,
+  cfg: Record<string, unknown>,
+): Promise<void> {
+  const resp = await callQbase(server, appid, "setContainerCallbackConfig", cfg);
+  const ret = resp.base_resp?.ret;
+  if (ret !== undefined && ret !== 0) {
+    throw new QbaseError(
+      ret,
+      t("msgPush.setContainerConfigFailed", {
+        ret,
+        errmsg: resp.base_resp?.errmsg ?? t("msgPush.unknownError"),
+      }),
+    );
+  }
+}
+
+function buildContainerModeBlockedPayload(action: string) {
+  return buildJsonToolResult({
+    ok: false,
+    code: "CONTAINER_MODE_ACTIVE",
+    pushMode: "container" as const,
+    message: containerModeWriteError(),
+    next_step: {
+      tool: "manageMessagePush",
+      action: "ensureCloudFunctionMode",
+      required_params: ["appid", "env_id", "function_name", "confirm"],
+      hint: t("msgPush.containerModeSwitchHint", { action }),
+    },
+  });
+}
+
+/**
+ * Verify function_name exists in envId via optional host hook or CloudBase Manager list.
+ * Returns an error tool result when missing / unreadable; null when OK.
+ */
+async function assertCloudFunctionExists(
+  server: ExtendedMcpServer,
+  envId: string,
+  functionName: string,
+): Promise<ReturnType<typeof buildJsonToolResult> | null> {
+  const override = server.pluginOptions?.msgPush?.listCloudFunctions;
+  // 兼容性降级：host 未提供 listCloudFunctions hook（如微信 IDE 无腾讯云凭据）时
+  // 跳过存在性校验，保持原有 subscribe 行为（写配置不阻断）；仅 host 显式启用时校验。
+  if (!override) {
+    return null;
+  }
+  let names: string[];
+  try {
+    names = await override(envId);
+  } catch (e) {
+    // hook 本身失败（如网络/权限）时降级放行，不阻断订阅
+    return null;
+  }
+  if (!names.includes(functionName)) {
+    return buildJsonToolResult({
+      ok: false,
+      code: "FUNCTION_NOT_FOUND",
+      message: t("msgPush.functionNotFound", { functionName, envId }),
+      envId,
+      function_name: functionName,
+      next_step: {
+        tool: "manageFunctions",
+        action: "createFunction",
+        required_params: ["functionName"],
+      },
+    });
+  }
+  return null;
+}
+
+function buildTransportUnavailablePayload(toolName: string, action?: string) {
+  return buildJsonToolResult({
+    ok: false,
+    code: "MSG_PUSH_TRANSPORT_UNAVAILABLE",
+    message: t("msgPush.transportUnavailableMessage"),
+    next_step: {
+      tool: toolName,
+      action,
+      hint: t("msgPush.transportUnavailableHint"),
+    },
+  });
+}
+
+function buildConfirmPayload({
+  toolName,
+  action,
+  message,
+  requiredParams,
+}: {
+  toolName: string;
+  action: string;
+  message: string;
+  requiredParams: string[];
+}) {
+  return buildJsonToolResult({
+    ok: false,
+    code: "CONFIRM_REQUIRED",
+    message: t("msgPush.confirmInstruction", { message }),
+    confirmation_acknowledgement: {
+      text: t("msgPush.confirmAckText"),
+      required: true,
+    },
+    next_step: { tool: toolName, action, requiredParams },
+  });
+}
+
+function buildInvalidEventPayload(action: string, invalid: string[]) {
+  return buildJsonToolResult({
+    ok: false,
+    code: "INVALID_EVENT_TYPE",
+    message: t("msgPush.invalidEventMessage", {
+      action,
+      invalid: invalid.join(", "),
+    }),
+    invalid_events: invalid,
+    next_step: {
+      tool: "queryMessagePush",
+      action: "listSupportedEvents",
+      required_params: ["appid"],
+    },
+  });
+}
+
+function buildMergeDiffText(
+  action: string,
+  result: MergeResult,
+  envId: string,
+  functionName: string,
+): string {
+  const lines: string[] = [];
+  if (action === "subscribe") {
+    if (result.added.length) {
+      lines.push(
+        t("msgPush.diffAdded", {
+          envId,
+          functionName,
+          events: result.added.join(", "),
+        }),
+      );
+    }
+    if (result.rebound.length) {
+      lines.push(
+        t("msgPush.diffRebound", {
+          envId,
+          functionName,
+          events: result.rebound.join(", "),
+        }),
+      );
+    }
+  } else if (action === "unsubscribe") {
+    lines.push(
+      t("msgPush.diffRemoved", {
+        envId,
+        functionName,
+        events: result.removed.join(", "),
+      }),
+    );
+  } else if (action === "setEnable") {
+    lines.push(
+      (result.matched.length ? "" : t("msgPush.noMatchedEntries")) +
+        t("msgPush.diffSetEnable", {
+          envId,
+          functionName,
+          events: result.matched.join(", "),
+        }),
+    );
+  }
+  return lines.join("\n");
+}
+
+export function registerMsgPushTools(server: ExtendedMcpServer) {
+  const logger = server.logger;
+
+  // ─── queryMessagePush（只读）───────────────────────────────────────────────
+  server.registerTool?.(
+    "queryMessagePush",
+    {
+      title: "msgPush.queryTitle",
+      description: "msgPush.queryDescription",
+      inputSchema: {
+        appid: z
+          .string()
+          .describe("msgPush.schema.queryAppid"),
+        env: z.string().optional().describe("msgPush.schema.queryEnv"),
+        action: z
+          .enum(["list", "listSupportedEvents"])
+          .describe("msgPush.schema.queryAction"),
+      },
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        openWorldHint: false,
+        category: CATEGORY,
+      },
+    },
+    async ({ appid, env, action }: { appid: string; env?: string; action: string }) => {
+      if (!getTransport(server)) {
+        return buildTransportUnavailablePayload("queryMessagePush", action);
+      }
+      if (action === "list") {
+        const [state, containerRaw] = await Promise.all([
+          readCallbackConfig(server, appid),
+          // 兼容性降级：微信侧 apihttpagent 通道不支持 getcontainercallbackconfig
+          // （ret=-9991）时，容器配置读取失败不阻断 list（pushMode 默认 cloudfunction）
+          readContainerConfig(server, appid).catch((e) => {
+            console.warn(`[msg-push] 读取云托管容器配置失败，降级为云函数模式推断: ${e instanceof Error ? e.message : String(e)}`);
+            return null;
+          }),
+        ]);
+        const container = containerRaw;
+        const pushMode = resolvePushMode(container);
+        const callbacks = env
+          ? state.list.filter((c) => c.env === env)
+          : state.list;
+        return buildJsonToolResult({
+          ok: true,
+          success: true,
+          message: t("msgPush.queryListSuccess"),
+          version: state.version,
+          enable: state.enable,
+          pushMode,
+          containerConfig: pickContainerConfigPublic(container),
+          callbacks,
+          note: pushMode === "container" ? containerModeBlockNote() : undefined,
+          filteredByEnv: env ?? undefined,
+          next_steps:
+            pushMode === "container"
+              ? [
+                  t("msgPush.nextStepContainerRejected"),
+                  t("msgPush.nextStepEnsureCloudFunctionMode"),
+                  t("msgPush.nextStepSetContainerCallback"),
+                ]
+              : [
+                  t("msgPush.nextStepSubscribe"),
+                  t("msgPush.nextStepEnsureContainerMode"),
+                  t("msgPush.nextStepListSupportedEvents"),
+                ],
+        });
+      }
+      if (action === "listSupportedEvents") {
+        const constraints = await fetchSupportedEvents(server, appid);
+        const grouped: Array<{ msgType: string; events: string[] }> = [];
+        const byMsgType = new Map<string, string[]>();
+        for (const c of constraints) {
+          // Ensure every msgType appears (message types like text have empty event)
+          if (!byMsgType.has(c.msgType)) {
+            byMsgType.set(c.msgType, []);
+          }
+          if (c.event) {
+            byMsgType.get(c.msgType)!.push(c.event);
+          }
+        }
+        for (const [msgType, events] of byMsgType) {
+          grouped.push({ msgType, events });
+        }
+        const supportedSet = new Set(
+          constraints.filter((c) => c.event).map((c) => c.event),
+        );
+        const xpaySupported = XPAY_EVENT_TYPES.filter((e) => supportedSet.has(e));
+        const xpayMissing = XPAY_EVENT_TYPES.filter((e) => !supportedSet.has(e));
+        return buildJsonToolResult({
+          ok: true,
+          success: true,
+          message: t("msgPush.queryEventsSuccess"),
+          msgTypes: grouped,
+          totalEvents: supportedSet.size,
+          xpay_default_events: {
+            supported: xpaySupported,
+            missing: xpayMissing,
+            hint: xpayMissing.length
+              ? t("msgPush.xpayMissingHint")
+              : undefined,
+          },
+          hint: t("msgPush.listSupportedEventsHint"),
+        });
+      }
+      throw new Error(t("msgPush.unsupportedAction", { action }));
+    },
+  );
+
+  // ─── manageMessagePush（写，需确认）────────────────────────────────────────
+  server.registerTool?.(
+    "manageMessagePush",
+    {
+      title: "msgPush.manageTitle",
+      description: "msgPush.manageDescription",
+      inputSchema: {
+        appid: z
+          .string()
+          .describe("msgPush.schema.manageAppid"),
+        env_id: z
+          .string()
+          .describe("msgPush.schema.envId"),
+        function_name: z
+          .string()
+          .describe("msgPush.schema.functionName"),
+        action: z
+          .enum([
+            "subscribe",
+            "unsubscribe",
+            "setEnable",
+            "ensureCloudFunctionMode",
+            "ensureContainerMode",
+            "setContainerCallback",
+          ])
+          .describe("msgPush.schema.manageAction"),
+        msg_type: z
+          .enum(MSG_TYPES)
+          .optional()
+          .describe("msgPush.schema.msgType"),
+        event_types: z
+          .array(z.string())
+          .optional()
+          .describe("msgPush.schema.eventTypes"),
+        enable: z.boolean().optional().describe("msgPush.schema.enable"),
+        qbase_container_path: z
+          .string()
+          .optional()
+          .describe("msgPush.schema.containerPath"),
+        qbase_env: z
+          .string()
+          .optional()
+          .describe("msgPush.schema.containerEnv"),
+        text_mode: z
+          .union([z.literal(1), z.literal(2)])
+          .optional()
+          .describe("msgPush.schema.textMode"),
+        confirm: z
+          .string()
+          .optional()
+          .describe("msgPush.schema.confirm"),
+      },
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: true,
+        openWorldHint: false,
+        category: CATEGORY,
+      },
+    },
+    async ({
+      appid,
+      env_id,
+      function_name,
+      action,
+      msg_type,
+      event_types,
+      enable,
+      qbase_container_path,
+      qbase_env,
+      text_mode,
+      confirm,
+    }: {
+      appid: string;
+      env_id: string;
+      function_name: string;
+      action: string;
+      msg_type?: MsgType;
+      event_types?: string[];
+      enable?: boolean;
+      qbase_container_path?: string;
+      qbase_env?: string;
+      text_mode?: 1 | 2;
+      confirm?: string;
+    }) => {
+      if (!getTransport(server)) {
+        return buildTransportUnavailablePayload("manageMessagePush", action);
+      }
+      const confirmed = confirm === "yes";
+      const resolvedMsgType: MsgType = msg_type ?? MSG_TYPE_EVENT;
+      const isEventMsgType = resolvedMsgType === MSG_TYPE_EVENT;
+
+      if (action === "ensureCloudFunctionMode") {
+        const current = await readContainerConfig(server, appid);
+        if (!current || current.qbase_open === false) {
+          return buildJsonToolResult({
+            ok: true,
+            success: true,
+            code: "NO_CHANGE",
+            message: t("msgPush.alreadyCloudFunctionMode"),
+            pushMode: "cloudfunction",
+            containerConfig: pickContainerConfigPublic(current),
+          });
+        }
+        if (!confirmed) {
+          return buildConfirmPayload({
+            toolName: "manageMessagePush",
+            action,
+            message: t("msgPush.ensureCloudFunctionModeConfirm", {
+              env: current.qbase_env ?? "-",
+              path: current.qbase_container_path ?? "-",
+              textMode: current.text_mode ?? "-",
+            }),
+            requiredParams: ["appid", "env_id", "function_name", "confirm"],
+          });
+        }
+        await setContainerConfig(server, appid, {
+          ...current,
+          qbase_open: false,
+        });
+        logger?.({
+          type: "toolInfo",
+          toolName: "manageMessagePush",
+          message: "已切换到云函数推送模式",
+          appid,
+          envId: env_id,
+        });
+        return buildJsonToolResult({
+          ok: true,
+          success: true,
+          message: t("msgPush.switchedToCloudFunctionModeSuccess"),
+          action,
+          pushMode: "cloudfunction",
+        });
+      }
+
+      if (action === "ensureContainerMode") {
+        const path = qbase_container_path?.trim();
+        const containerEnv = (qbase_env ?? env_id)?.trim();
+        if (!path) {
+          throw new Error(t("msgPush.containerPathRequired"));
+        }
+        if (text_mode !== 1 && text_mode !== 2) {
+          throw new Error(t("msgPush.textModeRequired"));
+        }
+        if (!containerEnv) {
+          throw new Error(t("msgPush.containerEnvRequired"));
+        }
+        const current = await readContainerConfig(server, appid);
+        const alreadySame =
+          current?.qbase_open === true &&
+          current.qbase_container_path === path &&
+          current.qbase_env === containerEnv &&
+          Number(current.text_mode) === text_mode;
+        if (alreadySame) {
+          return buildJsonToolResult({
+            ok: true,
+            success: true,
+            code: "NO_CHANGE",
+            message: t("msgPush.alreadyContainerMode"),
+            pushMode: "container",
+            containerConfig: pickContainerConfigPublic(current),
+          });
+        }
+        if (!confirmed) {
+          return buildConfirmPayload({
+            toolName: "manageMessagePush",
+            action,
+            message: t("msgPush.ensureContainerModeConfirm", {
+              path,
+              env: containerEnv,
+              textMode: text_mode,
+              pushMode: resolvePushMode(current),
+              oldPath: current?.qbase_container_path ?? "-",
+              oldEnv: current?.qbase_env ?? "-",
+              oldTextMode: current?.text_mode ?? "-",
+            }),
+            requiredParams: [
+              "appid",
+              "env_id",
+              "qbase_container_path",
+              "text_mode",
+              "confirm",
+            ],
+          });
+        }
+        const nextCfg = {
+          ...(current ?? {}),
+          qbase_open: true,
+          qbase_container_path: path,
+          qbase_env: containerEnv,
+          text_mode,
+        };
+        await setContainerConfig(server, appid, nextCfg);
+        logger?.({
+          type: "toolInfo",
+          toolName: "manageMessagePush",
+          message: "已切换到云托管推送模式",
+          appid,
+          envId: containerEnv,
+        });
+        return buildJsonToolResult({
+          ok: true,
+          success: true,
+          message: t("msgPush.switchedToContainerModeSuccess"),
+          action,
+          pushMode: "container",
+          containerConfig: pickContainerConfigPublic(nextCfg),
+        });
+      }
+
+      if (action === "setContainerCallback") {
+        const current = await readContainerConfig(server, appid);
+        const nextPath =
+          qbase_container_path?.trim() ||
+          (typeof current?.qbase_container_path === "string"
+            ? current.qbase_container_path
+            : undefined);
+        const nextEnv =
+          (qbase_env ?? env_id)?.trim() ||
+          (typeof current?.qbase_env === "string" ? current.qbase_env : undefined);
+        const nextTextMode =
+          text_mode === 1 || text_mode === 2
+            ? text_mode
+            : typeof current?.text_mode === "number"
+              ? (current.text_mode as 1 | 2)
+              : undefined;
+        if (!nextPath) {
+          throw new Error(t("msgPush.setCallbackPathRequired"));
+        }
+        if (!nextEnv) {
+          throw new Error(t("msgPush.setCallbackEnvRequired"));
+        }
+        if (nextTextMode !== 1 && nextTextMode !== 2) {
+          throw new Error(t("msgPush.setCallbackTextModeRequired"));
+        }
+        const nextCfg = {
+          ...(current ?? {}),
+          qbase_open: current?.qbase_open === true,
+          qbase_container_path: nextPath,
+          qbase_env: nextEnv,
+          text_mode: nextTextMode,
+        };
+        const same =
+          current?.qbase_container_path === nextPath &&
+          current?.qbase_env === nextEnv &&
+          Number(current?.text_mode) === nextTextMode &&
+          (current?.qbase_open === true) === (nextCfg.qbase_open === true);
+        if (same) {
+          return buildJsonToolResult({
+            ok: true,
+            success: true,
+            code: "NO_CHANGE",
+            message: t("msgPush.setCallbackNoChange"),
+            pushMode: resolvePushMode(current),
+            containerConfig: pickContainerConfigPublic(current),
+          });
+        }
+        if (!confirmed) {
+          const before = pickContainerConfigPublic(current) ?? {};
+          const after = pickContainerConfigPublic(nextCfg) ?? {};
+          return buildConfirmPayload({
+            toolName: "manageMessagePush",
+            action,
+            message: t("msgPush.setCallbackConfirm", {
+              oldPath: before.qbase_container_path ?? "-",
+              oldEnv: before.qbase_env ?? "-",
+              oldTextMode: before.text_mode ?? "-",
+              oldOpen: String(before.qbase_open ?? false),
+              newPath: after.qbase_container_path ?? "-",
+              newEnv: after.qbase_env ?? "-",
+              newTextMode: after.text_mode ?? "-",
+              newOpen: String(after.qbase_open ?? false),
+            }),
+            requiredParams: ["appid", "confirm"],
+          });
+        }
+        await setContainerConfig(server, appid, nextCfg);
+        return buildJsonToolResult({
+          ok: true,
+          success: true,
+          message: t("msgPush.setCallbackSuccess"),
+          action,
+          pushMode: resolvePushMode(nextCfg),
+          before: pickContainerConfigPublic(current),
+          after: pickContainerConfigPublic(nextCfg),
+        });
+      }
+
+      // Message-type entries use a fixed empty event; event_types must not be supplied
+      if (!isEventMsgType && event_types && event_types.length > 0) {
+        throw new Error(
+          t("msgPush.msgTypeNoEventTypes", { msgType: resolvedMsgType }),
+        );
+      }
+
+      // Reject cloud-function callback writes while container mode is active (silent-failure guard)
+      {
+        const container = await readContainerConfig(server, appid);
+        if (resolvePushMode(container) === "container") {
+          return buildContainerModeBlockedPayload(action);
+        }
+      }
+
+      // subscribe / unsubscribe / setEnable 共用流程：读 → 校验 → merge → 确认 → 覆盖写
+      let eventList: string[];
+      if (!isEventMsgType) {
+        // Non-event message types: single entry keyed by (msgType, event="")
+        eventList = [EMPTY_EVENT];
+      } else {
+        const targets = event_types ? [...new Set(event_types)] : undefined;
+        if (action === "subscribe" && !targets) {
+          // 缺省 = 虚拟支付默认事件集合
+        } else if (!targets || targets.length === 0) {
+          throw new Error(
+            t("msgPush.eventTypesRequired", { action }),
+          );
+        }
+        eventList = targets ?? [...XPAY_EVENT_TYPES];
+      }
+
+      // 1. 读当前配置（乐观锁基础：必须读全量再 merge，禁止用本地列表直接覆盖）
+      const state = await readCallbackConfig(server, appid);
+
+      // 2. 合法性校验
+      let warnings: string[] = [];
+      if (!isEventMsgType) {
+        // Validate msg_type exists in support list (message types have empty/missing event)
+        try {
+          const constraints = await fetchSupportedEvents(server, appid);
+          const supportedMsgTypes = new Set(constraints.map((c) => c.msgType));
+          if (!supportedMsgTypes.has(resolvedMsgType)) {
+            return buildJsonToolResult({
+              ok: false,
+              code: "INVALID_MSG_TYPE",
+              message: t("msgPush.invalidMsgType", { msgType: resolvedMsgType }),
+              next_step: { tool: "queryMessagePush", action: "listSupportedEvents" },
+            });
+          }
+        } catch {
+          // Constraint fetch failure does not block; server still validates on write
+        }
+      } else if (action === "subscribe" && event_types && event_types.length > 0) {
+        // 显式 event_types 时严格校验合法性（默认集合仅警告，服务端为准）
+        const constraints = await fetchSupportedEvents(server, appid);
+        const supported = new Set(
+          constraints.filter((c) => c.event).map((c) => c.event),
+        );
+        const invalid = eventList.filter((e) => !supported.has(e));
+        if (invalid.length > 0) {
+          return buildInvalidEventPayload(action, invalid);
+        }
+      } else if (action === "subscribe") {
+        try {
+          const constraints = await fetchSupportedEvents(server, appid);
+          const supported = new Set(
+            constraints.filter((c) => c.event).map((c) => c.event),
+          );
+          warnings = eventList.filter((e) => !supported.has(e));
+        } catch {
+          // 约束获取失败不阻塞默认订阅（服务端仍会校验）
+        }
+      }
+
+      // 3. merge（纯函数，幂等；透传 resolvedMsgType）
+      let result: MergeResult;
+      if (action === "subscribe") {
+        result = mergeSubscribeList(
+          state.list,
+          eventList,
+          env_id,
+          function_name,
+          resolvedMsgType,
+        );
+      } else if (action === "unsubscribe") {
+        result = mergeUnsubscribeList(
+          state.list,
+          eventList,
+          env_id,
+          function_name,
+          resolvedMsgType,
+        );
+      } else if (action === "setEnable") {
+        if (enable === undefined) {
+          throw new Error(t("msgPush.enableRequired"));
+        }
+        result = mergeSetEnableList(
+          state.list,
+          eventList,
+          env_id,
+          function_name,
+          enable,
+          resolvedMsgType,
+        );
+      } else {
+        throw new Error(t("msgPush.unsupportedAction", { action }));
+      }
+
+      const targetLabel = isEventMsgType
+        ? eventList.join(", ")
+        : `msg_type=${resolvedMsgType}`;
+
+      // 4. 集合无变化 → 幂等成功，不 POST（无需确认）
+      if (!result.changed) {
+        return buildJsonToolResult({
+          ok: true,
+          success: true,
+          code: "NO_CHANGE",
+          message:
+            action === "subscribe"
+              ? t("msgPush.noChangeSubscribe", {
+                  targetLabel,
+                  envId: env_id,
+                  functionName: function_name,
+                })
+              : action === "unsubscribe"
+                ? t("msgPush.noChangeUnsubscribe")
+                : t("msgPush.noChangeSetEnable"),
+          action,
+          msg_type: resolvedMsgType,
+          warnings: warnings.length ? warnings : undefined,
+        });
+      }
+
+      // 4b. subscribe：校验云函数真实存在（仅有变更时）
+      if (action === "subscribe") {
+        const missing = await assertCloudFunctionExists(
+          server,
+          env_id,
+          function_name,
+        );
+        if (missing) return missing;
+      }
+
+      // 5. 有变更 → 需确认
+      const diffText = buildMergeDiffText(action, result, env_id, function_name);
+      if (!confirmed) {
+        return buildConfirmPayload({
+          toolName: "manageMessagePush",
+          action,
+          message: t("msgPush.confirmPendingMessage", {
+            envId: env_id,
+            functionName: function_name,
+            msgType: resolvedMsgType,
+            version: state.version,
+            diff: diffText,
+          }),
+          requiredParams: ["appid", "env_id", "function_name", "confirm"],
+        });
+      }
+
+      // 6. 全量覆盖写（带 version 乐观锁）
+      try {
+        await uploadCallbackConfig(server, appid, {
+          version: state.version,
+          enable: action === "subscribe" ? true : state.enable,
+          list: result.list,
+        });
+      } catch (e) {
+        if (e instanceof QbaseError && e.code === "VERSION_CONFLICT") {
+          return buildJsonToolResult({
+            ok: false,
+            code: "VERSION_CONFLICT",
+            retryable: true,
+            message: e.message,
+            next_step: { tool: "queryMessagePush", action: "list" },
+          });
+        }
+        if (e instanceof QbaseError) {
+          return buildJsonToolResult({
+            ok: false,
+            code: "QBASE_ERROR",
+            retryable: true,
+            message: e.message,
+            next_step: {
+              tool: "queryMessagePush",
+              action: "list",
+              hint: t("msgPush.retryHint"),
+            },
+          });
+        }
+        throw e;
+      }
+
+      logger?.({
+        type: "toolInfo",
+        toolName: "manageMessagePush",
+        message: `${action} 成功`,
+        appid,
+        envId: env_id,
+        functionName: function_name,
+        msgType: resolvedMsgType,
+        events: eventList,
+      });
+
+      const changedText =
+        action === "subscribe"
+          ? [
+              result.added.length
+                ? t("msgPush.changedAdded", { count: result.added.length })
+                : null,
+              result.rebound.length
+                ? t("msgPush.changedRebound", { count: result.rebound.length })
+                : null,
+            ]
+              .filter(Boolean)
+              .join(t("msgPush.changedJoiner"))
+          : action === "unsubscribe"
+            ? t("msgPush.changedRemoved", { count: result.removed.length })
+            : t("msgPush.changedUpdated", { count: result.matched.length });
+      return buildJsonToolResult({
+        ok: true,
+        success: true,
+        message: t("msgPush.actionSuccess", {
+          action,
+          changedText,
+          version: state.version,
+        }),
+        action,
+        msg_type: resolvedMsgType,
+        added: result.added,
+        rebound: result.rebound,
+        removed: result.removed,
+        matched: result.matched,
+        warnings: warnings.length ? warnings : undefined,
+        callbacks: result.list,
+      });
+    },
+  );
+}

@@ -1,0 +1,653 @@
+#!/usr/bin/env node
+
+import fs from "fs";
+import path from "path";
+import { execFileSync } from "child_process";
+import { fileURLToPath } from "url";
+
+const __filename = fileURLToPath(import.meta.url);
+const AUTO_CHANGELOG_LIMIT = 5;
+const DEFAULT_API_BASE = "https://api.skillhub.cn";
+
+function parseArgs(argv) {
+  let manifestPath = "";
+  let dryRun = false;
+  let changelog = "";
+  let bump = "minor";
+  let apiBase = DEFAULT_API_BASE;
+
+  for (let index = 0; index < argv.length; index += 1) {
+    const arg = argv[index];
+
+    if (arg === "--manifest") {
+      manifestPath = path.resolve(argv[index + 1] || "");
+      index += 1;
+      continue;
+    }
+
+    if (arg === "--dry-run") {
+      dryRun = true;
+      continue;
+    }
+
+    if (arg === "--changelog") {
+      changelog = argv[index + 1] || "";
+      index += 1;
+      continue;
+    }
+
+    if (arg === "--bump") {
+      bump = argv[index + 1] || bump;
+      index += 1;
+      continue;
+    }
+
+    if (arg === "--api-base") {
+      apiBase = argv[index + 1] || apiBase;
+      index += 1;
+      continue;
+    }
+  }
+
+  if (!manifestPath) {
+    throw new Error("缺少必填参数 --manifest / Missing required --manifest argument");
+  }
+
+  if (!["patch", "minor", "major"].includes(bump)) {
+    throw new Error(
+      `不支持的 bump 类型 / Unsupported bump type: ${bump}. Allowed: patch, minor, major`,
+    );
+  }
+
+  return { manifestPath, dryRun, changelog, bump, apiBase };
+}
+
+function readManifest(manifestPath) {
+  if (!fs.existsSync(manifestPath)) {
+    throw new Error(`未找到 manifest 文件 / Manifest file not found: ${manifestPath}`);
+  }
+  return JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+}
+
+function resolveGitRoot(manifestPath) {
+  try {
+    return execFileSync("git", ["rev-parse", "--show-toplevel"], {
+      cwd: path.dirname(manifestPath),
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+  } catch {
+    return process.cwd();
+  }
+}
+
+function getRecentCommitLines(gitRoot) {
+  try {
+    const output = execFileSync(
+      "git",
+      ["log", `-${AUTO_CHANGELOG_LIMIT}`, "--pretty=format:- %s"],
+      {
+        cwd: gitRoot,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+      },
+    ).trim();
+    return output;
+  } catch {
+    return "";
+  }
+}
+
+function buildChangelogText(manualChangelog, gitRoot) {
+  const normalizedManual = (manualChangelog || "").trim();
+  const recentCommits = getRecentCommitLines(gitRoot);
+
+  if (normalizedManual && recentCommits) {
+    return `${normalizedManual}\n\nRecent commits / 最近提交:\n${recentCommits}`;
+  }
+  if (normalizedManual) {
+    return normalizedManual;
+  }
+  if (recentCommits) {
+    return `Recent commits / 最近提交:\n${recentCommits}`;
+  }
+  return "";
+}
+
+function parseSemver(versionStr) {
+  const match = (versionStr || "").match(/^(\d+)\.(\d+)\.(\d+)/);
+  if (!match) return null;
+  return {
+    major: parseInt(match[1], 10),
+    minor: parseInt(match[2], 10),
+    patch: parseInt(match[3], 10),
+  };
+}
+
+/** Parse X.Y.Z or X.Y.Z-beta.N */
+function parseSemverFull(versionStr) {
+  const match = (versionStr || "").match(/^(\d+)\.(\d+)\.(\d+)(?:-beta\.(\d+))?$/);
+  if (!match) return null;
+  return {
+    major: parseInt(match[1], 10),
+    minor: parseInt(match[2], 10),
+    patch: parseInt(match[3], 10),
+    beta: match[4] !== undefined ? parseInt(match[4], 10) : null,
+  };
+}
+
+/** @returns {number} negative if a<b, 0 if equal, positive if a>b (release > beta of same X.Y.Z) */
+function compareSemverFull(a, b) {
+  const pa = parseSemverFull(a);
+  const pb = parseSemverFull(b);
+  if (!pa && !pb) return 0;
+  if (!pa) return -1;
+  if (!pb) return 1;
+  if (pa.major !== pb.major) return pa.major - pb.major;
+  if (pa.minor !== pb.minor) return pa.minor - pb.minor;
+  if (pa.patch !== pb.patch) return pa.patch - pb.patch;
+  if (pa.beta === null && pb.beta === null) return 0;
+  if (pa.beta === null) return 1;
+  if (pb.beta === null) return -1;
+  return pa.beta - pb.beta;
+}
+
+/** Next publishable version strictly after `highest` on SkillHub */
+function nextVersionAfter(highest) {
+  const p = parseSemverFull(highest);
+  if (!p) return null;
+  // SkillHub rejects same-patch beta bumps (e.g. 2.24.2-beta.1 → 2.24.2-beta.2 with
+  // "版本号必须高于当前最新版本"). Always advance the patch line.
+  return `${p.major}.${p.minor}.${p.patch + 1}-beta.1`;
+}
+
+function pickHighestVersion(versions) {
+  const valid = (versions || []).filter((v) => parseSemverFull(v));
+  if (valid.length === 0) return null;
+  return valid.sort(compareSemverFull)[valid.length - 1];
+}
+
+/**
+ * Choose SkillHub upload version:
+ * - If local SKILL.md version is strictly newer than everything on SkillHub → publish local
+ * - Otherwise → skip (do not invent betas for unchanged skills; SkillHub rejects lower/non-monotonic versions)
+ */
+export function resolvePublishVersion(currentVersion, skillHubVersionStrings) {
+  const highest = pickHighestVersion(skillHubVersionStrings);
+  if (!highest) {
+    return {
+      action: "publish",
+      version: currentVersion,
+      reason: "SkillHub empty, use local SKILL.md",
+    };
+  }
+  if (currentVersion && compareSemverFull(currentVersion, highest) > 0) {
+    return {
+      action: "publish",
+      version: currentVersion,
+      reason: `local ${currentVersion} > SkillHub highest ${highest}`,
+    };
+  }
+  return {
+    action: "skip",
+    version: currentVersion,
+    reason: `local ${currentVersion || "(none)"} <= SkillHub highest ${highest}`,
+  };
+}
+
+/**
+ * Classify SkillHub upload failures so "already published" is idempotent success,
+ * while true monotonicity errors still bump-and-retry.
+ *
+ * SkillHub API errors are shaped as:
+ *   `SkillHub API error (STATUS): message`
+ */
+export function classifySkillhubUploadError(error) {
+  const text = String(error?.message || error || "");
+  const statusMatch = text.match(/SkillHub API error \((\d+)\)/i);
+  const status = statusMatch ? Number(statusMatch[1]) : null;
+  const body = statusMatch ? text.slice(statusMatch.index + statusMatch[0].length) : text;
+
+  // Exact version already on registry (concurrent publish / re-run) → success.
+  if (
+    /already exists|already published|duplicate version|版本(?:号)?已存在|版本已发布/.test(body) ||
+    (status === 409 && /exist|已存在|duplicate|冲突/.test(body))
+  ) {
+    return "already-published";
+  }
+
+  // Bare 409 with empty/opaque body: treat as already-published (idempotent).
+  if (status === 409) {
+    return "already-published";
+  }
+
+  // Must publish a strictly higher version.
+  if (
+    /must be higher|必须高于|version (?:is )?too low|版本号必须|not higher|低于/.test(body) ||
+    (status === 400 && /version|版本/.test(body))
+  ) {
+    return "version-conflict-retry";
+  }
+
+  return "fatal";
+}
+
+export function isSkillhubAlreadyPublishedError(error) {
+  return classifySkillhubUploadError(error) === "already-published";
+}
+
+export function isSkillhubVersionConflictError(error) {
+  return classifySkillhubUploadError(error) === "version-conflict-retry";
+}
+
+function bumpSemver(versionStr, bumpType) {
+  const semver = parseSemver(versionStr);
+  if (!semver) {
+    // 如果解析失败，从 1.0.0 开始
+    return "1.0.0";
+  }
+
+  switch (bumpType) {
+    case "major":
+      return `${semver.major + 1}.0.0`;
+    case "minor":
+      return `${semver.major}.${semver.minor + 1}.0`;
+    case "patch":
+      return `${semver.major}.${semver.minor}.${semver.patch + 1}`;
+    default:
+      return `${semver.major}.${semver.minor + 1}.0`;
+  }
+}
+
+function readCurrentVersion(skillFile) {
+  const content = fs.readFileSync(skillFile, "utf8");
+  const versionMatch = content.match(/^version:\s*(.+)$/m);
+  return versionMatch ? versionMatch[1].trim() : null;
+}
+
+function parseFrontmatter(skillContent) {
+  const nameMatch = skillContent.match(/^name:\s*(.+)$/m);
+  const descriptionMatch = skillContent.match(/^description:\s*(.+)$/m);
+  return {
+    name: nameMatch ? nameMatch[1].trim() : "",
+    description: descriptionMatch ? descriptionMatch[1].trim() : "",
+  };
+}
+
+/**
+ * Pick SkillHub marketplace metadata for a target.
+ *
+ * SkillHub renders the displayName, summary, and iconUrl verbatim on the skill
+ * card. Curated values in `target` (e.g. set by clawhub-publish-targets.mjs)
+ * win over the raw SKILL.md frontmatter, which is English agent-trigger text
+ * not meant for human readers and uses the bare skill `name` slug.
+ */
+export function selectMarketplaceMetadata(target, frontmatter) {
+  const safeTarget = target || {};
+  const safeFrontmatter = frontmatter || {};
+  return {
+    displayName: safeTarget.displayName || safeFrontmatter.name || "",
+    summary: safeTarget.summary || safeFrontmatter.description || "",
+    iconUrl: safeTarget.iconUrl || "",
+  };
+}
+
+function collectFiles(dirPath, baseDir) {
+  const files = [];
+
+  function walk(currentDir) {
+    for (const entry of fs.readdirSync(currentDir, { withFileTypes: true })) {
+      const fullPath = path.join(currentDir, entry.name);
+      const relativePath = path.relative(baseDir, fullPath);
+
+      if (entry.isDirectory()) {
+        walk(fullPath);
+        continue;
+      }
+
+      if (entry.isFile()) {
+        files.push({
+          filePath: fullPath,
+          relativePath,
+        });
+      }
+    }
+  }
+
+  walk(dirPath);
+  return files;
+}
+
+async function uploadVersionToSkillhub({
+  apiBase,
+  orgId,
+  token,
+  slug,
+  version,
+  changelog,
+  displayName,
+  summary,
+  iconUrl,
+  files,
+}) {
+  const url = `${apiBase}/api/v1/orgs/${orgId}/skills/${slug}/versions`;
+
+  // 使用原生 FormData 构建 multipart/form-data，避免手动拼接的边界条件问题
+  const formData = new FormData();
+
+  // payload 作为 JSON 字符串字段
+  const payload = JSON.stringify({
+    version,
+    changelog: changelog || "",
+    displayName: displayName || undefined,
+    summary: summary || undefined,
+    iconUrl: iconUrl || undefined,
+    securityScan: false,
+  });
+  formData.append("payload", payload);
+
+  // 文件部分
+  for (const file of files) {
+    const fileContent = fs.readFileSync(file.filePath);
+    const blob = new Blob([fileContent], { type: "application/octet-stream" });
+    formData.append("files", blob, file.relativePath);
+  }
+
+  // 发起请求（fetch 会自动设置 Content-Type 和 boundary）
+  // all-in-one 等大 skill 包含大量文件，需设置充足超时时间
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 120_000);
+
+  let response;
+  try {
+    response = await fetch(url, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+      body: formData,
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timeoutId);
+  }
+
+  const responseText = await response.text();
+
+  let responseJson;
+  try {
+    responseJson = JSON.parse(responseText);
+  } catch {
+    responseJson = null;
+  }
+
+  if (!response.ok) {
+    const errorMsg = responseJson?.error || responseText || response.statusText;
+    throw new Error(
+      `SkillHub API 返回错误 / SkillHub API error (${response.status}): ${errorMsg}`,
+    );
+  }
+
+  return responseJson;
+}
+
+export async function publishToSkillhub({
+  manifestPath,
+  dryRun = false,
+  changelog = "",
+  bump = "minor",
+  apiBase = DEFAULT_API_BASE,
+  uploadVersion = uploadVersionToSkillhub,
+  fetchImpl = (...args) => fetch(...args),
+}) {
+  const manifest = readManifest(manifestPath);
+  const gitRoot = resolveGitRoot(manifestPath);
+  const resolvedChangelog = buildChangelogText(changelog, gitRoot);
+
+  const orgId = process.env.SKILLHUB_ORG_ID;
+  const token = process.env.SKILLHUB_API_TOKEN;
+
+  if (!dryRun) {
+    if (!orgId) {
+      throw new Error("缺少环境变量 SKILLHUB_ORG_ID / SKILLHUB_ORG_ID is required for non-dry-run publishing");
+    }
+    if (!token) {
+      throw new Error("缺少环境变量 SKILLHUB_API_TOKEN / SKILLHUB_API_TOKEN is required for non-dry-run publishing");
+    }
+  }
+
+  const failures = [];
+  const results = [];
+
+  for (const target of manifest.targets || []) {
+    const slug = target.registrySlug;
+    const artifactDir = target.artifactDir;
+    const skillFile = path.join(artifactDir, "SKILL.md");
+
+    if (!fs.existsSync(skillFile)) {
+      failures.push({
+        targetKey: target.targetKey,
+        slug,
+        message: `在 ${artifactDir} 中缺少 SKILL.md`,
+      });
+      continue;
+    }
+
+    const skillContent = fs.readFileSync(skillFile, "utf8");
+    const metadata = parseFrontmatter(skillContent);
+    const currentVersion = readCurrentVersion(skillFile);
+
+    // SkillHub marketplace metadata comes from the curated manifest target first
+    // (displayName / summary / iconUrl) so each skill can show a proper Chinese
+    // product name, a short Tencent-docs-style description and the black-bg
+    // CloudBase logo, instead of the raw English agent-trigger description and
+    // raw SKILL.md `name` slug.
+    const { displayName, summary, iconUrl } = selectMarketplaceMetadata(target, metadata);
+
+    const files = collectFiles(artifactDir, artifactDir);
+
+    console.log(`[SkillHub] 准备发布 / Preparing: ${target.targetKey} (${slug})`);
+    console.log(`  Version: ${currentVersion || "(none)"}`);
+    console.log(`  DisplayName: ${displayName}`);
+    console.log(`  Summary: ${summary ? summary.slice(0, 80) + (summary.length > 80 ? "..." : "") : "(none)"}`);
+    console.log(`  IconUrl: ${iconUrl || "(none)"}`);
+    console.log(`  Files: ${files.length} file(s)`);
+
+    if (dryRun) {
+      results.push({
+        targetKey: target.targetKey,
+        slug,
+        version: currentVersion,
+        displayName,
+        summary,
+        iconUrl,
+        fileCount: files.length,
+        status: "dry-run",
+      });
+      continue;
+    }
+
+    // Query SkillHub versions to decide publish vs skip.
+    let version = currentVersion;
+    let retryCount = 0;
+    const maxRetries = 10;
+    let skillHubVersionStrings = [];
+    let shouldPublish = true;
+
+    try {
+      const versionsUrl = `${apiBase}/api/v1/orgs/${orgId}/skills/${slug}/versions`;
+      const versionsResponse = await fetchImpl(versionsUrl, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (versionsResponse.ok) {
+        const versionsData = await versionsResponse.json();
+        const skillHubVersions = versionsData?.versions || [];
+        skillHubVersionStrings = skillHubVersions.map((v) => v.version).filter(Boolean);
+        console.log(`  📋 SkillHub 版本历史 / Version history: [${skillHubVersionStrings.join(", ")}]`);
+
+        const picked = resolvePublishVersion(currentVersion, skillHubVersionStrings);
+        version = picked.version;
+        if (picked.action === "skip") {
+          shouldPublish = false;
+          console.log(`  ⏭ 跳过发布 / Skip publish: ${picked.reason}`);
+          results.push({
+            targetKey: target.targetKey,
+            slug,
+            version: currentVersion,
+            displayName,
+            summary,
+            iconUrl,
+            fileCount: files.length,
+            status: "skipped",
+            reason: picked.reason,
+          });
+        } else {
+          console.log(`  → 使用版本 / Using version: ${version} (${picked.reason})`);
+        }
+      }
+    } catch (fetchError) {
+      console.warn(`  ⚠ 版本历史查询失败 / Failed to query version history: ${fetchError instanceof Error ? fetchError.message : fetchError}`);
+      // Fall through and attempt SKILL.md version.
+    }
+
+    if (!shouldPublish) {
+      continue;
+    }
+
+    while (retryCount <= maxRetries) {
+      try {
+        const result = await uploadVersion({
+          apiBase,
+          orgId,
+          token,
+          slug,
+          version,
+          changelog: resolvedChangelog,
+          displayName,
+          summary,
+          iconUrl,
+          files,
+        });
+
+        console.log(`  ✓ Published version ${version} (versionId: ${result.versionId})`);
+
+        results.push({
+          targetKey: target.targetKey,
+          slug,
+          version,
+          displayName,
+          summary,
+          iconUrl,
+          fileCount: files.length,
+          versionId: result.versionId,
+          status: "published",
+        });
+        break;
+      } catch (error) {
+        const classification = classifySkillhubUploadError(error);
+
+        if (classification === "already-published") {
+          console.log(
+            `  ✓ 版本已存在，视为已发布 / Version already exists, treating as published: ${slug}@${version}`,
+          );
+          results.push({
+            targetKey: target.targetKey,
+            slug,
+            version,
+            displayName,
+            summary,
+            iconUrl,
+            fileCount: files.length,
+            status: "already-published",
+            reason: String(error.message || error),
+          });
+          break;
+        }
+
+        if (classification === "version-conflict-retry") {
+          retryCount++;
+          if (retryCount > maxRetries) {
+            console.warn(`  ⚠ 重试耗尽 / Max retries reached for ${target.targetKey} (${slug})`);
+            failures.push({
+              targetKey: target.targetKey,
+              slug,
+              message: `版本冲突重试 ${maxRetries} 次后仍失败 / version conflict after ${maxRetries} retries: ${error.message}`,
+            });
+            break;
+          }
+          // Conflict: fold the failed candidate into history, then take the next strictly higher version.
+          skillHubVersionStrings = [...skillHubVersionStrings, version];
+          const next = nextVersionAfter(pickHighestVersion(skillHubVersionStrings) || version);
+          version = next || `${currentVersion}-beta.${retryCount}`;
+          console.log(
+            `  ↻ 版本冲突 / Version conflict, retrying with ${version} (attempt ${retryCount}/${maxRetries}): ${error.message}`,
+          );
+          continue;
+        }
+
+        failures.push({
+          targetKey: target.targetKey,
+          slug,
+          message: error.message,
+        });
+        break;
+      }
+    }
+  }
+
+  if (failures.length > 0) {
+    for (const failure of failures) {
+      console.error(
+        `[SkillHub] 发布失败 / Failed to publish ${failure.targetKey} (${failure.slug}): ${failure.message}`,
+      );
+    }
+
+    const error = new Error(
+      `发布到 SkillHub 失败 / Failed to publish ${failures.length} target(s) to SkillHub`,
+    );
+    error.failures = failures;
+    throw error;
+  }
+
+  return results;
+}
+
+function main() {
+  const { manifestPath, dryRun, changelog, bump, apiBase } = parseArgs(
+    process.argv.slice(2),
+  );
+
+  // 因为是 async 主入口，用 IIFE
+  (async () => {
+    try {
+      const results = await publishToSkillhub({
+        manifestPath,
+        dryRun,
+        changelog,
+        bump,
+        apiBase,
+      });
+
+      for (const result of results) {
+        if (result.status === "published") {
+          console.log(`✓ ${result.targetKey} (${result.slug}): v${result.version} -> versionId=${result.versionId}`);
+        } else if (result.status === "already-published") {
+          console.log(`✓ ${result.targetKey} (${result.slug}): v${result.version} already-published (idempotent)`);
+        } else if (result.status === "skipped") {
+          console.log(`- ${result.targetKey} (${result.slug}): ${result.reason}`);
+        } else {
+          console.log(`- ${result.targetKey} (${result.slug}): dry-run (v${result.version}, ${result.fileCount} files)`);
+        }
+      }
+
+      console.log(`\n[SkillHub] 已完成 ${results.length} 个发布操作 / Completed ${results.length} publish operation(s).`);
+    } catch (error) {
+      console.error(error.message);
+      process.exit(1);
+    }
+  })();
+}
+
+if (process.argv[1] && path.resolve(process.argv[1]) === __filename) {
+  main();
+}

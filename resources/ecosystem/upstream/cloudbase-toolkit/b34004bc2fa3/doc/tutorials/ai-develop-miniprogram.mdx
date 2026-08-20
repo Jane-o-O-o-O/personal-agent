@@ -1,0 +1,97 @@
+---
+title: 用 AI 写微信小程序
+description: 开发时用 AI 写小程序、预览调试、部署云资源（微信开发者工具 Nightly Skills）
+keywords:
+  - 用 AI 开发小程序
+  - 开发者工具 Skills
+  - 微信开发者工具 Nightly
+  - CloudBase Skills
+  - 微信云开发
+---
+
+import IDESelector from '../components/IDESelector';
+
+# 用 AI 写微信小程序
+
+让 AI 帮你**写小程序、在模拟器里预览、配云数据库 / 云函数 / 云存储**。
+
+这和「小程序里给用户用的 AI 对话能力」不是一回事：本文是**你写代码时**怎么接 AI；产品能力请从 [AI 能力介绍](https://docs.cloudbase.net/ai/introduce) 进入。
+
+微信侧能力说明以官方为准：[开发者工具 Skills](https://developers.weixin.qq.com/miniprogram/dev/devtools/Skills.html)。
+
+## 开始前准备好 {#layers}
+
+1. **[微信开发者工具 Nightly](https://developers.weixin.qq.com/miniprogram/dev/devtools/nightly_backup.html)**  
+   这套 AI 能力在开发版（Nightly）里，稳定版往往没有。  
+   Nightly 只影响你本机开发体验，**不等于**小程序发版渠道变了；版本要求以微信 [Skills 文档](https://developers.weixin.qq.com/miniprogram/dev/devtools/Skills.html) 为准。装好后扫码登录，写代码时保持工具开着。
+
+2. **一个能对话写代码的 AI 工具**  
+   两条路任选（不要混着以为选完就全通了）：
+   - **路 A**：在开发者工具里用云开发 AI（下方选择器默认项）
+   - **路 B**：用 CodeBuddy、Cursor、Claude Code 等，再把开发者工具 Skill **导入**进去
+
+3. **真实的小程序 AppID**  
+   项目里的 `appid` 不能是空的，也不能是 `touristappid`，否则 AI 打不开项目窗口。
+
+4. **（建议）CloudBase 知识包**，让 AI 少写错云开发代码：
+
+```bash
+npx skills add tencentcloudbase/cloudbase-skills -y
+```
+
+<details>
+<summary>要不要装 CloudBase MCP？</summary>
+
+改权限、数据模型、MySQL/PostgreSQL 等进阶云操作时再装。见 [连接 CloudBase MCP](../getting-started)。
+
+</details>
+
+## 怎么接上 {#path}
+
+### 1. 安装并登录 Nightly
+
+打开 [Nightly 下载页](https://developers.weixin.qq.com/miniprogram/dev/devtools/nightly_backup.html)，安装、扫码登录，保持开发者工具运行。
+
+### 2. 选好你的 AI 工具
+
+<IDESelector
+  defaultIDE="wechat-devtools"
+  customPrompt="检查开发者工具是否已登录；然后用微信小程序 + 云开发做一个带登录和列表页的示例，并帮我预览"
+  collapsibleInstallSteps={true}
+/>
+
+### 3. 若走外部 Agent：导入开发者工具 Skill
+
+路 A（开发者工具内置 AI）做完第 2 步即可，跳到第 4 步。
+
+路 B（CodeBuddy / Cursor 等）还必须把 Skill 交给 Agent，否则它操作不了模拟器：
+
+1. 菜单栏 → **导出开发者工具 Skill** → 导入到你的 Agent（菜单名以微信当前版本为准）  
+2. 也可以在终端运行 `wechatide`，把输出的 Skill 路径交给 Agent  
+3. **第一次**连接时，开发者工具会弹窗要你授权该 Agent——必须点允许，否则后面全部失败
+
+### 4. 确认项目能打开
+
+根目录有 `project.config.json`，且 `appid` 是你账号下真实可用的 AppID。
+
+### 5. 跟 AI 说一句验收语
+
+> 检查开发者工具是否已登录，然后打开这个小程序并预览。
+
+能预览后，再提业务需求，例如：「做一个带登录和列表页的小程序，数据存云开发。」
+
+## 连不上时先查这些 {#troubleshoot}
+
+按顺序排除，多数卡在前三条：
+
+1. 装的是不是 Nightly，开发者工具是否已登录且窗口开着  
+2. 走外部 Agent 时：Skill 是否已导入；首次授权弹窗是否点了允许  
+3. `appid` 是否有效（不是空、不是 `touristappid`）  
+4. 仍不行：把报错原文发给 AI，或对照微信官方 [开发者工具 Skills](https://developers.weixin.qq.com/miniprogram/dev/devtools/Skills.html)
+
+## 接下来 {#links}
+
+- [微信小程序快速开始](https://docs.cloudbase.net/quick-start/frameworks/wechat-miniprogram)（工程与 `wx.cloud`）
+- [微信开发者工具配置](../ide-setup/wechat-devtools)（各 IDE 补充说明）
+- [miniprogram-development Skill](../prompts/miniprogram-development)
+- [连接 CloudBase MCP](../getting-started)（进阶）

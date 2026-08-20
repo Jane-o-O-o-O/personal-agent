@@ -1,0 +1,3870 @@
+import ParameterTable from '../../api-reference/components/ApiContainer';
+
+# MCP 工具
+
+当前包含 44 个工具，按功能分组如下。
+
+源数据: [tools.json](https://github.com/TencentCloudBase/CloudBase-AI-ToolKit/blob/main/scripts/tools.json)
+
+---
+
+## 工具总览
+
+### 认证与登录
+
+- [`auth`](#auth)
+
+### 环境管理
+
+- [`queryEnv`](#queryenv)
+- [`envDomainManagement`](#envdomainmanagement)
+
+### 其他
+
+- [`manageEnv`](#manageenv)
+- [`deployBuild`](#deploybuild)
+- [`deployPlan`](#deployplan)
+- [`deployApply`](#deployapply)
+- [`queryApps`](#queryapps)
+- [`manageApps`](#manageapps)
+- [`prepareFeedback`](#preparefeedback)
+
+### NoSQL 数据库
+
+- [`readNoSqlDatabaseStructure`](#readnosqldatabasestructure)
+- [`writeNoSqlDatabaseStructure`](#writenosqldatabasestructure)
+- [`readNoSqlDatabaseContent`](#readnosqldatabasecontent)
+- [`writeNoSqlDatabaseContent`](#writenosqldatabasecontent)
+
+### 数据模型
+
+- [`manageDataModel`](#managedatamodel)
+- [`modifyDataModel`](#modifydatamodel)
+
+### PostgreSQL 数据库
+
+- [`queryPgDatabase`](#querypgdatabase)
+- [`managePgDatabase`](#managepgdatabase)
+
+### PostgreSQL 云存储
+
+- [`queryPgStorage`](#querypgstorage)
+
+### MySQL 数据库
+
+- [`queryMysqlDatabase`](#querymysqldatabase)
+- [`manageMysqlDatabase`](#managemysqldatabase)
+
+### 云函数
+
+- [`queryFunctions`](#queryfunctions)
+- [`manageFunctions`](#managefunctions)
+
+### 静态托管
+
+- [`queryHosting`](#queryhosting)
+- [`manageHosting`](#managehosting)
+
+### 云存储
+
+- [`queryStorage`](#querystorage)
+- [`manageStorage`](#managestorage)
+
+### 模板与文件
+
+- [`downloadTemplate`](#downloadtemplate)
+
+### 搜索与知识库
+
+- [`searchKnowledgeBase`](#searchknowledgebase)
+
+### 云托管
+
+- [`queryCloudRun`](#querycloudrun)
+- [`manageCloudRun`](#managecloudrun)
+
+### 网关
+
+- [`queryGateway`](#querygateway)
+- [`manageGateway`](#managegateway)
+
+### 应用认证
+
+- [`queryAppAuth`](#queryappauth)
+- [`manageAppAuth`](#manageappauth)
+
+### 权限管理
+
+- [`queryPermissions`](#querypermissions)
+- [`managePermissions`](#managepermissions)
+
+### 日志
+
+- [`queryLogs`](#querylogs)
+- [`manageLogs`](#managelogs)
+
+### AI Agent
+
+- [`queryAgents`](#queryagents)
+- [`manageAgents`](#manageagents)
+
+### 云 API
+
+- [`callCloudApi`](#callcloudapi)
+
+### 消息推送
+
+- [`queryMessagePush`](#querymessagepush)
+- [`manageMessagePush`](#managemessagepush)
+
+---
+
+## 云端 MCP 配置说明
+
+
+### 环境变量配置
+
+使用云端 MCP 需要配置以下环境变量：
+
+| 环境变量 | 说明 | 获取方式 |
+|---------|------|---------|
+| `TENCENTCLOUD_SECRETID` | 腾讯云 SecretId | [获取腾讯云 API 密钥](https://console.cloud.tencent.com/cam/capi) |
+| `TENCENTCLOUD_SECRETKEY` | 腾讯云 SecretKey | [获取腾讯云 API 密钥](https://console.cloud.tencent.com/cam/capi) |
+| `TENCENTCLOUD_SESSIONTOKEN` | 非必填，腾讯云临时密钥 Token（可选） | 仅在使用临时密钥时需要，可通过 [STS 服务](https://console.cloud.tencent.com/cam/capi) 获取 |
+| `CLOUDBASE_ENV_ID` | 云开发环境 ID | [获取云开发环境 ID](https://tcb.cloud.tencent.com/dev) |
+
+## 详细规格
+
+### `auth`
+CloudBase（腾讯云开发）开发阶段登录与环境绑定。登录后即可访问云资源；环境(env)是云函数、数据库、静态托管等资源的隔离单元，绑定环境后其他 MCP 工具才能操作该环境。支持：查询状态、发起登录、API Key登录、绑定环境(set_env)、退出登录。auth(status) 会返回 credential_scope（account=账号级 / single_env=环境级 API Key）与当前 region；环境级 API Key 只能看到绑定的 envId，查不到其他地域环境是权限边界而非环境不存在。可选 site/region/lang 参数：site=站点(domestic/intl)，region=地域，lang=输出语言(zh/en)。
+
+#### 参数
+
+<ParameterTable
+  parameters={[
+    {
+      name: "action",
+      type: "string",
+      description: `动作：status=查询状态，start_auth=发起登录，login_by_api_key=API Key登录，set_env=绑定环境(传envId)，logout=退出登录 可填写的值: "status", "start_auth", "set_env", "logout", "get_temp_credentials", "login_by_api_key"`,
+    },
+    {
+      name: "authMode",
+      type: "string",
+      description: `认证模式：device=设备码授权，web=浏览器回调授权 可填写的值: "device", "web"`,
+    },
+    {
+      name: "oauthEndpoint",
+      type: "string",
+      description: `高级可选：自定义 device-code 登录 endpoint。配置后 oauthCustom 默认按 true 处理`,
+    },
+    {
+      name: "clientId",
+      type: "string",
+      description: `高级可选：自定义 device-code 登录 client_id，不传则使用默认值`,
+    },
+    {
+      name: "oauthCustom",
+      type: "boolean",
+      description: `高级可选：自定义 endpoint 返回格式开关。未配置 endpoint 时默认 false；配置 endpoint 后默认 true。标准 {code,result} 包装格式的端点（如国际站 tcb-api.tencentcloud.com）应显式传 false`,
+    },
+    {
+      name: "site",
+      type: "string",
+      description: `站点：domestic=国内站，intl=国际站。环境开通在腾讯云国际站时，登录（start_auth/login_by_api_key）需显式传 intl，否则会走国内站链路、看不到国际站环境；调用级显式传入优先于 TCB_SITE 环境变量 / region 映射表 / 项目配置，影响登录端点、授权页与 API Key 换取网关 可填写的值: "domestic", "intl"`,
+    },
+    {
+      name: "envId",
+      type: "string",
+      description: `环境ID(CloudBase 环境唯一标识)，绑定后工具将操作该环境。action=set_env 时必填`,
+    },
+    {
+      name: "region",
+      type: "string",
+      description: `地域（如 ap-shanghai / ap-guangzhou / ap-singapore）。用于 region→site 推断与 API Key 换取网关选择；显式 site 优先`,
+    },
+    {
+      name: "lang",
+      type: "string",
+      description: `输出语言：zh=中文（默认），en=英文。覆盖实例级语言（createCloudBaseMcpServer lang 选项 / TCB_LANG / project.json） 可填写的值: "zh", "en"`,
+    },
+    {
+      name: "apiKey",
+      type: "string",
+      description: `CloudBase API Key，action=login_by_api_key 时必填`,
+    },
+    {
+      name: "apiKeyEnvId",
+      type: "string",
+      description: `CloudBase 环境ID(EnvId)，action=login_by_api_key 时必填，用于指定 API Key 所属环境`,
+    },
+    {
+      name: "confirm",
+      type: "string",
+      description: `action=logout 时确认操作，传 yes 可填写的值: const "yes"`,
+    },
+    {
+      name: "reveal",
+      type: "boolean",
+      description: `action=get_temp_credentials 时可选。true=返回明文临时密钥；默认 false 仅返回脱敏结果`,
+    }
+  ]}
+/>
+
+---
+
+### `queryEnv`
+查询 CloudBase 环境相关信息，支持查询环境列表、指定环境详情、安全域名、资源用量与监控指标。（曾用名：envQuery、listEnvs、getEnvInfo、getEnvAuthDomains）当 action=list 时，会按 DescribeEnvs 语义做列表/筛选，标准返回字段为 EnvId、Alias、Status、EnvType、Region、PackageId、PackageName、IsDefault，并支持通过 fields 白名单裁剪这些字段；aliasExact=true 时会按别名精确筛选，避免把前缀相近的环境误当作候选；即使传入 envId，action=list 也只返回摘要，不会返回完整资源明细或 expiry。账号级登录可传 region（ap-shanghai/ap-guangzhou/ap-singapore）查询对应地域，对齐 CLI `tcb env list -r &lt;region&gt;`；环境级凭证（API Key / 托管授权 token）只能看到绑定的 envId，返回 credential_scope=single_env，此时 region 不参与查询会在 ignored_params 中如实说明（AppliedFilters.region 为 null），不要误判为环境不存在或地域过滤失效。如需查询某个已知 EnvId 对应环境的详细信息（包括资源字段和计费信息），必须使用 action=info 并传入目标环境的 envId 参数。action=info 会在可用时补充 BillingInfo（如 ExpireTime、PayMode、IsAutoRenew 等计费字段）。
+
+📊 action=usage 对齐 tcb env usage/info：透传 Manager SDK describeEnvAccountCircle + describeCreditsUsageDetail，返回计费周期与各模块资源点用量（FLEXDB/SCF/COS 等）。envId 必填；type 可选过滤模块；未传 startDate/endDate 时自动使用当前计费周期。
+
+📈 action=metrics 对齐 TCB DescribeCurveData（manager.monitor.describeCurveData，不是云监控 GetMonitorData）：查询环境/网关 QPS、云函数调用与错误、数据库 CPU/内存/磁盘、云托管 CPU/QPS 等时序。envId 与 metricName 必填；startTime/endTime 格式 YYYY-MM-DD HH:mm:ss，须成对传入，不传则默认最近 24 小时；period 仅 300/3600/86400。GatewayTraceEnvQPS 未传 resourceID 时自动填环境级 all|:|all|:|all|:|all；云托管 Tke* 指标必须传服务名 resourceID。禁止用 callCloudApi 猜测监控 Action。
+
+🔍 action=info 还会派生三个用于后端选型的字段：
+- `EnvInfo.RuntimeMode`：'postgresql' 或 'nosql'，表示新业务建议默认使用的后端（PG 已开通时为 postgresql，否则为 nosql）。
+- `EnvInfo.RuntimeBackends`：`\{postgresql, nosql, mysql\}` 三个布尔值，描述当前环境实际并存的后端。
+- `EnvInfo.RuntimeModeHints`：每个后端对应的 API/工具/skill 提示。
+
+🌐 action=info 还会在不改写 `StaticStorages[].StaticDomain`（云 API 名义域名）的前提下，投影网关路由 Enable 状态：`StaticStorages[].staticDomainRouteEnabled` 与 `EnvInfo.staticDomainRouteEnabled`（与 queryHosting websiteConfig 同源）。`false` 表示默认静态域名根路由已禁用（访问会返回 GATEWAY_ROUTE_DISABLED），勿把名义域名当成可达 URL。
+
+AI 在写业务/权限/存储代码前必须先看这三项：PG 模式下新业务推荐 `app.rdb()` + RLS（`managePgDatabase action=execute` 跑 `CREATE POLICY`）+ pgstore；已存在的 NoSQL 集合 / 旧 storage / `managePermissions(resourceType="noSqlDatabase")` 在 PG 环境下仍然有效。真正不适用的是 MySQL：当 `RuntimeBackends.mysql === false` 时，`manageMysqlDatabase` / `queryMysqlDatabase` / `relational-database-mcp-cloudbase` skill 都不该使用。
+
+#### 参数
+
+<ParameterTable
+  parameters={[
+    {
+      name: "action",
+      type: "string",
+      required: true,
+      description: `查询类型：list=环境列表/摘要筛选（按 DescribeEnvs 语义筛选，支持通过 envId / region 筛选，返回 EnvId、Alias、Status、EnvType、Region、PackageId、PackageName、IsDefault，不支持 expiry），info=指定环境的详细信息（必须传入 envId，返回资源字段和计费信息），domains=安全域名列表，usage=环境资源用量（必须传入 envId，对齐 tcb env usage/info），metrics=环境监控时序（必须传入 envId 与 metricName，对齐 TCB DescribeCurveData） 可填写的值: "list", "info", "domains", "usage", "metrics"`,
+    },
+    {
+      name: "alias",
+      type: "string",
+      description: `按环境别名筛选。action=list 时可选`,
+    },
+    {
+      name: "aliasExact",
+      type: "boolean",
+      description: `按环境别名精确筛选。action=list 时可选；与 alias 配合使用`,
+    },
+    {
+      name: "envId",
+      type: "string",
+      description: `环境 ID。action=list 时可选（仅按 DescribeEnvs 语义做筛选，仍返回摘要）；action=info / action=usage / action=metrics 时必填；action=domains 时可选（不传则查当前绑定环境，传了则查该环境的安全域名）。`,
+    },
+    {
+      name: "region",
+      type: "string",
+      description: `查询地域。仅 action=list 时有效。账号级凭据会把该值透传到 DescribeEnvs（X-TC-Region），例如 ap-singapore。等价 CLI：tcb env list -r <region> --json。环境级凭据（API Key / 托管授权 token）为单环境权限，该参数会被忽略：结果恒为绑定环境，响应的 AppliedFilters.region 为 null、query_region 取该环境自身的 Region、ignored_params 说明忽略原因——不要据此判定该地域没有环境。⚠️ ap-singapore 同时属于国内站与国际站，未显式指定站点时会被判定为国际站（site=intl）：若两站都登录过，传该地域会静默查国际站账号，请先用 auth(site="domestic") 或设置 TCB_SITE=domestic 明确站点。 可填写的值: "ap-shanghai", "ap-guangzhou", "ap-singapore"`,
+    },
+    {
+      name: "limit",
+      type: "integer",
+      description: `返回数量上限。action=list 时可选`,
+    },
+    {
+      name: "offset",
+      type: "integer",
+      description: `分页偏移。action=list 时可选`,
+    },
+    {
+      name: "fields",
+      type: "array of string",
+      description: `返回字段白名单。仅支持 EnvId、Alias、Status、EnvType、Region、PackageId、PackageName、IsDefault。action=list 时可选`,
+    },
+    {
+      name: "type",
+      type: "array of string",
+      description: `用量模块过滤。仅 action=usage 时有效；不传则查询全部模块。可选值对齐 tcb CLI：FLEXDB、TDSQL、SCF、EKS、COS、AI、HOSTING、Auth、APIInvocation、HTTPInvocation、VM、Workflow、Other。`,
+    },
+    {
+      name: "startDate",
+      type: "string",
+      description: `用量开始日期（YYYY-MM-DD）。仅 action=usage 时有效；与 endDate 成对传入。不传则使用当前计费周期。`,
+    },
+    {
+      name: "endDate",
+      type: "string",
+      description: `用量结束日期（YYYY-MM-DD）。仅 action=usage 时有效；与 startDate 成对传入。不传则使用当前计费周期。`,
+    },
+    {
+      name: "needUsageDetails",
+      type: "boolean",
+      description: `是否返回每日用量明细。仅 action=usage 时有效；默认 true。`,
+    },
+    {
+      name: "metricName",
+      type: "string",
+      description: `监控指标名。仅 action=metrics 时有效且必填。GatewayTraceEnvQPS/EnvQPSAll=环境与网关 QPS；FunctionInvocation/FunctionError/FunctionTimeout/FunctionThrottle=云函数调用、错误、超时、限流；DbRead/DbWrite/DbSizepkg=文档库读写与容量；MysqlCpuUsageRate/MysqlMemoryUse/MysqlStorageUsage=SQL 库 CPU/内存/磁盘；TkeCpuUsedService/TkeQPSService/TkeHttpErrorService=云托管 CPU/QPS/错误。 可填写的值: "GatewayTraceEnvQPS", "EnvQPSAll", "FunctionInvocation", "FunctionError", "FunctionTimeout", "FunctionThrottle", "FunctionDuration", "FunctionConcurrentExecutions", "DbRead", "DbWrite", "DbSizepkg", "MysqlCpuUsageRate", "MysqlMemoryUse", "MysqlStorageUsage", "MysqlQps", "MysqlSlowQueries", "MysqlDbConnections", "TkeCpuUsedService", "TkeMemUsedService", "TkeQPSService", "TkeHttpErrorService", "TkeInvokeNumService"`,
+    },
+    {
+      name: "startTime",
+      type: "string",
+      description: `监控开始时间（YYYY-MM-DD HH:mm:ss）。仅 action=metrics 时有效；与 endTime 成对传入。不传则默认最近 24 小时。结束时间须晚于开始时间至少五分钟。`,
+    },
+    {
+      name: "endTime",
+      type: "string",
+      description: `监控结束时间（YYYY-MM-DD HH:mm:ss）。仅 action=metrics 时有效；与 startTime 成对传入。不传则默认最近 24 小时。`,
+    },
+    {
+      name: "period",
+      type: "number",
+      description: `统计周期（秒）。仅 action=metrics 时有效；仅支持 300、3600、86400。不传则由后端按时间范围自动选择。时间范围 ≤1 天不可用 86400；>3 天不可用 300。 可填写的值: 300, 3600, 86400`,
+    },
+    {
+      name: "resourceID",
+      type: "string",
+      description: `资源 ID。仅 action=metrics 时有效。云函数传函数名，文档库传集合名，云托管必须传服务名；GatewayTraceEnvQPS 不传则使用环境级 all|:|all|:|all|:|all。`,
+    },
+    {
+      name: "subresourceID",
+      type: "string",
+      description: `子资源 ID。仅 action=metrics 时有效；查询云托管某版本监控时传入版本名。`,
+    }
+  ]}
+/>
+
+---
+
+### `envDomainManagement`
+⚠️ DEPRECATED：此工具已废弃并收编进 manageEnv，请改用 manageEnv(action="addSecurityDomain") / manageEnv(action="removeSecurityDomain")（入参 domains 完全一致）。本别名将在下个版本移除。
+
+管理【环境安全域名】＝浏览器跨域（CORS）白名单：控制允许哪些网页 origin（host:port）从浏览器直接调用本环境的 CloudBase 资源。只做 CORS 来源验证，不提供访问域名，不涉及 HTTPS 证书。⚠️ 与【网关自定义域名】是两套完全独立的配置，互不相干：如需给自己的域名绑定 HTTPS 访问入口（云托管 / 网关服务），那属于 manageGateway 的职责——先 queryGateway(listCustomDomains)；已有域名则 manageGateway(createRoute) 显式传 domain（无需证书）；仅首次绑定新域名才用 bindCustomDomain（需 certificateId）。不要用本工具做这件事。
+
+操作指引：（原工具名 createEnvDomain/deleteEnvDomain，为兼容旧 AI 规则可继续使用这些名称）当浏览器 Web 应用需要从本地 Vite / dev server 直接访问 CloudBase 资源时，先用 queryEnv(action=domains) 检查当前实际浏览器 origin 对应的 host:port 是否已在白名单中，再按该实际值添加。新增或删除后请每约 10 秒轮询 queryEnv(action=domains) 确认状态收敛，勿一次 sleep 满 10 分钟；多数环境数分钟内可收敛。
+
+#### 参数
+
+<ParameterTable
+  parameters={[
+    {
+      name: "action",
+      type: "string",
+      required: true,
+      description: `操作类型：create=添加安全域名，delete=删除安全域名 可填写的值: "create", "delete"`,
+    },
+    {
+      name: "domains",
+      type: "array of string",
+      required: true,
+      description: `安全域名数组（格式：host:port，例如 localhost:5173 或 127.0.0.1:4173）。注意：不是自定义域名，不需要证书。`,
+    }
+  ]}
+/>
+
+---
+
+### `manageEnv`
+管理 CloudBase 环境，支持：listPackages=查询可选套餐列表，create=创建新环境（需确认），modifyPlan=变更套餐（升降配，需确认），renew=续费环境（需确认），addSecurityDomain=添加环境安全域名（浏览器 CORS 白名单，不计费、无需确认），removeSecurityDomain=删除环境安全域名（不计费、无需确认）。
+
+⚠️ 涉及费用的操作（create/modifyPlan/renew），执行前必须展示配置摘要并等待用户通过 confirm="yes" 确认；安全域名操作（addSecurityDomain/removeSecurityDomain）不计费，无需 confirm。
+
+ℹ️ 安全域名＝浏览器跨域（CORS）白名单，控制允许哪些网页 origin（host:port）从浏览器直接调用本环境的 CloudBase 资源，不提供访问域名、不涉及 HTTPS 证书。给自己的域名绑定 HTTPS 访问入口（云托管/网关服务）属于 manageGateway（listCustomDomains/bindCustomDomain）的职责，与本工具无关。
+
+#### 参数
+
+<ParameterTable
+  parameters={[
+    {
+      name: "action",
+      type: "string",
+      required: true,
+      description: `操作类型：listPackages=查询可选套餐，create=创建环境，modifyPlan=变更套餐，renew=续费，addSecurityDomain=添加安全域名（CORS 白名单条目），removeSecurityDomain=删除安全域名 可填写的值: "listPackages", "create", "modifyPlan", "renew", "addSecurityDomain", "removeSecurityDomain"`,
+    },
+    {
+      name: "domains",
+      type: "array of string",
+      description: `安全域名数组（格式：host:port，例如 localhost:5173 或 127.0.0.1:4173）。仅 action=addSecurityDomain/removeSecurityDomain 时有效且必填。注意：这是 CORS 白名单条目，不是自定义域名，不需要证书。添加前应先用 queryEnv(action=domains) 检查浏览器实际 origin 是否已在白名单中。`,
+    },
+    {
+      name: "alias",
+      type: "string",
+      description: `环境别名（action=create 时必填）。要求：小写字母/数字/减号，不能以减号开头或结尾，最长 20 位`,
+    },
+    {
+      name: "packageId",
+      type: "string",
+      description: `套餐 ID（action=create/modifyPlan 时必填）。可选值如 baas_personal(个人版)、baas_pf_standard(标准版)、baas_pf_enterprise(企业版)`,
+    },
+    {
+      name: "resources",
+      type: "array of string",
+      description: `启用的资源类型（action=create 时可选）。可选值：storage(存储)、function(云函数)、postgresql(PostgreSQL)，省略时默认全部三项。CreateEnv 要求 Resources 非空，MCP 会始终下发该字段。不再包含 flexdb(文档数据库)：新建环境不会创建 NoSQL 实例，其可用性以 queryEnv(action="info") 返回的 EnvInfo.RuntimeBackends 为准。`,
+    },
+    {
+      name: "duration",
+      type: "integer",
+      description: `购买或续费时长（月），action=create/renew 时可选，默认 1`,
+    },
+    {
+      name: "externalStorage",
+      type: "object",
+      description: `云存储共享桶配置（action=create 时可选）。传入该对象表示该环境不再自动分配独立 COS 桶，而是使用指定桶作为云存储介质，通过 basePath 与同桶其他环境隔离；仅作用于云存储，静态托管的存储桶由平台在开通托管时分配。三个字段必须完整传入。⚠️ 与 region 同理：二次调用（confirm="yes"）只读本次参数，漏传会创建出使用独立桶的环境且不报错。`,
+      children: [
+        {
+          name: "bucketName",
+          type: "string",
+          required: true,
+          description: `共享桶名称（COS 桶名）`,
+        },
+        {
+          name: "region",
+          type: "string",
+          required: true,
+          description: `共享桶所属地域，例如 ap-shanghai`,
+        },
+        {
+          name: "basePath",
+          type: "string",
+          required: true,
+          description: `基础路径前缀，在同一共享桶内需唯一，用于与同桶其他环境隔离`,
+        }
+      ],
+    },
+    {
+      name: "region",
+      type: "string",
+      description: `创建地域（仅 action=create 时有效）。按 X-TC-Region 语义透传，决定新环境所在地域；等价 CLI：tcb env create --region ap-shanghai。不传则用当前会话地域（cloudBaseOptions.region → TCB_REGION → 项目配置 / rc 绑定 → 站点默认地域：国内站 ap-shanghai、国际站 ap-singapore）。注意：region 不写进 CreateEnv 请求体，而是通过请求层地域上下文生效——这与「请勿把 Region 放进 params」的 callCloudApi 约定一致。⚠️ ap-singapore 同时属于国内站与国际站，未显式指定站点时会被判定为国际站（site=intl）；如需在国内站该地域创建，请先 auth(site="domestic") 或设置 TCB_SITE=domestic。 可填写的值: "ap-shanghai", "ap-guangzhou", "ap-singapore"`,
+    },
+    {
+      name: "envId",
+      type: "string",
+      description: `环境 ID（action=modifyPlan/renew 时必填）`,
+    },
+    {
+      name: "confirm",
+      type: "string",
+      description: `确认操作。所有付费操作（create/modifyPlan/renew）必须传 "yes" 确认 可填写的值: const "yes"`,
+    }
+  ]}
+/>
+
+---
+
+### `readNoSqlDatabaseStructure`
+读取 CloudBase NoSQL 数据库集合与索引结构，支持列出集合、查看集合详情、列出索引以及检查索引是否存在。本工具为服务端管理工具，用于管理端查询数据库结构，不用于编写客户端代码。
+
+#### 参数
+
+<ParameterTable
+  parameters={[
+    {
+      name: "action",
+      type: "string",
+      required: true,
+      description: `listCollections: 列出集合列表 describeCollection: 描述集合详情（会返回索引摘要） checkCollection: 检查集合是否存在 listIndexes: 列出指定集合的索引列表 checkIndex: 检查指定索引是否存在 可填写的值: "listCollections", "describeCollection", "checkCollection", "listIndexes", "checkIndex"`,
+    },
+    {
+      name: "limit",
+      type: "number",
+      description: `返回数量限制(listCollections 操作时可选)`,
+    },
+    {
+      name: "offset",
+      type: "number",
+      description: `偏移量(listCollections 操作时可选)`,
+    },
+    {
+      name: "collectionName",
+      type: "string",
+      description: `集合名称(describeCollection、listIndexes、checkIndex 操作时必填)`,
+    },
+    {
+      name: "indexName",
+      type: "string",
+      description: `索引名称(checkIndex 操作时必填)`,
+    }
+  ]}
+/>
+
+---
+
+### `writeNoSqlDatabaseStructure`
+创建、删除和管理 CloudBase NoSQL 数据库集合（collection）。支持创建新集合、删除现有集合，以及通过 updateCollection 的 updateOptions.CreateIndexes / updateOptions.DropIndexes 添加索引和删除索引。当需要新建集合时，使用 action=createCollection。本工具为服务端管理工具，用于管理端操作集合和索引结构，不用于编写客户端代码。
+
+#### 参数
+
+<ParameterTable
+  parameters={[
+    {
+      name: "action",
+      type: "string",
+      required: true,
+      description: `createCollection: 创建集合 updateCollection: 更新集合配置；添加索引请传 updateOptions.CreateIndexes，删除索引请传 updateOptions.DropIndexes deleteCollection: 删除集合 可填写的值: "createCollection", "updateCollection", "deleteCollection"`,
+    },
+    {
+      name: "collectionName",
+      type: "string",
+      required: true,
+      description: `集合名称`,
+    },
+    {
+      name: "updateOptions",
+      type: "object",
+      description: `更新选项(updateCollection 时使用)。CreateIndexes 用于添加索引，DropIndexes 用于删除索引。`,
+      children: [
+        {
+          name: "CreateIndexes",
+          type: "array of object",
+          description: `要添加的索引列表`,
+          children: [
+            {
+              name: "IndexName",
+              type: "string",
+              required: true,
+              description: `要创建的索引名称`,
+            },
+            {
+              name: "MgoKeySchema",
+              type: "object",
+              required: true,
+              description: `待创建索引的字段与约束配置`,
+              children: [
+                {
+                  name: "MgoIsUnique",
+                  type: "boolean",
+                  required: true,
+                  description: `是否唯一索引`,
+                },
+                {
+                  name: "MgoIndexKeys",
+                  type: "array of object",
+                  required: true,
+                  description: `索引字段列表，支持单字段或复合索引`,
+                  children: [
+                    {
+                      name: "Name",
+                      type: "string",
+                      required: true,
+                      description: `索引字段名`,
+                    },
+                    {
+                      name: "Direction",
+                      type: "string",
+                      required: true,
+                      description: `索引方向，通常 1 表示升序，-1 表示降序`,
+                    }
+                  ],
+                }
+              ],
+            }
+          ],
+        },
+        {
+          name: "DropIndexes",
+          type: "array of object",
+          description: `要删除的索引列表`,
+          children: [
+            {
+              name: "IndexName",
+              type: "string",
+              required: true,
+              description: `要删除的索引名称`,
+            }
+          ],
+        }
+      ],
+    }
+  ]}
+/>
+
+---
+
+### `readNoSqlDatabaseContent`
+查询 CloudBase NoSQL 数据库中的数据记录。支持按条件筛选、分页、排序，适用于管理端数据查询与运维。limit 默认 100、最大 1000；超出请用 offset 分页。projection 仅支持 \{ field: 1|0 \} 对象（示例 \{"_id":1,"name":1,"createdAt":1\}），不要传字段数组。
+
+#### 参数
+
+<ParameterTable
+  parameters={[
+    {
+      name: "collectionName",
+      type: "string",
+      required: true,
+      description: `集合名称`,
+    },
+    {
+      name: "instanceId",
+      type: "string",
+      description: `可选：显式指定数据库实例ID；未传时会自动解析并缓存`,
+    },
+    {
+      name: "query",
+      type: "union",
+      description: `查询条件(对象或字符串,推荐对象)`,
+    },
+    {
+      name: "projection",
+      type: "union",
+      description: `返回字段投影，仅支持对象或对应 JSON 字符串，值只能是 1/0/true/false。合法示例：{"_id":1,"name":1,"createdAt":1}（包含）或 {"password":0}（排除）。不要传 ["name","age"] 这类字段数组，也不要混用包含与排除（_id 除外）。`,
+    },
+    {
+      name: "sort",
+      type: "union",
+      description: `排序条件，仅支持数组 [{"key":"createdAt","direction":-1}] 或对应 JSON 字符串。`,
+    },
+    {
+      name: "limit",
+      type: "number",
+      description: `返回数量限制，整数，范围 1-1000，默认 100。超过 1000 会被 Cloud API MgoLimit lte 校验拒绝；请用 offset 分页。`,
+    },
+    {
+      name: "offset",
+      type: "number",
+      description: `跳过的记录数`,
+    }
+  ]}
+/>
+
+---
+
+### `writeNoSqlDatabaseContent`
+修改 CloudBase NoSQL 数据库中的数据记录。支持插入、更新（含 $set/$inc/$push 等操作符）、删除、upsert 等操作，适用于管理端数据写入与运维。⚠️ 服务端写入不含 _openid：若集合依赖客户端 SDK（@cloudbase/js-sdk 或微信小程序 wx.cloud.database()）的行级安全规则（如 doc._openid == auth.openid），服务端写入时需手动补充 _openid 字段，否则客户端将无法读取到该数据。⚠️ 部分更新嵌套字段须使用点号路径，如 `$set: \{"shipping.city": "guangzhou"\}`，直接传嵌套对象会覆盖整个字段。
+
+#### 参数
+
+<ParameterTable
+  parameters={[
+    {
+      name: "action",
+      type: "string",
+      required: true,
+      description: `insert: 插入数据（新增文档） update: 更新数据 delete: 删除数据 可填写的值: "insert", "update", "delete"`,
+    },
+    {
+      name: "collectionName",
+      type: "string",
+      required: true,
+      description: `集合名称`,
+    },
+    {
+      name: "instanceId",
+      type: "string",
+      description: `可选：显式指定数据库实例ID；未传时会自动解析并缓存`,
+    },
+    {
+      name: "documents",
+      type: "array of object",
+      description: `要插入的文档对象数组,每个文档都是对象(insert 操作必填)`,
+    },
+    {
+      name: "query",
+      type: "union",
+      description: `查询条件(对象或字符串,推荐对象)(update/delete 操作必填)`,
+    },
+    {
+      name: "update",
+      type: "union",
+      description: `更新内容(对象或字符串,推荐对象)(update 操作必填)。按 MongoDB 更新语义传入 MgoUpdate：部分更新请使用 \`$set\`、\`$inc\`、\`$unset\`、\`$push\` 等操作符，例如使用 \`$set\` 更新 \`status\`；不要直接传"字段到值的普通对象"，否则可能替换整条文档。 ⚠️ 嵌套字段必须用点号路径（如 \`shipping.city\`），禁止整对象替换： - ❌ 错误：{ "$set": { "shipping": { "city": "guangzhou" } } } — shipping 被整块替换，原有 address/province 等字段全部丢失 - ✅ 正确：{ "$set": { "shipping.city": "guangzhou" } } — 仅更新 city，shipping 下其他字段保留`,
+    },
+    {
+      name: "isMulti",
+      type: "boolean",
+      description: `是否更新多条记录(update/delete 操作可选)`,
+    },
+    {
+      name: "upsert",
+      type: "boolean",
+      description: `是否在不存在时插入(update 操作可选)`,
+    }
+  ]}
+/>
+
+---
+
+### `manageDataModel`
+数据模型查询工具，支持查询和列表数据模型（只读操作）。通过 action 参数区分操作类型：list=获取模型列表（不含Schema，可选 names 参数过滤），get=查询单个模型详情（含Schema字段列表、格式、关联关系等，需要提供 name 参数），docs=生成SDK使用文档（需要提供 name 参数）
+
+#### 参数
+
+<ParameterTable
+  parameters={[
+    {
+      name: "action",
+      type: "string",
+      required: true,
+      description: `操作类型：get=查询单个模型（含Schema字段列表、格式、关联关系，需要提供 name 参数），list=获取模型列表（不含Schema，可选 names 参数过滤），docs=生成SDK使用文档（需要提供 name 参数） 可填写的值: "get", "list", "docs"`,
+    },
+    {
+      name: "name",
+      type: "string",
+      description: `要查询的数据模型名称。当 action='get' 或 action='docs' 时，此参数为必填项，必须提供已存在的数据模型名称。可通过 action='list' 操作获取可用的模型名称列表`,
+    },
+    {
+      name: "names",
+      type: "array of string",
+      description: `模型名称数组（list操作时可选，用于过滤）`,
+    }
+  ]}
+/>
+
+---
+
+### `modifyDataModel`
+基于Mermaid classDiagram创建数据模型。为保持兼容性，工具名仍为 modifyDataModel；当前仅支持创建新模型，不支持更新现有模型结构。内置异步任务监控，自动轮询直至完成或超时。
+
+#### 参数
+
+<ParameterTable
+  parameters={[
+    {
+      name: "mermaidDiagram",
+      type: "string",
+      required: true,
+      description: `Mermaid classDiagram代码，描述数据模型结构。 示例： classDiagram     class Student {         name: string <<姓名>>         age: number = 18 <<年龄>>         gender: x-enum = "男" <<性别>>         classId: string <<班级ID>>         identityId: string <<身份ID>>         course: Course[] <<课程>>         required() ["name"]         unique() ["name"]         enum_gender() ["男", "女"]         display_field() "name"     }     class Class {         className: string <<班级名称>>         display_field() "className"     }     class Course {         name: string <<课程名称>>         students: Student[] <<学生>>         display_field() "name"     }     class Identity {         number: string <<证件号码>>         display_field() "number"     }     %% 关联关系     Student "1" --> "1" Identity : studentId     Student "n" --> "1" Class : student2class     Student "n" --> "m" Course : course     Student "n" <-- "m" Course : students     %% 类的命名     note for Student "学生模型"     note for Class "班级模型"     note for Course "课程模型"     note for Identity "身份模型" `,
+    },
+    {
+      name: "action",
+      type: "string",
+      description: `操作类型：create=创建新模型 可填写的值: "create"`,
+    },
+    {
+      name: "publish",
+      type: "boolean",
+      description: `是否立即发布模型`,
+    },
+    {
+      name: "dbInstanceType",
+      type: "string",
+      description: `数据库实例类型，可选值：MYSQL=MySQL 数据库，FLEXDB=文档型数据库（NoSQL） 可填写的值: "MYSQL", "FLEXDB"`,
+    }
+  ]}
+/>
+
+---
+
+### `queryPgDatabase`
+查询 CloudBase PostgreSQL 数据库。支持获取当前 PG 上下文、列出带 schema 的数据库对象、读取轻量元数据、检查单个对象结构，以及执行只读 SQL。
+
+#### 参数
+
+<ParameterTable
+  parameters={[
+    {
+      name: "action",
+      type: "string",
+      required: true,
+      description: `操作类型：context=获取当前 PostgreSQL 上下文；objects=列出带 schema 的数据库对象；metadata=获取轻量表元数据；schema=检查单个带 schema 的对象结构；sql=执行只读 SQL 可填写的值: "context", "objects", "metadata", "schema", "sql"`,
+    },
+    {
+      name: "sql",
+      type: "string",
+      description: `action=sql 时使用的只读 SQL`,
+    },
+    {
+      name: "objectName",
+      type: "string",
+      description: `action=schema 时使用的带 schema 的 PostgreSQL 对象名，例如 public.users`,
+    },
+    {
+      name: "schema",
+      type: "string",
+      description: `可选的 schema 过滤条件，用于 action=objects 或 action=metadata`,
+    },
+    {
+      name: "limit",
+      type: "integer",
+      description: `可选的摘要数量上限，用于对象、元数据或 SQL 返回行数，默认 20，最大 200。`,
+    }
+  ]}
+/>
+
+---
+
+### `managePgDatabase`
+管理 CloudBase PostgreSQL：执行已确认的写入 SQL、SQL 风险预检、迁移管理。建表/ALTER/DROP 等 schema 变更必须使用 applyMigration（显式 migrationVersion；成功前自动写入或校验本地 cloudbase/migrations/&lt;version&gt;_&lt;name&gt;.sql，与 CLI tcb db pg migration 一致），不要默认用 execute。execute 主要用于 DML 与 GRANT/RLS 等运维 SQL。
+
+#### 参数
+
+<ParameterTable
+  parameters={[
+    {
+      name: "action",
+      type: "string",
+      required: true,
+      description: `操作类型：execute=执行已确认的写入 SQL（DML/GRANT/RLS；schema DDL 默认拒绝，需 allowDdlViaExecute=true）；dryRun=只分析 SQL 风险不执行；planMigration=预览迁移计划（需 migrationName + migrationVersion + sql；可选 includeAll=true 允许乱序，对齐 CLI --include-all）；applyMigration=应用迁移，建表/改 schema 首选（需 migrationName + migrationVersion + sql + confirm=true；可选 includeAll；本地 SQL 缺失则自动写入 cloudbase/migrations/，内容不一致则 LOCAL_MIGRATION_FILE_MISMATCH fail-closed；成功返回前会轮询 DescribeTaskResult（默认最长 10 分钟，可用 taskPollTimeoutMs / waitForTask 调整）并校验 migrationVersion 已落入远端历史；超时返回 MIGRATION_TASK_TIMEOUT，必须先 describeMigrationTask 再 listMigrations，禁止立刻重推同 version；未落库时返回 success=false 且 errorCode=MIGRATION_NOT_APPLIED）；listMigrations=查询已应用的 Migration 列表（可传 limit/offset 分页）；migrationDetail=查看单条 Migration 详情（需 migrationVersion）；describeMigrationTask=按 TaskId 查询 Push 异步任务状态（DescribeTaskResult：Status/Phase/Reason；需 taskId；用于 waitForTask=false / MIGRATION_TASK_TIMEOUT / 失败诊断，listMigrations 看不到 Reason）；fetchMigration=从远端 history 拉取 SQL 写入本地 cloudbase/migrations/（对齐 CLI tcb db pg migration fetch；可选 migrationVersion 拉单条，省略则全量；force=true 覆盖已存在文件，默认跳过）；repairMigration=修复 Migration 历史记录（需 migrationVersion + migrationName + repairStatus + repairReason） 可填写的值: "execute", "dryRun", "planMigration", "applyMigration", "listMigrations", "migrationDetail", "describeMigrationTask", "fetchMigration", "repairMigration"`,
+    },
+    {
+      name: "sql",
+      type: "string",
+      description: `action=execute、dryRun、planMigration、applyMigration 或 repairMigration(applied) 使用的 SQL 语句`,
+    },
+    {
+      name: "confirm",
+      type: "boolean",
+      description: `执行任何写入 SQL 前都需要显式设置为 true。`,
+    },
+    {
+      name: "envId",
+      type: "string",
+      description: `可选的 CloudBase 环境 ID，不传时使用当前 MCP 环境。`,
+    },
+    {
+      name: "instanceId",
+      type: "string",
+      description: `可选的 PostgreSQL 逻辑实例标识，默认 cloudbase-pg。`,
+    },
+    {
+      name: "defaultSchema",
+      type: "string",
+      description: `可选的默认 schema，默认 public。`,
+    },
+    {
+      name: "role",
+      type: "string",
+      description: `可选的 PostgreSQL role，传给 Manager SDK executePGSql 的 Role（平台会 SET ROLE）。默认 cloudbase_postgres。推荐取值：cloudbase_postgres / anon / authenticated / service_role。不要传 postgres、postgres_pgdb_*、平台保留角色（cloudbase_admin，为平台管理账号不对用户开放）或从环境名臆造的角色；不确定时省略本字段，或先用 cloudbase_postgres 执行 SELECT rolname FROM pg_roles。`,
+    },
+    {
+      name: "objectName",
+      type: "string",
+      description: `可选的对象名，当前仅用于非 migration 场景。migration 相关操作请使用 migrationName / migrationVersion。`,
+    },
+    {
+      name: "migrationName",
+      type: "string",
+      description: `plan/apply/repair 必填：migration 名称，小写字母开头，仅允许小写字母和下划线（不允许数字，服务端 PushPGUserMigrations 会拒绝含数字的名称）。`,
+    },
+    {
+      name: "migrationVersion",
+      type: "string",
+      description: `14 位时间戳 YYYYMMDDHHMMSS。plan/apply/detail/repair 必填；fetchMigration 可选（传入则只拉该条，省略则拉全量远端 history）；禁止由服务端静默生成，避免与本地 cloudbase/migrations/<version>_<name>.sql 分叉。applyMigration 非增量：每次传完整 SQL；终态失败且 listMigrations 未落地时版本号不占用，换新 migrationVersion 重发全量 SQL 即可（同名不同版本不冲突）。`,
+    },
+    {
+      name: "rollbackSql",
+      type: "string",
+      description: `plan/apply 可选：回滚 SQL 语句。`,
+    },
+    {
+      name: "limit",
+      type: "integer",
+      description: `list 可选：返回数量上限，1-500，默认 100。`,
+    },
+    {
+      name: "offset",
+      type: "integer",
+      description: `list 可选：分页偏移，默认 0。`,
+    },
+    {
+      name: "lockTimeoutMs",
+      type: "integer",
+      description: `apply 可选：获取数据库锁的最长时间（毫秒），默认 5000。`,
+    },
+    {
+      name: "statementTimeoutMs",
+      type: "integer",
+      description: `apply 可选：单条 SQL 执行最长时间（毫秒），默认 300000。`,
+    },
+    {
+      name: "taskPollTimeoutMs",
+      type: "integer",
+      description: `apply 可选：轮询 DescribeTaskResult 的最长等待（毫秒）。默认 600000（与 CLI tcb db pg migration up 的 10 分钟对齐）。范围 5000-600000。超时后务必先 describeMigrationTask(taskId) 再 listMigrations，禁止立刻重推同 version。`,
+    },
+    {
+      name: "waitForTask",
+      type: "boolean",
+      description: `apply 可选，默认 true。设为 false 时 Push 后立即返回 TaskId（errorCode=MIGRATION_TASK_PENDING），由调用方用 describeMigrationTask 轮询任务终态，再用 listMigrations 确认是否落库；适合 MCP host 工具调用超时较短的场景。默认 true 会同步等到任务终态。`,
+    },
+    {
+      name: "taskId",
+      type: "string",
+      description: `describeMigrationTask 必填：PushPGUserMigrations / applyMigration 返回的 TaskId。用于一次性查询 DescribeTaskResult（Status/Phase/Reason），不轮询等待。`,
+    },
+    {
+      name: "repairStatus",
+      type: "string",
+      description: `repair 必填：applied=标记为已应用（可补录 Query），reverted=删除 history 记录。 可填写的值: "applied", "reverted"`,
+    },
+    {
+      name: "repairReason",
+      type: "string",
+      description: `repair 必填：修复原因。`,
+    },
+    {
+      name: "force",
+      type: "boolean",
+      description: `fetchMigration 可选，默认 false。true=覆盖本地已存在的同名 SQL 文件（对齐 CLI tcb db pg migration fetch --force）；false=跳过已存在文件。用于从远端 history 重新对齐 Git checksum。`,
+    },
+    {
+      name: "includeAll",
+      type: "boolean",
+      description: `planMigration / applyMigration 可选，默认 false。true=允许 out-of-order（version 小于远端 LatestVersion）仍可 Preview/Push，对齐 CLI tcb db pg migration up --include-all；仅在确认要补历史/乱序迁移时使用，日常应选更大的 migrationVersion。`,
+    },
+    {
+      name: "allowDdlViaExecute",
+      type: "boolean",
+      description: `可选，默认 false。仅当需要故意绕过 migration history 时设为 true，才允许 schema DDL 走 execute；正常建表/改 schema 必须用 applyMigration。`,
+    }
+  ]}
+/>
+
+---
+
+### `queryPgStorage`
+查询 CloudBase PostgreSQL 环境下的云存储能力。返回 bucket/config 能力摘要、对象信息查询方案，以及基于 HTTP API 或 SDK 的上传实现方案；不会读取本地文件，也不会默认输出大量签名 URL。
+
+#### 参数
+
+<ParameterTable
+  parameters={[
+    {
+      name: "action",
+      type: "string",
+      required: true,
+      description: `操作类型：buckets/config=查询存储能力摘要；createBucket=生成 bucket 创建方案（SQL/HTTP API/CLI）；uploadPlan=生成 HTTP API/SDK 上传方案；objectInfo=生成对象元信息查询方案；signUpload/signDownload=显式的一次性签名 URL 请求占位 可填写的值: "buckets", "config", "uploadPlan", "objectInfo", "signUpload", "signDownload", "createBucket"`,
+    },
+    {
+      name: "bucket",
+      type: "string",
+      description: `云存储 bucket 名称`,
+    },
+    {
+      name: "objectKey",
+      type: "string",
+      description: `单个对象 key`,
+    },
+    {
+      name: "objectKeys",
+      type: "array of string",
+      description: `多个对象 key，用于对象元信息查询规划`,
+    },
+    {
+      name: "objects",
+      type: "array of object",
+      description: `待上传对象的元信息。文件字节内容不会通过 MCP 传递。`,
+      children: [
+        {
+          name: "objectKey",
+          type: "string",
+          required: true,
+        },
+        {
+          name: "contentType",
+          type: "string",
+        },
+        {
+          name: "sizeBytes",
+          type: "integer",
+        }
+      ],
+    },
+    {
+      name: "expiresIn",
+      type: "integer",
+      description: `签名 URL 有效期，单位秒，范围 60 到 86400。`,
+    }
+  ]}
+/>
+
+---
+
+### `queryMysqlDatabase`
+查询 CloudBase MySQL 数据库信息。支持执行只读 SQL、查询 MySQL 开通结果、查询 MySQL 任务状态、获取当前实例生命周期上下文，以及查询实例慢查询/错误日志（对齐 Manager SDK describeInstanceSlowQueries / describeInstanceErrorLogs）。标准 getInstanceInfo/describeInstance 不返回连接凭据；仅 getConnectionInfo 透传原始连接/集群载荷（含可能的凭据），且仅用于显式 TCP 迁移。业务 CRUD 优先使用 SDK 或 runQuery/runStatement。
+
+#### 参数
+
+<ParameterTable
+  parameters={[
+    {
+      name: "action",
+      type: "string",
+      required: true,
+      description: `runQuery=执行只读 SQL；describeCreateResult=查询 CreateMySQL 结果；describeTaskStatus=查询 MySQL 任务状态；getInstanceInfo=获取不含连接凭据的生命周期上下文；describeInstance=getInstanceInfo 的别名；getConnectionInfo=透传可能包含凭据的原始连接/集群载荷（仅限 TCP 迁移例外场景）；describeInstanceSlowQueries=查询实例慢查询日志；describeInstanceErrorLogs=查询实例错误日志 可填写的值: "runQuery", "describeCreateResult", "describeTaskStatus", "getInstanceInfo", "describeInstance", "getConnectionInfo", "describeInstanceSlowQueries", "describeInstanceErrorLogs"`,
+    },
+    {
+      name: "sql",
+      type: "string",
+      description: `action=runQuery 使用的只读 SQL`,
+    },
+    {
+      name: "request",
+      type: "object",
+      description: `describeCreateResult/describeTaskStatus/describeInstanceSlowQueries/describeInstanceErrorLogs 使用的官方请求载荷（可含 InstanceId 等）`,
+    },
+    {
+      name: "dbInstance",
+      type: "object",
+      description: `runQuery / 慢查/错误日志可选的 SQL 数据库实例上下文`,
+      children: [
+        {
+          name: "instanceId",
+          type: "string",
+        },
+        {
+          name: "schema",
+          type: "string",
+        }
+      ],
+    },
+    {
+      name: "startTime",
+      type: "string",
+      description: `慢查/错误日志查询开始时间（YYYY-MM-DD HH:mm:ss）`,
+    },
+    {
+      name: "endTime",
+      type: "string",
+      description: `慢查/错误日志查询结束时间（YYYY-MM-DD HH:mm:ss）`,
+    },
+    {
+      name: "limit",
+      type: "number",
+      description: `慢查/错误日志返回条数限制`,
+    },
+    {
+      name: "offset",
+      type: "number",
+      description: `慢查/错误日志分页偏移`,
+    },
+    {
+      name: "username",
+      type: "string",
+      description: `慢查过滤：用户名`,
+    },
+    {
+      name: "host",
+      type: "string",
+      description: `慢查过滤：客户端 host`,
+    },
+    {
+      name: "database",
+      type: "string",
+      description: `慢查过滤：数据库名`,
+    },
+    {
+      name: "orderBy",
+      type: "string",
+      description: `排序字段。慢查支持 QueryTime/LockTime/RowsExamined/RowsSent；错误日志支持 Timestamp 可填写的值: "QueryTime", "LockTime", "RowsExamined", "RowsSent", "Timestamp"`,
+    },
+    {
+      name: "orderByType",
+      type: "string",
+      description: `排序方向：asc/desc（大小写均可） 可填写的值: "asc", "desc", "ASC", "DESC"`,
+    },
+    {
+      name: "sqlText",
+      type: "string",
+      description: `慢查过滤：SQL 文本片段`,
+    },
+    {
+      name: "logLevels",
+      type: "array of string",
+      description: `错误日志等级过滤，可选值：error / warning / note`,
+    },
+    {
+      name: "keyWords",
+      type: "array of string",
+      description: `错误日志关键字模糊搜索列表`,
+    }
+  ]}
+/>
+
+---
+
+### `manageMysqlDatabase`
+管理 CloudBase MySQL 数据库资源。支持开通 MySQL、销毁 MySQL、执行写入 SQL/DDL，以及初始化数据库 Schema。注意：必须先开通 MySQL（action=provisionMySQL，confirm=true）才能执行 runStatement 或 initializeSchema。若 MySQL 尚未开通，工具会返回 MYSQL_NOT_CREATED 并给出开通的 nextAction 提示。
+
+#### 参数
+
+<ParameterTable
+  parameters={[
+    {
+      name: "action",
+      type: "string",
+      required: true,
+      description: `provisionMySQL=创建 MySQL 实例；destroyMySQL=销毁 MySQL 实例；runStatement=执行写入 SQL 或 DDL；initializeSchema=按顺序执行 Schema 初始化语句 可填写的值: "provisionMySQL", "destroyMySQL", "runStatement", "initializeSchema"`,
+    },
+    {
+      name: "confirm",
+      type: "boolean",
+      description: `action=provisionMySQL 或 action=destroyMySQL 所需的显式确认`,
+    },
+    {
+      name: "sql",
+      type: "string",
+      description: `action=runStatement 使用的 SQL 语句`,
+    },
+    {
+      name: "request",
+      type: "object",
+      description: `action=provisionMySQL 或 action=destroyMySQL 使用的官方请求载荷`,
+    },
+    {
+      name: "statements",
+      type: "array of string",
+      description: `action=initializeSchema 使用的有序 Schema 初始化 SQL 语句`,
+    },
+    {
+      name: "requireReady",
+      type: "boolean",
+      description: `initializeSchema 是否应阻塞至确认 MySQL 就绪。默认为 true。`,
+    },
+    {
+      name: "statusContext",
+      type: "object",
+      description: `initializeSchema 前用于确认就绪状态的可选开通状态请求`,
+      children: [
+        {
+          name: "createResultRequest",
+          type: "object",
+        },
+        {
+          name: "taskStatusRequest",
+          type: "object",
+        }
+      ],
+    },
+    {
+      name: "dbInstance",
+      type: "object",
+      description: `runStatement/initializeSchema 可选的 SQL 数据库实例上下文`,
+      children: [
+        {
+          name: "instanceId",
+          type: "string",
+        },
+        {
+          name: "schema",
+          type: "string",
+        }
+      ],
+    }
+  ]}
+/>
+
+---
+
+### `queryFunctions`
+CloudBase 云函数统一只读入口。通过更自解释的 action 查询 CloudBase 云函数列表、函数详情、执行日志、层、触发器、代码下载地址、已发布版本与流量别名。
+
+**分页说明**：`listFunctions`、`listLayers`、`listVersionByFunction` 支持 `limit` 和 `offset` 参数。
+- `limit`: 分页数量，默认值由后端决定
+- `offset`: 分页偏移，从 0 开始
+- 示例：`queryFunctions(action="listFunctions", offset=10, limit=10)`
+
+**查询 CloudBase 云函数日志**：使用 `action="listFunctionLogs"`，需要提供 `functionName` 参数。
+- 示例：`queryFunctions(action="listFunctionLogs", functionName="my-function")`
+- 如需查看日志详情：`queryFunctions(action="getFunctionLogDetail", requestId="xxx")`
+
+**定时任务 / cron / 定时跑**：使用 `listFunctionTriggers` 查询函数的 timer 触发器配置。
+
+**版本与流量路由**：`listVersionByFunction` 列出已发布版本（对齐 tcb fn list-function-versions）；`getFunctionAlias` 查看别名/灰度配置（对齐 tcb fn get-route，aliasName 默认 `$DEFAULT`）。
+
+**层（Layer）说明**：
+- 层为 SCF 账号级共享命名空间：不同环境创建同名层会共享同一层的版本序列；删除某版本会影响所有绑定该版本的环境的函数
+- 创建层必须用带环境标识的唯一层名，固定格式：`\{layerName\}_\{当前envId\}`（如 `common_cloud1-d9ghadgak3edf6b36`）。不要在不同环境使用相同裸层名，创建前先 `listLayers` 查重
+- `listLayers` / `listLayerVersions` / `getLayerVersionDetail` 返回账号级视图，可能含其他环境创建的层
+
+**区分 `queryLogs` 工具**：
+- 本工具用于查询特定 CloudBase 云函数的执行日志
+- `queryLogs` 工具用于搜索 CLS 日志服务（跨服务日志聚合）
+
+#### 参数
+
+<ParameterTable
+  parameters={[
+    {
+      name: "action",
+      type: "string",
+      required: true,
+      description: `只读操作类型： - \`listFunctions\`: 列出所有 CloudBase 云函数 - \`getFunctionDetail\`: 获取 CloudBase 云函数详情（需要 functionName） - \`listFunctionLogs\`: 查询 CloudBase 云函数执行日志（需要 functionName） - \`getFunctionLogDetail\`: 获取日志详情（需要 requestId） - \`listFunctionLayers\`: 列出函数绑定的层 - \`listLayers\`: 列出所有层（账号级视图，含其他环境创建的层） - \`listLayerVersions\`: 列出层的版本（注意：是 Versions 不是 Version；账号级视图） - \`getLayerVersionDetail\`: 获取层版本详情（账号级视图） - \`listFunctionTriggers\`: 列出函数触发器（用于查看定时任务 / cron / timer 配置） - \`getFunctionDownloadUrl\`: 获取函数代码下载地址 - \`getFunctionDeployStatus\`: 按 taskId 查询异步部署状态、阶段进度和最终结果。返回 data.build（构建子状态）、data.deploy（部署子状态）、data.progress（阶段事件）；status=running 时 data.result 与 data.error 一律为 null，不得报告部署完成。调用方必须持续轮询直到 status=succeeded/failed；status=expired 表示任务超过最长保留时间（2 小时）被终结，云端可能仍在部署，需用 getFunctionDetail 确认。任务只保存在 MCP 进程内存中，过期或 MCP Server 重启后返回 errorCode=DEPLOY_TASK_NOT_FOUND；任务按环境隔离，只能查到当前环境自己发起的部署。cloud mode 下本 action 不可用：异步任务只由 buildStrategy=cloud/local 的真实部署创建，而这两种策略在 cloud mode 下都不支持真实执行，image 策略则走同步部署不产生 taskId。 - \`listVersionByFunction\`: 列出函数已发布版本（对齐 tcb fn list-function-versions / SDK listVersionByFunction；需要 functionName） - \`getFunctionAlias\`: 查询函数别名与流量路由（对齐 tcb fn get-route / SDK getFunctionAlias；需要 functionName；aliasName 默认 $DEFAULT） - \`getFunctionUploadUrl\`: 获取函数代码包的 COS 预签名上传地址（ZIP 两段式部署阶段 A）：PUT 代码 zip 到 uploadUrl（uploadHeaders 非空时须随请求携带对应请求头），再调用 manageFunctions 的 createFunction/updateFunctionCode 并传 code 三元组（阶段 B）。functionName 可选，仅用于生成上传对象 key。返回的 uploadUrl 含凭据签名，不得写入日志或持久化；阶段 B 会校验三元组的桶与地域必须是本环境自有存储桶，因此该地址只能用于取到它的那个环境；地址默认 300 秒内有效 可填写的值: "listFunctions", "getFunctionDetail", "listFunctionLogs", "getFunctionLogDetail", "listFunctionLayers", "listLayers", "listLayerVersions", "getLayerVersionDetail", "listFunctionTriggers", "getFunctionDownloadUrl", "getFunctionDeployStatus", "listVersionByFunction", "getFunctionAlias", "getFunctionUploadUrl"`,
+    },
+    {
+      name: "functionName",
+      type: "string",
+      description: `CloudBase 云函数名称。\`getFunctionDetail\`、\`listFunctionLogs\`、\`listFunctionLayers\`、\`listFunctionTriggers\`、\`getFunctionDownloadUrl\`、\`listVersionByFunction\`、\`getFunctionAlias\` 时必填；\`getFunctionUploadUrl\` 可选（仅用于生成上传对象 key）`,
+    },
+    {
+      name: "limit",
+      type: "number",
+      description: `分页数量（limit）。列表类 action 可选，默认值由后端决定`,
+    },
+    {
+      name: "offset",
+      type: "number",
+      description: `分页偏移（offset）。列表类 action 可选，默认 0`,
+    },
+    {
+      name: "codeSecret",
+      type: "string",
+      description: `代码保护密钥，用于解密函数代码`,
+    },
+    {
+      name: "revealEnvValues",
+      type: "boolean",
+      description: `getFunctionDetail / listFunctionTriggers / listFunctionLayers 时是否返回环境变量明文值。默认 false：Value 脱敏为 ***，仅保留 Key 与 ValueLength，足以确认配置了哪些变量及变更是否生效；true 时返回明文，敏感变量会进入模型上下文，谨慎使用。如需查看明文，建议优先使用控制台或 CLI`,
+    },
+    {
+      name: "startTime",
+      type: "string",
+      description: `日志查询开始时间，格式必须为 YYYY-MM-DD HH:mm:ss（如 2024-01-01 00:00:00）。与 endTime 间隔不能超过一天。不传时默认查询最近一天`,
+    },
+    {
+      name: "endTime",
+      type: "string",
+      description: `日志查询结束时间，格式必须为 YYYY-MM-DD HH:mm:ss（如 2024-01-01 23:59:59）。与 startTime 间隔不能超过一天。不传时默认为当前时间`,
+    },
+    {
+      name: "requestId",
+      type: "string",
+      description: `日志请求 ID。\`getFunctionLogDetail\` 操作必填，可从 \`listFunctionLogs\` 结果中获取`,
+    },
+    {
+      name: "qualifier",
+      type: "string",
+      description: `函数版本别名，如 $LATEST、$DEFAULT。日志查询时可选`,
+    },
+    {
+      name: "runtime",
+      type: "string",
+      description: `层查询的运行时筛选，如 Nodejs18.15`,
+    },
+    {
+      name: "searchKey",
+      type: "string",
+      description: `层名称搜索关键字`,
+    },
+    {
+      name: "layerName",
+      type: "string",
+      description: `层名称。\`listLayerVersions\`、\`getLayerVersionDetail\` 操作必填。层为账号级共享命名空间；推荐固定格式 \`{layerName}_{当前envId}\`（如 common_cloud1-d9ghadgak3edf6b36）`,
+    },
+    {
+      name: "layerVersion",
+      type: "number",
+      description: `层版本号。\`getLayerVersionDetail\` 操作必填`,
+    },
+    {
+      name: "taskId",
+      type: "string",
+      description: `\`getFunctionDeployStatus\` 操作时的异步部署任务 ID（由 manageFunctions 的 wait=false 返回）。任务仅保存在当前 MCP 进程内存中：终态任务保留约 30 分钟，运行中任务最长保留 2 小时。`,
+    },
+    {
+      name: "order",
+      type: "string",
+      description: `\`listVersionByFunction\` 排序方向，如 ASC / DESC`,
+    },
+    {
+      name: "orderBy",
+      type: "string",
+      description: `\`listVersionByFunction\` 排序字段，如 AddTime / ModTime`,
+    },
+    {
+      name: "aliasName",
+      type: "string",
+      description: `\`getFunctionAlias\` 的别名名称。省略时默认 \`$DEFAULT\`（与 tcb fn get-route 一致）`,
+    }
+  ]}
+/>
+
+---
+
+### `manageFunctions`
+CloudBase 云函数统一写入口。支持创建函数、更新代码、更新配置、调用函数、发布版本、配置流量别名、管理定时跑 / 定时任务 / scheduled job 的 timer 触发器和层绑定。如果要创建 cron 定时任务，先用 createFunction 创建函数，再用 createFunctionTrigger 创建 timer 触发器（支持7段cron表达式），deleteFunctionTrigger 删除触发器。版本发布：`publishVersion` 对齐 tcb fn publish-version / SDK publishVersion；灰度/切流：`updateFunctionAliasConfig` 对齐 tcb fn config-route / SDK updateFunctionAliasConfig（aliasName 默认 `$DEFAULT`）。HTTP 云函数镜像构建部署：createFunction / updateFunctionCode 通过 func.buildStrategy 区分。func.buildStrategy=image（已有镜像，填 func.imageConfig.imageUri）直接创建/更新 HTTP 函数；func.buildStrategy=local（本地 Docker 构建推送）、cloud（CloudApp 云端构建）走镜像构建部署编排（需要 func.imageConfig；build 非必填，缺省仓库坐标自动补齐：namespace 默认 envId、repository 默认函数名），默认仅生成 dry-run 计划；传入 dryRun=false 且 confirm=true 后执行真实部署。真实部署可传 wait=false 立即返回 taskId，再通过 queryFunctions 的 getFunctionDeployStatus 查询进度和结果。wait=false 仅表示当前 Tool 不等待完整部署；调用方不得在 status=running 时结束流程，必须自动轮询到 succeeded/failed 后再向用户汇报，除非达到轮询上限。local 始终要求本地 MCP 模式；cloud 的真实执行需要读取本地构建上下文，也要求本地 MCP 模式；cloud mode 仅支持 cloud dry-run 和 image 策略。func.buildStrategy 省略或为 zip 时按传统代码包部署。危险操作需要显式 confirm=true。
+
+**个人版 TCR 凭证**：imageType=personal 的 local/cloud 构建需要推送凭证。若 MCP 配置的 env 中已设置 TCB_TCR_USERNAME 与 TCB_TCR_PASSWORD（与 TENCENTCLOUD_SECRETID 等密钥同样的配置方式），则不需要在请求参数中传递 func.imageConfig.build.registryCredential，留空即可自动读取。不要向用户索要密码明文，也不要把密码写进工具参数。
+注意这条 env 通道只在**本地 stdio MCP、且客户端的 mcp.json 支持自定义 env 块**时可用：部分 GUI 客户端不继承 shell 的 export，IDE 内置型 MCP 的凭据注入通常是硬编码白名单（例如只放行 TENCENTCLOUD_*），这类用户没有配置自定义 env 的通道，「在 MCP 配置的 env 中设置」对他们是无效指引。面向内置 MCP 用户应改为引导：使用企业版（imageType=enterprise，走实例临时令牌，不需要固定密码），或改用 buildStrategy=image 直接部署已推送的镜像。
+**企业版登录态要求**：enterprise 的 cloud/local 构建要经 CAM 铸造 TCR 临时令牌，环境级 API Key 与 OAuth 换出的临时凭据都不带 CAM 策略，会被前置拦截并提示改用账号级密钥或 image 策略；个人版走静态密码直接 docker login，不经过 CAM，反而是 API Key 用户唯一能走通的构建路径。
+
+**层（Layer）说明**：
+- 层为 SCF 账号级共享命名空间：不同环境创建同名层会共享同一层的版本序列；删除某版本会影响所有绑定该版本的环境的函数
+- 创建层必须用带环境标识的唯一层名，固定格式：`\{layerName\}_\{当前envId\}`（如 `common_cloud1-d9ghadgak3edf6b36`）。不要在不同环境使用相同裸层名，创建前先 `listLayers` 查重
+- 相关 action：`createLayerVersion` / `deleteLayerVersion` / `attachLayer` / `detachLayer` / `updateFunctionLayers`（只读查询见 queryFunctions 的 listLayers / listLayerVersions / getLayerVersionDetail）
+
+#### 参数
+
+<ParameterTable
+  parameters={[
+    {
+      name: "action",
+      type: "string",
+      required: true,
+      description: `写操作类型，例如 createFunction、updateFunctionCode、incrementalDeployFunction、invokeFunction、deleteFunction、createFunctionTrigger（定时任务 / cron / timer）、deleteFunctionTrigger、createLayerVersion、deleteLayerVersion、attachLayer、detachLayer、updateFunctionLayers、publishVersion（发布新版本，对齐 tcb fn publish-version）、updateFunctionAliasConfig（更新别名/流量路由，对齐 tcb fn config-route）。层名推荐固定格式 \`{layerName}_{当前envId}\`（如 common_cloud1-d9ghadgak3edf6b36） 可填写的值: "createFunction", "updateFunctionCode", "updateFunctionConfig", "invokeFunction", "deleteFunction", "createFunctionTrigger", "deleteFunctionTrigger", "createLayerVersion", "deleteLayerVersion", "attachLayer", "detachLayer", "updateFunctionLayers", "publishVersion", "updateFunctionAliasConfig", "incrementalDeployFunction"`,
+    },
+    {
+      name: "func",
+      type: "object",
+      description: `createFunction / updateFunctionCode 的函数配置。镜像/构建部署通过 func.buildStrategy（zip/cloud/local/image）区分，镜像相关字段收敛在 func.imageConfig 命名空间下。`,
+      children: [
+        {
+          name: "name",
+          type: "string",
+          required: true,
+          description: `函数名称`,
+        },
+        {
+          name: "type",
+          type: "string",
+          description: `函数类型 可填写的值: "Event", "HTTP"`,
+        },
+        {
+          name: "protocolType",
+          type: "string",
+          description: `HTTP 函数访问协议，当前仅支持 WebSockets，取值为 WS（配合 protocolParams.wsParams 使用）。普通 HTTP 函数不要传此字段；传其他值（如 HTTP）会报 InvalidParameterValue.ProtocolType。 可填写的值: "WS"`,
+        },
+        {
+          name: "protocolParams",
+          type: "object",
+          children: [
+            {
+              name: "wsParams",
+              type: "object",
+              children: [
+                {
+                  name: "idleTimeOut",
+                  type: "number",
+                  description: `WebSocket 空闲超时时间（秒）`,
+                }
+              ],
+            }
+          ],
+        },
+        {
+          name: "instanceConcurrencyConfig",
+          type: "object",
+          children: [
+            {
+              name: "dynamicEnabled",
+              type: "boolean",
+            },
+            {
+              name: "maxConcurrency",
+              type: "number",
+            }
+          ],
+        },
+        {
+          name: "timeout",
+          type: "number",
+          description: `函数超时时间`,
+        },
+        {
+          name: "envVariables",
+          type: "object",
+          description: `环境变量。若包含 DATABASE_URL / MYSQL_* / POSTGRES_* / REDIS_* 等传统 TCP 连库变量，必须同时配置 vpc（vpcId+subnetId），且 ID 必须来自真实库/网络信息，禁止猜测。原生 app.rdb()/app.database() 不需要 VPC。`,
+        },
+        {
+          name: "vpc",
+          type: "object",
+          description: `私有网络配置（出网）。非原生 SDK、用 TCP 访问 VPC 内 MySQL/PostgreSQL/Redis 时必填。vpcId/subnetId 必须与数据库内网 VPC 一致；未知时先查控制台或询问用户，禁止填占位符。`,
+          children: [
+            {
+              name: "vpcId",
+              type: "string",
+              required: true,
+              description: `VPC ID from the real database/network console (e.g. vpc-xxxxxxxx). Required for non-native TCP DB access. Do NOT invent or use placeholders.`,
+            },
+            {
+              name: "subnetId",
+              type: "string",
+              required: true,
+              description: `Subnet ID in the same VPC as the private DB endpoint (e.g. subnet-xxxxxxxx). Do NOT invent or use placeholders.`,
+            }
+          ],
+        },
+        {
+          name: "runtime",
+          type: "string",
+          description: `运行时环境。Event 函数支持多种运行时:   Nodejs: Nodejs20.19, Nodejs18.15, Nodejs16.13, Nodejs14.18, Nodejs12.16, Nodejs10.15, Nodejs8.9   Python: Python3.10, Python3.9, Python3.7, Python3.6, Python2.7   Php: Php8.0, Php7.4, Php7.2   Java: Java8, Java11   Golang: Golang1 推荐运行时:   Node.js: Nodejs18.15   Python: Python3.9   PHP: Php7.4   Java: Java11   Go: Golang1 镜像部署（基于 TCR 镜像创建函数）时填 "CustomImage"，并提供 imageConfig；此时无需 functionRootPath/zipFile。`,
+        },
+        {
+          name: "buildStrategy",
+          type: "string",
+          description: `HTTP 函数部署策略：zip=代码包部署（默认，缺省即 zip）；image=使用已有镜像（imageConfig.imageUri 必填）；cloud=云端构建镜像；local=本地 Docker 构建镜像。cloud/local 走镜像构建部署编排，需要 imageConfig；其中 build 非必填：目标仓库坐标（namespace 默认 envId、repository 默认函数名）等缺省可自动补齐，仅在需要指定构建细节或个人版 build.registryCredential 等特定字段时才提供 build。 可填写的值: "zip", "cloud", "local", "image"`,
+        },
+        {
+          name: "imageConfig",
+          type: "object",
+          description: `镜像配置（buildStrategy=image/cloud/local 或 runtime=CustomImage 时使用），镜像相关字段全部收敛在此命名空间下。image：填 imageUri 使用已有镜像；cloud/local：可填 build 描述如何构建，省略时用默认仓库坐标自动补齐。传入已有镜像（imageUri）即按镜像部署处理，函数无需打包本地代码、scf_bootstrap 或 Handler。`,
+          children: [
+            {
+              name: "imageType",
+              type: "string",
+              description: `镜像仓库类型：enterprise=企业版 TCR，personal=个人版 CCR；省略时由 SDK 推断——填了 registryId 推断为 enterprise，否则推断为 personal。 可填写的值: "enterprise", "personal"`,
+            },
+            {
+              name: "registryId",
+              type: "string",
+              description: `企业版 TCR 实例 ID，形如 tcr-xxxxxxxx；imageType=enterprise 时必填，个人版镜像不填。`,
+            },
+            {
+              name: "imagePort",
+              type: "number",
+              description: `HTTP 镜像函数监听端口，SDK 仅允许 9000；省略即用该值，不要填其他端口。 可填写的值: const 9000`,
+            },
+            {
+              name: "entryPoint",
+              type: "string",
+              description: `覆盖镜像入口点（ENTRYPOINT），一般不需要单独设置。`,
+            },
+            {
+              name: "command",
+              type: "string",
+              description: `覆盖镜像启动命令，例如 python；不填则使用镜像 Dockerfile 中的默认值。`,
+            },
+            {
+              name: "args",
+              type: "string",
+              description: `覆盖镜像启动参数，空格分隔，例如 -u app.py。`,
+            },
+            {
+              name: "commandList",
+              type: "array of string",
+              description: `镜像启动命令的数组写法，元素已按参数切分，适用于命令本身含空格的场景。`,
+            },
+            {
+              name: "argsList",
+              type: "array of string",
+              description: `镜像启动参数的数组写法，元素已按参数切分，适用于参数本身含空格的场景。`,
+            },
+            {
+              name: "containerImageAccelerate",
+              type: "boolean",
+              description: `是否开启镜像加速；镜像较大时建议开启以缩短冷启动时间。`,
+            },
+            {
+              name: "imageUri",
+              type: "string",
+              description: `完整镜像地址（必须含 tag），格式 {domain}/{namespace}/{image}:{tag}，例如 ccr.ccs.tencentyun.com/your-ns/demo-app:demo-app-001。不要使用 :latest。buildStrategy=image（已有镜像）时必填；buildStrategy=cloud/local 可以不填：镜像地址由构建流程产出并回传；目标仓库由 build.repository/build.namespace 决定，显式提供时优先使用你提供的配置，省略时由 manager-node 用默认值自动补齐并创建/复用（namespace 默认 envId、repository 默认函数名）。`,
+            },
+            {
+              name: "build",
+              type: "object",
+              description: `镜像构建目标。buildStrategy=cloud（云端构建）或 local（本地 Docker 构建）时使用；buildStrategy=image（已有镜像）不填。cloud/local 下 build 非必填：缺省仓库坐标可自动补齐（namespace 默认 envId、repository 默认函数名），仅需指定构建细节或个人版 build.registryCredential 等字段时才填。`,
+              children: [
+                {
+                  name: "cwd",
+                  type: "string",
+                  required: true,
+                  description: `镜像构建上下文的绝对目录。`,
+                },
+                {
+                  name: "dockerfile",
+                  type: "string",
+                  description: `Dockerfile 相对 build.cwd 的路径，默认 Dockerfile。`,
+                },
+                {
+                  name: "registryId",
+                  type: "string",
+                  description: `企业版 TCR 实例 ID；personal 镜像构建不填。`,
+                },
+                {
+                  name: "namespace",
+                  type: "string",
+                  description: `目标镜像命名空间；不传时默认使用当前环境 ID（envId）。`,
+                },
+                {
+                  name: "repository",
+                  type: "string",
+                  description: `不含 tag/digest 的目标仓库路径；不传时默认使用函数名。local personal 需填写完整 registry/namespace/repository。`,
+                },
+                {
+                  name: "tag",
+                  type: "string",
+                  description: `local 策略的目标镜像 tag；cloud 策略由平台生成，不填。`,
+                },
+                {
+                  name: "platform",
+                  type: "string",
+                  description: `目标镜像平台，当前仅支持 linux/amd64。 可填写的值: const "linux/amd64"`,
+                },
+                {
+                  name: "buildArgs",
+                  type: "object",
+                  description: `Docker 构建参数。禁止传递密钥或凭证。`,
+                },
+                {
+                  name: "registryCredential",
+                  type: "object",
+                  description: `个人版 TCR 推送凭证（personal local/cloud 需要）。推荐整体省略，改为在 MCP 配置的 env 中设置 TCB_TCR_USERNAME 与 TCB_TCR_PASSWORD，与 TENCENTCLOUD_SECRETID 等密钥的配置方式一致；已设置环境变量时不需要在请求参数中传递凭证。字段级回退：显式传入的字段优先，未传字段读环境变量。`,
+                  children: [
+                    {
+                      name: "username",
+                      type: "string",
+                      description: `个人版 CCR 登录用户名，必须为腾讯云账号 UIN。省略时回退读取 MCP 进程的 TCB_TCR_USERNAME 环境变量。`,
+                    },
+                    {
+                      name: "password",
+                      type: "string",
+                      description: `个人版 CCR 固定密码。**不要在此字段填写明文密码**：请在 MCP 配置的 env 中设置 TCB_TCR_PASSWORD，本字段留空即可自动读取。敏感字段，禁止写入日志或响应。`,
+                    }
+                  ],
+                },
+                {
+                  name: "forceBuild",
+                  type: "boolean",
+                  description: `是否忽略同摘要复用并强制重新构建。`,
+                },
+                {
+                  name: "retainedTags",
+                  type: "integer",
+                  description: `个人版 TCR 构建完成后保留的最新镜像标签数量。`,
+                }
+              ],
+            },
+            {
+              name: "localFallback",
+              type: "string",
+              description: `buildStrategy=local 时本地构建不可用的处理方式，默认 error。 可填写的值: "cloud", "error"`,
+            }
+          ],
+        },
+        {
+          name: "triggers",
+          type: "array of object",
+          description: `触发器配置数组`,
+          children: [
+            {
+              name: "name",
+              type: "string",
+              required: true,
+              description: `触发器名称`,
+            },
+            {
+              name: "type",
+              type: "string",
+              required: true,
+              description: `触发器类型 可填写的值: "timer"`,
+            },
+            {
+              name: "config",
+              type: "string",
+              required: true,
+              description: `触发器配置。timer 必须使用 CloudBase 7 段 cron 格式：秒 分 时 日 月 星期 年。⚠️ 不支持标准 5 段 cron（如 */5 * * * * 是错误的）。正确示例：0 */5 * * * * *（每5分钟）、0 0 2 1 * * *（每月1号2点）、0 30 9 * * * *（每天9:30）`,
+            }
+          ],
+        },
+        {
+          name: "handler",
+          type: "string",
+          description: `函数入口`,
+        },
+        {
+          name: "ignore",
+          type: "union",
+          description: `忽略文件`,
+        },
+        {
+          name: "isWaitInstall",
+          type: "boolean",
+          description: `是否等待依赖安装`,
+        },
+        {
+          name: "layers",
+          type: "array of object",
+          description: `Layer 配置`,
+          children: [
+            {
+              name: "name",
+              type: "string",
+              required: true,
+            },
+            {
+              name: "version",
+              type: "number",
+              required: true,
+            }
+          ],
+        }
+      ],
+    },
+    {
+      name: "functionRootPath",
+      type: "string",
+      description: `创建或更新函数代码时默认推荐的本地目录方式。必须是直接包含函数文件夹的目录绝对路径（如 /abs/path/cloudfunctions 或 /abs/path/functions），不要传项目根目录（如 /abs/path），也不要传到函数名子目录（如 /abs/path/cloudfunctions/hello）。本地应按 cloudfunctions/<functionName>/index.js 或 functions/<functionName>/index.js 布局，此参数传 cloudfunctions 或 functions 目录的绝对路径。SDK 会自动拼接函数名子目录，无需预先压缩 zip 或 base64 编码。`,
+    },
+    {
+      name: "force",
+      type: "boolean",
+      description: `createFunction 时是否覆盖`,
+    },
+    {
+      name: "functionName",
+      type: "string",
+      description: `目标函数名称（顶层）。updateFunctionCode / updateFunctionConfig / invokeFunction / publishVersion / updateFunctionAliasConfig 等 action 使用此字段。不要只写在 func.name：createFunction 用 func.name，其它 action 用顶层 functionName。若误传 func.name，也会被识别为 functionName。`,
+    },
+    {
+      name: "zipFile",
+      type: "string",
+      description: `仅兼容特殊场景：预先准备好的代码包 base64 编码。普通 createFunction/updateFunctionCode 默认不要先压缩 zip，优先使用 functionRootPath。`,
+    },
+    {
+      name: "code",
+      type: "object",
+      description: `ZIP 两段式部署阶段 B：代码包已通过 queryFunctions action=getFunctionUploadUrl 上传到环境 COS 桶。三元组（cosBucketName/cosObjectName/cosBucketRegion）直接使用 getFunctionUploadUrl 返回值原样透传。传入 code 后 createFunction/updateFunctionCode 不再读取本地目录（functionRootPath/zipFile 均不需要），默认不触发云端依赖安装（可用 func.installDependency 覆盖）。code 三元组的桶与地域必须是本环境自有存储桶，对象 key 必须是 getFunctionUploadUrl 返回的 fnzip-upload/... 形式；自行拼装、指向其它存储桶或跨环境复用会被拒绝并要求重新取地址。`,
+      children: [
+        {
+          name: "cosBucketName",
+          type: "string",
+          required: true,
+          description: `环境存储桶短名（不含 -appid 后缀），直接使用 getFunctionUploadUrl 返回的 cosBucketName，不要自填`,
+        },
+        {
+          name: "cosObjectName",
+          type: "string",
+          required: true,
+          description: `上传对象 key，直接使用 getFunctionUploadUrl 返回的 cosObjectName`,
+        },
+        {
+          name: "cosBucketRegion",
+          type: "string",
+          description: `存储桶地域，省略时自动使用当前环境存储桶地域`,
+        }
+      ],
+    },
+    {
+      name: "handler",
+      type: "string",
+      description: `函数入口`,
+    },
+    {
+      name: "timeout",
+      type: "number",
+      description: `配置更新时的超时时间`,
+    },
+    {
+      name: "envVariables",
+      type: "object",
+      description: `配置更新时要合并的环境变量。若含 DATABASE_URL / MYSQL_* / POSTGRES_* / REDIS_* 等 TCP 连库变量，必须同时提供真实 vpc（或函数已绑定完整 VPC）。禁止猜测 vpcId/subnetId。`,
+    },
+    {
+      name: "vpc",
+      type: "unknown",
+      description: `配置更新时的 VPC 信息。非原生 TCP 连库场景必填真实 vpcId+subnetId；不要用占位符。`,
+    },
+    {
+      name: "params",
+      type: "object",
+      description: `invokeFunction 的调用参数`,
+    },
+    {
+      name: "triggers",
+      type: "array of unknown",
+      description: `createFunctionTrigger 的触发器列表，用于定时跑 / 定时任务 / scheduled job。timer 触发器使用7段 cron 表达式（秒 分 时 日 月 星期 年），如 "0 */5 * * * * *" 表示每5分钟执行一次`,
+    },
+    {
+      name: "triggerName",
+      type: "string",
+      description: `deleteFunctionTrigger 的目标触发器名称`,
+    },
+    {
+      name: "layerName",
+      type: "string",
+      description: `层名称。创建层推荐固定格式 \`{layerName}_{当前envId}\`（如 common_cloud1-d9ghadgak3edf6b36）；不要跨环境复用裸层名。层为账号级共享命名空间`,
+    },
+    {
+      name: "layerVersion",
+      type: "number",
+      description: `层版本号`,
+    },
+    {
+      name: "contentPath",
+      type: "string",
+      description: `层内容路径，可为目录或 ZIP 文件`,
+    },
+    {
+      name: "base64Content",
+      type: "string",
+      description: `层内容的 base64 编码`,
+    },
+    {
+      name: "runtimes",
+      type: "array of string",
+      description: `层适用的运行时列表`,
+    },
+    {
+      name: "description",
+      type: "string",
+      description: `描述信息。createLayerVersion 时为层版本描述；publishVersion / updateFunctionAliasConfig 时为版本或别名描述`,
+    },
+    {
+      name: "licenseInfo",
+      type: "string",
+      description: `层许可证信息`,
+    },
+    {
+      name: "layers",
+      type: "array of object",
+      description: `updateFunctionLayers 的目标层列表，顺序即最终顺序`,
+      children: [
+        {
+          name: "layerName",
+          type: "string",
+          required: true,
+          description: `层名称`,
+        },
+        {
+          name: "layerVersion",
+          type: "number",
+          required: true,
+          description: `层版本号`,
+        }
+      ],
+    },
+    {
+      name: "codeSecret",
+      type: "string",
+      description: `层绑定时的代码保护密钥`,
+    },
+    {
+      name: "dryRun",
+      type: "boolean",
+      description: `镜像构建部署（func.buildStrategy=cloud/local）是否只生成部署计划。默认 true；传 false 时必须同时传 confirm=true。`,
+    },
+    {
+      name: "wait",
+      type: "boolean",
+      description: `真实镜像部署是否等待完整部署；设为 false 立即返回 taskId 并后台执行。默认 true 是为了兼容既有调用方，但同步等待最长可达约 15 分钟，很容易先撞上 MCP Client 的请求超时——客户端超时只是断开这次请求，云端部署仍在继续，却拿不到 taskId 追踪。因此执行真实构建部署（buildStrategy=cloud/local，dryRun=false）时建议显式传 wait=false。`,
+    },
+    {
+      name: "autoGrant",
+      type: "boolean",
+      description: `镜像部署是否允许 manager-node 自动补齐固定白名单 CAM 策略。默认 false；仅在明确确认权限变更时设为 true。`,
+    },
+    {
+      name: "confirm",
+      type: "boolean",
+      description: `危险操作确认开关。deleteFunction、deleteFunctionTrigger、deleteLayerVersion、detachLayer 等删除类操作以及镜像构建部署（func.buildStrategy=cloud/local）真实执行需要显式传入 confirm=true`,
+    },
+    {
+      name: "incrementalFile",
+      type: "string",
+      description: `incrementalDeployFunction 增量部署时的变更文件路径`,
+    },
+    {
+      name: "aliasName",
+      type: "string",
+      description: `\`updateFunctionAliasConfig\` 的别名名称。省略时默认 \`$DEFAULT\`（与 tcb fn config-route 一致）`,
+    },
+    {
+      name: "functionVersion",
+      type: "string",
+      description: `\`updateFunctionAliasConfig\` 的主版本。可为具体版本号或 \`$LATEST\``,
+    },
+    {
+      name: "routingConfig",
+      type: "object",
+      description: `\`updateFunctionAliasConfig\` 的流量路由配置。AdditionalVersionWeights 用于灰度权重；AddtionVersionMatchs 为 SCF/SDK 历史字段名（含拼写）`,
+      children: [
+        {
+          name: "AdditionalVersionWeights",
+          type: "array of object",
+          description: `附加版本权重列表（灰度发布）`,
+          children: [
+            {
+              name: "Version",
+              type: "string",
+              required: true,
+              description: `附加流量版本号`,
+            },
+            {
+              name: "Weight",
+              type: "number",
+              required: true,
+              description: `附加流量权重（0-1 或百分比，按 SCF 约定）`,
+            }
+          ],
+        },
+        {
+          name: "AddtionVersionMatchs",
+          type: "array of object",
+          description: `附加版本匹配规则列表（字段名保持 SCF AddtionVersionMatchs）`,
+          children: [
+            {
+              name: "Version",
+              type: "string",
+              required: true,
+              description: `匹配规则指向的版本号`,
+            },
+            {
+              name: "Key",
+              type: "string",
+              required: true,
+              description: `匹配规则的 Header/Query Key`,
+            },
+            {
+              name: "Method",
+              type: "string",
+              required: true,
+              description: `匹配方法，如 Exact / Regex`,
+            },
+            {
+              name: "Expression",
+              type: "string",
+              required: true,
+              description: `匹配表达式`,
+            }
+          ],
+        }
+      ],
+    }
+  ]}
+/>
+
+---
+
+### `queryHosting`
+查询 CloudBase 静态托管的只读信息。适合 AI 先做发现再决定下一步：action=websiteConfig 查询首页/错误页/路由规则与站点域名信息；action=status 查询托管服务状态；action=findFiles 按前缀查找文件；action=listFiles 列出全部托管文件；action=domainStatus 查询自定义域名的当前状态与配置。该工具不会产生任何副作用。
+
+#### 参数
+
+<ParameterTable
+  parameters={[
+    {
+      name: "action",
+      type: "string",
+      required: true,
+      description: `查询类型：websiteConfig=查询静态托管网站文档配置与站点域名信息，status=查询静态托管服务状态，findFiles=按前缀查找托管文件，listFiles=列出静态托管中的全部文件，domainStatus=查询自定义域名配置与生效状态。该工具严格只读，不会修改任何资源。 可填写的值: "websiteConfig", "status", "findFiles", "listFiles", "domainStatus"`,
+    },
+    {
+      name: "prefix",
+      type: "string",
+      description: `文件前缀过滤条件。仅 action=findFiles 时使用，例如 app/ 或 assets/logo。`,
+    },
+    {
+      name: "marker",
+      type: "string",
+      description: `分页起始标记。仅 action=findFiles 时使用，用于续查上一页之后的结果。`,
+    },
+    {
+      name: "maxKeys",
+      type: "integer",
+      description: `单次返回的最大文件条数。仅 action=findFiles 时使用。`,
+    },
+    {
+      name: "domains",
+      type: "array of string",
+      description: `要查询的自定义域名列表。仅 action=domainStatus 时使用，例如 ["www.example.com"]。`,
+    }
+  ]}
+/>
+
+---
+
+### `manageHosting`
+管理 CloudBase 静态托管的变更操作。action=upload 上传本地构建产物到共享域名（域名格式：&lt;envId&gt;-&lt;appId&gt;.tcloudbaseapp.com/&lt;cloudPath&gt;）；action=delete 删除托管文件或目录（必须 confirm=true）；action=setWebsiteDocument 设置首页/错误页/路由规则；action=enableService 开通静态托管；action=bindDomain / unbindDomain / updateDomain 管理自定义域名；action=downloadFile / downloadDirectory 下载托管内容到本地。⚠️ 底层每次托管操作都会请求 DescribeStaticStore 管控接口（20 次/秒 QPS 限制）：批量删除多个文件请逐次调用并保持间隔（建议每秒不超过 10 次），同一目录下多个文件可优先用 isDir=true 一次删除整个目录；若报错含 "frequency limit" 说明触发了限流，请等待 1-2 秒后重试，不要连续快速重试。⚠️ 本工具没有关闭默认域名（*.tcloudbaseapp.com）的 action；要禁用该默认公网域名，请用 manageGateway(action="disableRoute", domain=该 STATIC_STORE IsDefault 域名, path="/")（底层 ModifyHTTPServiceRoute，不是 ModifyGatewayRoute）。⚠️ 新项目部署优先使用 manageApps（部署到独立子域名），本工具适合已有老项目继续使用或作为 manageApps 的 fallback。manageApps 与 manageHosting 域名不同，切换会导致老链接失效。若任务只是查看配置、文件或域名状态，请改用 queryHosting。
+
+#### 参数
+
+<ParameterTable
+  parameters={[
+    {
+      name: "action",
+      type: "string",
+      required: true,
+      description: `管理类型：upload=上传本地构建产物到静态托管，delete=删除静态托管文件或目录，setWebsiteDocument=设置首页/错误页/路由规则，enableService=开通静态托管服务，bindDomain=绑定自定义域名，unbindDomain=解绑自定义域名，updateDomain=更新域名缓存/防盗链/IP 规则，downloadFile=下载单个托管文件到本地，downloadDirectory=下载托管目录到本地。 可填写的值: "upload", "delete", "setWebsiteDocument", "enableService", "bindDomain", "unbindDomain", "updateDomain", "downloadFile", "downloadDirectory"`,
+    },
+    {
+      name: "localPath",
+      type: "string",
+      description: `本地路径。action=upload 时表示要上传的本地文件/目录路径；action=downloadFile 或 downloadDirectory 时表示下载到本地的目标路径。建议传绝对路径。`,
+    },
+    {
+      name: "cloudPath",
+      type: "string",
+      description: `静态托管中的目标路径。action=upload 时表示上传后的托管路径；action=delete/downloadFile/downloadDirectory 时表示托管侧文件或目录路径。`,
+    },
+    {
+      name: "files",
+      type: "array of object",
+      description: `多文件上传配置。仅 action=upload 时可选；传入后会逐项上传，不再依赖单个 localPath/cloudPath。`,
+      children: [
+        {
+          name: "localPath",
+          type: "string",
+          required: true,
+          description: `单个待上传文件的本地绝对路径。`,
+        },
+        {
+          name: "cloudPath",
+          type: "string",
+          required: true,
+          description: `该文件上传到静态托管后的托管路径。`,
+        }
+      ],
+    },
+    {
+      name: "ignore",
+      type: "union",
+      description: `上传时忽略的文件模式。仅 action=upload 时可选，例如 node_modules 或 ["**/*.map", "**/.DS_Store"]。`,
+    },
+    {
+      name: "isDir",
+      type: "boolean",
+      description: `是否把 cloudPath 视为目录。仅 action=delete 时使用；true=删除目录，false=删除单个文件。`,
+    },
+    {
+      name: "confirm",
+      type: "boolean",
+      description: `高风险操作确认开关。action=delete 和 action=unbindDomain 时必须显式传 true，避免误删文件或误解绑域名。`,
+    },
+    {
+      name: "indexDocument",
+      type: "string",
+      description: `网站首页文档名称。仅 action=setWebsiteDocument 时必填，例如 index.html。`,
+    },
+    {
+      name: "errorDocument",
+      type: "string",
+      description: `错误页文档名称。仅 action=setWebsiteDocument 时可选，例如 404.html。`,
+    },
+    {
+      name: "routingRules",
+      type: "array of object",
+      description: `网站路由规则列表。仅 action=setWebsiteDocument 时可选。SPA 常见配置是将 404 重写到 index.html。`,
+      children: [
+        {
+          name: "keyPrefixEquals",
+          type: "string",
+          description: `匹配前缀规则，例如 app/ 或 assets/。与 httpErrorCodeReturnedEquals 二选一或按 CloudBase 规则组合使用。`,
+        },
+        {
+          name: "httpErrorCodeReturnedEquals",
+          type: "string",
+          description: `匹配 HTTP 错误码，例如 404。SPA 回退常用 404。`,
+        },
+        {
+          name: "replaceKeyWith",
+          type: "string",
+          description: `把匹配结果替换为固定文件路径，例如 index.html。`,
+        },
+        {
+          name: "replaceKeyPrefixWith",
+          type: "string",
+          description: `把匹配前缀替换成新的前缀路径。`,
+        }
+      ],
+    },
+    {
+      name: "domain",
+      type: "string",
+      description: `自定义域名。action=bindDomain / unbindDomain / updateDomain 时使用，例如 www.example.com。`,
+    },
+    {
+      name: "certId",
+      type: "string",
+      description: `证书 ID。仅 action=bindDomain 时必填。`,
+    },
+    {
+      name: "domainId",
+      type: "number",
+      description: `域名 ID。仅 action=updateDomain 时必填，用于精确更新指定域名配置。`,
+    },
+    {
+      name: "domainConfig",
+      type: "object",
+      description: `域名配置。仅 action=updateDomain 时必填，支持缓存、Referer、防盗链、IP 规则与频控。`,
+      children: [
+        {
+          name: "Refer",
+          type: "object",
+          description: `Referer 防盗链配置。`,
+          children: [
+            {
+              name: "Switch",
+              type: "string",
+              required: true,
+              description: `Referer 防盗链开关：on=开启，off=关闭。 可填写的值: "on", "off"`,
+            },
+            {
+              name: "RefererRules",
+              type: "array of object",
+              description: `Referer 规则列表。`,
+              children: [
+                {
+                  name: "RefererType",
+                  type: "string",
+                  required: true,
+                  description: `Referer 规则类型：blacklist=黑名单，whitelist=白名单。 可填写的值: "blacklist", "whitelist"`,
+                },
+                {
+                  name: "Referers",
+                  type: "array of string",
+                  required: true,
+                  description: `Referer 规则值列表。`,
+                },
+                {
+                  name: "AllowEmpty",
+                  type: "boolean",
+                  required: true,
+                  description: `是否允许空 Referer。`,
+                }
+              ],
+            }
+          ],
+        },
+        {
+          name: "Cache",
+          type: "array of object",
+          description: `CDN 缓存规则列表。`,
+          children: [
+            {
+              name: "RuleType",
+              type: "string",
+              required: true,
+              description: `缓存规则类型：fileType=文件类型，path=路径。 可填写的值: "fileType", "path"`,
+            },
+            {
+              name: "RuleValue",
+              type: "string",
+              required: true,
+              description: `规则匹配值。`,
+            },
+            {
+              name: "CacheTtl",
+              type: "number",
+              required: true,
+              description: `缓存 TTL，单位秒。`,
+            }
+          ],
+        },
+        {
+          name: "IpFilter",
+          type: "object",
+          description: `IP 访问控制配置。`,
+          children: [
+            {
+              name: "Switch",
+              type: "string",
+              required: true,
+              description: `IP 访问控制开关：on=开启，off=关闭。 可填写的值: "on", "off"`,
+            },
+            {
+              name: "FilterType",
+              type: "string",
+              description: `过滤类型：blacklist=黑名单，whitelist=白名单。 可填写的值: "blacklist", "whitelist"`,
+            },
+            {
+              name: "Filters",
+              type: "array of string",
+              description: `IP 规则列表。`,
+            }
+          ],
+        },
+        {
+          name: "IpFreqLimit",
+          type: "object",
+          description: `IP 频控配置。`,
+          children: [
+            {
+              name: "Switch",
+              type: "string",
+              required: true,
+              description: `IP 频控开关：on=开启，off=关闭。 可填写的值: "on", "off"`,
+            },
+            {
+              name: "Qps",
+              type: "number",
+              description: `每个 IP 的 QPS 上限。`,
+            }
+          ],
+        }
+      ],
+    }
+  ]}
+/>
+
+---
+
+### `queryStorage`
+⚠️ PG 模式环境请使用 queryPgStorage 而非本工具（pgstore 与旧 COS 是两套独立系统）。
+
+查询 CloudBase 云存储信息，支持列出目录文件、获取文件信息、获取临时下载链接等只读操作。返回的文件信息包括文件名、大小、修改时间、下载链接等。注意：action=url 返回的 temporaryUrl 是临时签名链接，有效期由 maxAge 参数决定（默认1小时），不要当作永久公网地址使用。工具还会基于 DescribeEnvs 返回的 Storages[0].CdnDomain 推导 publicUrl，⚠️ 警告：publicUrl 仅在存储桶 ACL 为公有读（所有用户可读）时才能被匿名访问；默认私有读写存储桶返回的 publicUrl 会 403，此时请继续使用 temporaryUrl 或先通过控制台/SDK 将目标路径设置为公有读。
+
+💡 存储桶 ACL 权限管理请使用 permissions 工具：queryPermissions(action="getResourcePermission", resourceType="storage", resourceId="bucket-name") 查询，managePermissions(action="updateResourcePermission", resourceType="storage", resourceId="bucket-name", permission="READONLY") 设置。
+
+📦 CloudBase PG / pgstore 环境：`DescribeEnvs.Storages[]` 列出的 bucket 是旧 NoSQL 后端的，不等于 pgstore bucket。本工具用于查看常规存储；为 PG 浏览器上传准备 bucket 时，请确认目标 bucket 是 pgstore 后端可用的，否则浏览器 `app.storage.from().upload(...)` 会得到 `STORAGE_BUCKET_NOT_FOUND` 并出现 `PUT https://undefined/`。
+
+#### 参数
+
+<ParameterTable
+  parameters={[
+    {
+      name: "action",
+      type: "string",
+      required: true,
+      description: `查询操作类型：list=列出目录下的所有文件，info=获取指定文件的详细信息，url=获取文件的临时下载链接，read=读取文本文件内容 可填写的值: "list", "info", "url", "read"`,
+    },
+    {
+      name: "cloudPath",
+      type: "string",
+      required: true,
+      description: `云端文件路径，例如 files/data.txt 或 files/（目录）`,
+    },
+    {
+      name: "maxAge",
+      type: "number",
+      description: `临时链接有效期，单位为秒，取值范围：1-86400，默认值：3600（1小时）`,
+    }
+  ]}
+/>
+
+---
+
+### `manageStorage`
+⚠️ PG 模式环境请使用 queryPgStorage 而非本工具（pgstore 与旧 COS 是两套独立系统）。
+
+管理 CloudBase 云存储文件，仅用于 COS/Storage 对象，不用于静态网站托管。支持上传文件/目录、下载文件/目录、删除文件/目录等操作。删除操作需要设置force=true进行确认，防止误删除重要文件。注意：上传后返回的 temporaryUrl 是临时签名链接，1小时后过期，不要当作永久公网地址写入配置或持久化存储。工具还会基于 DescribeEnvs 返回的 Storages[0].CdnDomain 推导 publicUrl，⚠️ 警告：publicUrl 仅在存储桶 ACL 为公有读（所有用户可读）时才能被匿名访问；默认私有读写存储桶返回的 publicUrl 会 403，此时请继续使用 temporaryUrl 或先通过控制台/SDK 将目标路径设置为公有读。
+
+💡 存储桶 ACL 权限管理请使用 permissions 工具：queryPermissions(action="getResourcePermission", resourceType="storage", resourceId="bucket-name") 查询，managePermissions(action="updateResourcePermission", resourceType="storage", resourceId="bucket-name", permission="READONLY") 设置。
+
+📦 CloudBase PG / pgstore 桶必须先创建后使用（与 Supabase Storage 一致：upload 前 bucket 必须存在）。浏览器 SDK `app.storage.from().upload(path, file)` 不会自动建桶，且 `path` 的第一段就是 bucket 名（例如 `covers/foo.png` → bucket=`covers`）；`from('covers')` 这个参数当前不会被拼到 path 里。如果上传时浏览器看到 `STORAGE_BUCKET_NOT_FOUND` 或 `PUT https://undefined/`（DevTools 表现为 `net::ERR_NAME_NOT_RESOLVED`），先用本工具或控制台确认 / 创建对应的 pgstore bucket，再让前端重试上传，不要让前端把上传失败静默吞掉。`DescribeEnvs.Storages[]` 返回的旧 NoSQL bucket（形如 `&lt;hash&gt;-&lt;envId&gt;-&lt;appId&gt;`）不是可用的 pgstore bucket，切勿当作默认目标使用。
+
+#### 参数
+
+<ParameterTable
+  parameters={[
+    {
+      name: "action",
+      type: "string",
+      required: true,
+      description: `管理操作类型：upload=上传文件或目录，download=下载文件或目录，delete=删除文件或目录 可填写的值: "upload", "download", "delete"`,
+    },
+    {
+      name: "localPath",
+      type: "string",
+      description: `本地文件路径，建议传入绝对路径，例如 /tmp/files/data.txt；upload/download 操作时必填，delete 操作时不需要传该参数`,
+    },
+    {
+      name: "cloudPath",
+      type: "string",
+      required: true,
+      description: `云端文件路径，例如 files/data.txt`,
+    },
+    {
+      name: "force",
+      type: "boolean",
+      description: `强制操作开关，删除操作时建议设置为true以确认删除，默认false`,
+    },
+    {
+      name: "isDirectory",
+      type: "boolean",
+      description: `是否为目录操作，true=目录操作，false=文件操作，默认false`,
+    }
+  ]}
+/>
+
+---
+
+### `downloadTemplate`
+自动下载并部署CloudBase项目模板。
+**Note**: Call this tool when the user requests to create a new project using a CloudBase template.
+
+支持的模板:
+- react: React + CloudBase 全栈应用模板
+- vue: Vue + CloudBase 全栈应用模板
+- miniprogram: 微信小程序 + 云开发模板
+- uniapp: UniApp + CloudBase 跨端应用模板
+- rules: 只包含AI编辑器配置文件（包含Cursor、WindSurf、CodeBuddy等所有主流编辑器配置），适合在已有项目中补充AI编辑器配置
+
+支持的IDE类型:
+- all: 下载所有IDE配置
+- cursor: Cursor AI编辑器
+- 其他IDE类型见下方列表
+
+注意：如果未传入 ide 参数且无法从环境变量检测到 IDE，将提示错误并要求传入 ide 参数
+- windsurf: WindSurf AI编辑器
+- codebuddy: CodeBuddy AI编辑器
+- claude-code: Claude Code AI编辑器
+- cline: Cline AI编辑器
+- gemini-cli: Gemini CLI
+- opencode: OpenCode AI编辑器
+- qwen-code: 通义灵码
+- baidu-comate: 百度Comate
+- openai-codex-cli: OpenAI Codex CLI
+- augment-code: Augment Code
+- github-copilot: GitHub Copilot
+- roocode: RooCode AI编辑器
+- tongyi-lingma: 通义灵码
+- trae: Trae AI编辑器
+- qoder: Qoder AI编辑器
+- antigravity: Google Antigravity AI编辑器
+- vscode: Visual Studio Code
+- kiro: Kiro AI编辑器
+- aider: Aider AI编辑器
+
+特别说明：
+- rules 模板会自动包含当前 MCP 版本号信息，便于后续维护和版本追踪
+- 下载 rules 模板时，如果项目中已存在 README.md 文件，系统会自动保护该文件不被覆盖（除非设置 overwrite=true）
+
+#### 参数
+
+<ParameterTable
+  parameters={[
+    {
+      name: "template",
+      type: "string",
+      required: true,
+      description: `要下载的模板类型 可填写的值: "react", "vue", "miniprogram", "uniapp", "rules"`,
+    },
+    {
+      name: "ide",
+      type: "string",
+      required: true,
+      description: `指定要下载的IDE类型。 可填写的值: "all", "cursor", "windsurf", "codebuddy", "claude-code", "cline", "gemini-cli", "opencode", "qwen-code", "baidu-comate", "openai-codex-cli", "augment-code", "github-copilot", "roocode", "tongyi-lingma", "trae", "qoder", "antigravity", "vscode", "kiro", "aider", "iflow-cli"`,
+    },
+    {
+      name: "overwrite",
+      type: "boolean",
+      description: `是否覆盖已存在的文件，默认为false（不覆盖）`,
+    }
+  ]}
+/>
+
+---
+
+### `searchKnowledgeBase`
+云开发知识库检索工具，支持 CloudBase 官方文档 (docs)、固定技能文档 (skill) 和 OpenAPI 文档 (openapi) 查询。
+
+      按场景选择 mode：
+      - 工具调用报错且错误信息含具体错误码（如 OperationDenied.FreePackageDenied）时：mode=docs + action=searchDocs（query=错误码），先查错误码官方含义与处理指引再行动，不要凭猜测重试
+      - 不确定答案在哪、需要对官方文档做全文检索时：mode=docs + action=searchDocs（传 query 关键词）
+      - 已知文档标题、层级路径或 URL 时：mode=docs + action=findByName（传 input）或 action=readDoc（传 docPath）
+      - 需要某个场景的落地指南 / 最佳实践时：mode=skill + skillName
+      - 需要 HTTP API 的接口定义时：mode=openapi + apiName
+
+      ⚠️ 重要：当 CloudBase skills 处于禁用状态或当前 IDE 不支持 skill 文件读取时，必须使用 searchKnowledgeBase(mode=skill, skillName=...) 来获取 CloudBase 技能文档内容，而不是尝试直接读取 skill 文件。直接读取可能返回 400 错误。示例：
+      - 需要最小 Web+数据库 Demo 路径时：searchKnowledgeBase(mode=skill, skillName=minimal-web-baas-demo)
+      - 需要 auth-tool 指南时：searchKnowledgeBase(mode=skill, skillName=auth-tool)
+      - 需要 auth-web 指南时：searchKnowledgeBase(mode=skill, skillName=auth-web)
+      - 需要 cloudbase-agent 指南时：searchKnowledgeBase(mode=skill, skillName=cloudbase-agent)
+
+      返回内容包含该 skill 的 SKILL.md 全文，以及它在远端聚合仓（CNB raw）中的全部 .md 文件地址清单（SKILL.md 与 references/ 等，可直接 HTTP 抓取）。正文中代码栅栏之外的相对链接也会改写为绝对地址；若该 skill 在远端仓中不存在，则只返回内联内容并明确标注，不返回失效链接。
+
+      不确定该选哪个时：mode=skill 下不传 skillName、mode=openapi 下不传 apiName 直接调用，会返回当前可用清单及各自的适用场景 / 接口简介，再带上名称重新调用即可。可选名称也见本工具的 skillName / apiName 枚举（skill 共 31 个，API 共 8 个）。
+
+      注意：OpenAPI 文档 (openapi) 查询只需要传 mode="openapi" 和 apiName，不要传 action；action 仅用于 mode="docs"。
+
+#### 参数
+
+<ParameterTable
+  parameters={[
+    {
+      name: "mode",
+      type: "string",
+      required: true,
+      description: ` 可填写的值: "skill", "openapi", "docs"`,
+    },
+    {
+      name: "skillName",
+      type: "string",
+      description: `mode=skill 时指定。技能名称。 可填写的值: "ai-model-nodejs", "ai-model-web", "ai-model-wechat", "auth-nodejs-cloudbase", "auth-tool-cloudbase", "auth-web-cloudbase", "auth-wechat-miniprogram", "cloud-api-operations", "cloud-functions", "cloud-storage-web", "cloudbase-agent", "cloudbase-cli", "cloudbase-code-review", "cloudbase-declarative-deploy", "cloudbase-document-database-in-wechat-miniprogram", "cloudbase-document-database-web-sdk", "cloudbase-platform", "cloudbase-wechat-integration", "cloudrun-development", "data-model-creation", "http-api-cloudbase", "minimal-web-baas-demo", "miniprogram-development", "ops-inspector", "postgresql-best-practices-cloudbase", "postgresql-development-cloudbase", "relational-database-mcp-cloudbase", "relational-database-web-cloudbase", "spec-workflow", "ui-design", "web-development"`,
+    },
+    {
+      name: "apiName",
+      type: "string",
+      description: `mode=openapi 时指定。API 名称。 可填写的值: "mysqldb", "pgdb", "functions", "auth", "cloudrun", "storage", "nosql", "ai_model"`,
+    },
+    {
+      name: "action",
+      type: "string",
+      description: `仅 mode=docs 时指定；mode=openapi 不要传 action。CloudBase 文档操作类型：listModules=列出所有文档模块，listModuleDocs=获取指定模块的目录结构，findByName=按名称/路径/URL 智能查找，readDoc=读取指定文档 Markdown，searchDocs=全文搜索官方文档。 可填写的值: "listModules", "listModuleDocs", "findByName", "readDoc", "searchDocs"`,
+    },
+    {
+      name: "moduleName",
+      type: "string",
+      description: `mode=docs 且 action=listModuleDocs 时指定。模块名称。`,
+    },
+    {
+      name: "input",
+      type: "string",
+      description: `mode=docs 且 action=findByName 时指定。支持模块名、文档标题、层级路径或 URL。`,
+    },
+    {
+      name: "docPath",
+      type: "string",
+      description: `mode=docs 且 action=readDoc 时指定。站内相对路径（如 /quick-start），或 action=findByName / action=searchDocs 返回的文档地址 —— 传地址时只取其中的路径，主机部分一律忽略。`,
+    },
+    {
+      name: "query",
+      type: "string",
+      description: `mode=docs 且 action=searchDocs 时指定。全文检索关键词。`,
+    }
+  ]}
+/>
+
+---
+
+### `queryCloudRun`
+查询云托管服务信息，支持获取服务列表、查询服务详情、获取可用模板列表、获取构建日志（getDeployLog，仅云端源码构建/依赖 CODING）、获取运行日志（getProcessLog，镜像与源码部署均可/不依赖 CODING）、获取部署记录以及查询环境云托管开通状态（envStatus）。返回的服务信息包括服务名称、状态、访问类型、配置详情以及最近部署上下文。
+
+#### 参数
+
+<ParameterTable
+  parameters={[
+    {
+      name: "action",
+      type: "string",
+      required: true,
+      description: `查询操作类型：list=获取云托管服务列表（支持分页和筛选），detail=查询指定服务的详细信息（包含服务配置和最新部署状态），templates=获取可用的项目模板列表（用于初始化新项目），getDeployLog=获取构建日志（仅云端源码构建有意义，走 CODING/DescribeCloudRunBuildLog；已有镜像部署无构建过程；未登录 CODING 的账号会报错），getProcessLog=获取运行日志（部署阶段步骤+容器启动/运行日志，走 tcbr/DescribeCloudRunProcessLog；镜像部署与源码构建均可用，不依赖 CODING；RunId 来自 detail/getDeployRecords 的 latestDeploy.RunId），getDeployRecords=获取指定服务的部署记录列表（按部署时间倒序，含 BuildId/RunId/FlowRatio/Status 等字段，用于查看历史发布与回滚上下文），envStatus=查询当前环境云托管是否已开通及开通状态（Status=creating开通中/normal已开通），用于initEnv之后轮询进度或deploy之前确认环境是否就绪，getManageTask=查询指定服务的发布任务状态（走 tcbr/DescribeServerManageTask），返回任务 Id/Status 与最新部署记录状态，用于判断部署是在推进还是已经卡住（例如版本长时间停在 creating）；遇到「已有部署发布任务运行中」时先用它确认任务真实状态，不要盲目重试 可填写的值: "list", "detail", "templates", "getDeployLog", "getProcessLog", "getDeployRecords", "envStatus", "getManageTask"`,
+    },
+    {
+      name: "pageSize",
+      type: "number",
+      description: `分页大小，控制每页返回的服务数量。取值范围：1-100，默认值：10。建议根据网络性能和显示需求调整`,
+    },
+    {
+      name: "pageNum",
+      type: "number",
+      description: `页码，用于分页查询。从1开始，默认值：1。配合pageSize使用可实现分页浏览`,
+    },
+    {
+      name: "serverName",
+      type: "string",
+      description: `服务名称筛选条件，支持模糊匹配。例如：输入"test"可匹配"test-service"、"my-test-app"等服务名称。留空则查询所有服务`,
+    },
+    {
+      name: "serverType",
+      type: "string",
+      description: `服务类型筛选条件：function=函数型云托管（仅支持Node.js，有特殊的开发要求和限制，适合简单的API服务），container=容器型服务（推荐使用，支持任意语言和框架如Java/Go/Python/PHP/.NET等，适合大多数应用场景） 可填写的值: "function", "container"`,
+    },
+    {
+      name: "envId",
+      type: "string",
+      description: `环境 ID（action=envStatus 时使用；不传则使用当前配置的环境）。格式如 env-xxxxxx`,
+    },
+    {
+      name: "detailServerName",
+      type: "string",
+      description: `要查询详细信息、部署记录、构建日志或运行日志的服务名称。当action为detail、getDeployLog、getProcessLog或getDeployRecords时建议提供，必须是已存在的服务名称。可通过list操作获取可用的服务名称列表`,
+    },
+    {
+      name: "buildId",
+      type: "number",
+      description: `构建ID，仅在action=getDeployLog时使用（构建日志，仅云端源码构建）。不传时默认返回最近一次部署的构建日志`,
+    },
+    {
+      name: "runId",
+      type: "string",
+      description: `运行ID（RunId），仅在action=getProcessLog时使用。不传时默认取该服务最近一次部署记录的 RunId（与 detail/getDeployRecords 的 latestDeploy.RunId 同源）。镜像部署与源码构建均可查询运行日志`,
+    },
+    {
+      name: "revealEnvParams",
+      type: "boolean",
+      description: `是否返回服务环境变量（ServerConfig.EnvParams）明文值（仅 action=detail 时生效）。默认 false，值脱敏为 "***"（保留 key，足够排查配置了哪些变量、变更是否生效）；true 时返回明文，敏感变量（如带密码的 DATABASE_URL）可能暴露给模型上下文，谨慎使用`,
+    }
+  ]}
+/>
+
+---
+
+### `manageCloudRun`
+管理云托管服务，按开发顺序支持：开通云托管环境（initEnv）、初始化项目（可从模板开始，模板列表可通过 queryCloudRun 查询）、下载服务代码、本地运行（仅函数型服务）、部署代码、仅更新配置（updateConfig，无需重新上传代码）、删除服务。deploy 支持两种方式：1) 源码构建（传入 targetPath，本地代码打包上传，默认路径）；2) 已有镜像部署（传入 imageUrl，如 ccr.ccs.tencentyun.com/ns/img:v1，走 DeployType=image 容器型部署，targetPath 可省略）。deploy 语义为「触发部署 + 轻量等待任务注册」（最多约 45s；不需要 buildId 时可传 waitRegistration=false 跳过等待）。源码构建返回 buildId，用 getDeployLog 轮询构建进度后再 getProcessLog；镜像部署（imageUrl）BuildId 常为 0，跳过 getDeployLog，返回 runId/next_step 引导 getProcessLog（或先 getDeployRecords 取 RunId）。若用户明确指定镜像或无需重新构建，必须传 imageUrl，不要仅因本地有源码目录就回退到源码构建。deploy 对已存在服务会先读取远程配置再合并（保留 VpcConf/EnvParams/OpenAccessTypes）。updateConfig 对齐控制台服务设置页。删除操作需要确认，建议设置force=true。新环境首次部署前若提示未开通云托管，先调用 initEnv 开通（异步、幂等）。
+
+#### 参数
+
+<ParameterTable
+  parameters={[
+    {
+      name: "action",
+      type: "string",
+      required: true,
+      description: `云托管服务管理操作类型：init=从模板初始化新的云托管项目代码（在targetPath目录下创建以serverName命名的子目录，支持多种语言和框架模板），download=从云端下载现有服务的代码到本地进行开发，run=在本地运行函数型云托管服务（用于开发和调试，仅支持函数型服务），deploy=触发部署并轻量等待任务注册（不会 hang 等完整构建）。源码构建（targetPath）返回 buildId，用 getDeployLog 轮询后再 getProcessLog；已有镜像部署（imageUrl，DeployType=image，BuildId 常为 0）跳过 getDeployLog，用 detail/getDeployRecords 取 RunId 后 getProcessLog。传 imageUrl 时 targetPath 可省略；已存在服务会 Read-Merge-Write 保留远程 VpcConf/EnvParams/OpenAccessTypes），updateConfig=仅更新服务配置不重新上传代码（对齐控制台服务设置，走 SubmitServerConfigChangeDiff；不需要 targetPath），delete=删除指定的云托管服务（不可恢复，需要确认），createAgent=创建函数型Agent（基于函数型云托管开发AI智能体），initEnv=开通当前环境的云托管（异步创建云托管环境，幂等：已开通直接返回；适合新环境首次部署前使用），traffic=流量管理与灰度发布（set=调整稳定版/灰度版流量比例，promote=将灰度版本升级为全量，rollback=回滚到上一个稳定版本；对应 tcb cloudrun traffic 命令） 可填写的值: "init", "download", "run", "deploy", "delete", "createAgent", "updateConfig", "initEnv", "traffic"`,
+    },
+    {
+      name: "serverName",
+      type: "string",
+      description: `云托管服务名称，用于标识和管理服务。命名规则：支持大小写字母、数字、连字符和下划线，必须以字母开头，长度3-45个字符。在init操作中会作为在targetPath下创建的子目录名，在其他操作中作为目标服务名。initEnv 操作不需要此参数`,
+    },
+    {
+      name: "trafficOp",
+      type: "string",
+      description: `流量管理子操作（action=traffic 时使用）：set=调整灰度流量比例（需先部署新版本至灰度，通过 stablePercent/canaryPercent 设置稳定版与灰度版流量比例，两者之和必须等于100）；promote=将灰度版本全量发布（灰度版本流量置为100%并关闭灰度发布，等价于 tcb cloudrun traffic promote）；rollback=回滚到上一个稳定版本（停止当前灰度/发布中的版本，回到稳定版本，等价于 tcb cloudrun traffic rollback） 可填写的值: "set", "promote", "rollback"`,
+    },
+    {
+      name: "stablePercent",
+      type: "number",
+      description: `稳定版本流量比例（trafficOp=set 时使用），取值范围0-100。与 canaryPercent 之和必须等于100。例如希望 90% 流量打到稳定版、10% 打到灰度版，则 stablePercent=90, canaryPercent=10`,
+    },
+    {
+      name: "canaryPercent",
+      type: "number",
+      description: `灰度版本流量比例（trafficOp=set 时使用），取值范围0-100。与 stablePercent 之和必须等于100。例如希望 90% 流量打到稳定版、10% 打到灰度版，则 stablePercent=90, canaryPercent=10`,
+    },
+    {
+      name: "envId",
+      type: "string",
+      description: `环境 ID（action=initEnv 时使用；不传则使用当前配置的环境）。格式如 env-xxxxxx`,
+    },
+    {
+      name: "packageType",
+      type: "string",
+      description: `云托管环境套餐类型（action=initEnv 时使用）：Trial=试用，Standard=标准，Professional=专业，Enterprise=企业。默认 Trial 可填写的值: "Trial", "Standard", "Professional", "Enterprise"`,
+    },
+    {
+      name: "vpcId",
+      type: "string",
+      description: `VPC 网络 ID（action=initEnv 时可选）。当平台拒绝系统创建网络时必填，格式如 vpc-xxxxxxxx。与 subnetIds 一起透传给 CreateCloudRunEnv 的 VpcId/SubNetIds。多数场景可不传（由系统创建网络）`,
+    },
+    {
+      name: "subnetIds",
+      type: "array of string",
+      description: `子网 ID 列表（action=initEnv 时可选）。当需指定自有 VPC 时必填，如 ["subnet-xxxxxxxx"]。与 vpcId 一起透传给 CreateCloudRunEnv 的 SubNetIds`,
+    },
+    {
+      name: "targetPath",
+      type: "string",
+      description: `本地代码路径，必须是绝对路径。在deploy操作中指定要部署的代码目录，在download操作中指定下载目标目录，在init操作中指定云托管服务的上级目录（会在该目录下创建以serverName命名的子目录）。updateConfig 不需要此参数。建议约定：项目根目录下的cloudrun/目录，例如：/Users/username/projects/my-project/cloudrun。使用 imageUrl 部署已有镜像时此参数可省略。注意：本地有源码目录不等于必须走源码构建；若用户指定镜像请优先传 imageUrl，不要仅因存在 targetPath 就回退到源码构建`,
+    },
+    {
+      name: "imageUrl",
+      type: "string",
+      description: `已有镜像部署（action=deploy 时使用）：直接指定容器镜像地址，如 ccr.ccs.tencentyun.com/ns/img:v1 或公网 registry 地址。传入后走 DeployType="image"（容器型）部署，无需本地源码目录（targetPath 可省略）。支持：1) 公网匿名可拉取的镜像直填地址；2) 私有/需登录的镜像（如 ghcr.io）需先在本地 docker pull → docker tag/push 到腾讯云 CCR → 填入 CCR 地址。不传则维持源码构建（本地代码打包上传）。约束：若用户明确提到使用某个镜像、或无需重新构建代码，则必须传 imageUrl 走镜像部署，不要回退到源码构建。注意：无论哪种部署方式，环境都需先开通云托管（未开通时先调用 initEnv，Status=normal 后再部署）`,
+    },
+    {
+      name: "envParamsReplaceAll",
+      type: "boolean",
+      description: `EnvParams 合并策略（deploy / updateConfig）：false（默认）= 与远程按 key 合并（输入覆盖同名 key，远程其余 key 保留）；true= 用输入 EnvParams 整包替换远程。仅当显式传入 EnvParams 时生效`,
+    },
+    {
+      name: "serverConfig",
+      type: "object",
+      description: `服务配置项，用于 deploy / updateConfig。包括资源规格、访问权限、环境变量、日志、网络等。deploy 未提供时对已存在服务仍会从远程合并保留 VpcConf/EnvParams/OpenAccessTypes；updateConfig 至少需要一个配置字段`,
+      children: [
+        {
+          name: "OpenAccessTypes",
+          type: "array of string",
+          description: `公网访问类型配置，控制服务的访问权限：OA=办公网访问，PUBLIC=公网访问（默认，可通过HTTPS域名访问），MINIAPP=小程序访问，VPC=VPC访问（仅同VPC内可访问）。可配置多个类型`,
+        },
+        {
+          name: "Cpu",
+          type: "number",
+          description: `CPU规格配置，单位为核。可选值：0.25、0.5、1、2、4、8等。注意：内存规格必须是CPU规格的2倍（如CPU=0.25时内存=0.5，CPU=1时内存=2）。影响服务性能和计费`,
+        },
+        {
+          name: "Mem",
+          type: "number",
+          description: `内存规格配置，单位为GB。可选值：0.5、1、2、4、8、16等。注意：必须是CPU规格的2倍。影响服务性能和计费`,
+        },
+        {
+          name: "MinNum",
+          type: "number",
+          description: `最小实例数配置，控制服务的最小运行实例数量。设置为0时支持缩容到0（无请求时不产生费用），设置为大于0时始终保持指定数量的实例运行（确保快速响应但会增加成本）。建议设置为1以降低冷启动延迟，提升用户体验`,
+        },
+        {
+          name: "MaxNum",
+          type: "number",
+          description: `最大实例数配置，控制服务的最大运行实例数量。当请求量增加时，服务最多可以扩展到指定数量的实例，超过此数量后将拒绝新的请求。建议根据业务峰值设置`,
+        },
+        {
+          name: "PolicyDetails",
+          type: "array of object",
+          description: `扩缩容配置数组，用于配置服务的自动扩缩容策略。可配置多个扩缩容策略`,
+          children: [
+            {
+              name: "PolicyType",
+              type: "string",
+              required: true,
+              description: `扩缩容类型：cpu=基于CPU使用率扩缩容，mem=基于内存使用率扩缩容，cpu/mem=基于CPU和内存使用率扩缩容 可填写的值: "cpu", "mem", "cpu/mem"`,
+            },
+            {
+              name: "PolicyThreshold",
+              type: "number",
+              required: true,
+              description: `扩缩容阈值，单位为百分比。如60表示当资源使用率达到60%时触发扩缩容`,
+            }
+          ],
+        },
+        {
+          name: "CustomLogs",
+          type: "string",
+          description: `自定义日志配置，用于配置服务的日志收集和存储策略`,
+        },
+        {
+          name: "Port",
+          type: "number",
+          description: `服务监听端口配置。函数型服务固定为3000（函数框架自身监听该端口，业务代码不要自行 app.listen）；容器型服务可自定义，业务代码必须监听此端口`,
+        },
+        {
+          name: "EnvParams",
+          type: "string",
+          description: `环境变量配置，JSON字符串格式。用于传递配置信息给服务代码，如'{"DATABASE_URL":"postgres://user:pass@10.x.x.x:5432/db","NODE_ENV":"production"}'。SDK v5.6.1+ 会自动对传入的环境变量进行 AES-256-CBC 加密传输。⚠️ 若 EnvParams 含 DATABASE_URL / MYSQL_* / POSTGRES_* / REDIS_* 等传统 TCP 连库变量，必须同时配置 VpcConf，否则实例通常无法访问 VPC 内数据库`,
+        },
+        {
+          name: "Dockerfile",
+          type: "string",
+          description: `Dockerfile文件名配置，仅容器型服务需要。指定用于构建容器镜像的Dockerfile文件路径，默认为项目根目录下的Dockerfile`,
+        },
+        {
+          name: "BuildDir",
+          type: "string",
+          description: `构建目录配置，指定代码构建的目录路径。当代码结构与标准不同时使用，默认为项目根目录`,
+        },
+        {
+          name: "InternalAccess",
+          type: "string",
+          description: `内网访问开关配置，控制是否启用内网访问。true=启用内网访问（可通过云开发SDK直接调用），false=关闭内网访问（仅公网访问）`,
+        },
+        {
+          name: "InternalDomain",
+          type: "string",
+          description: `内网域名配置，用于配置服务的内网访问域名。仅在启用内网访问时有效`,
+        },
+        {
+          name: "EntryPoint",
+          type: "array of string",
+          description: `Dockerfile EntryPoint参数配置，仅容器型服务需要。指定容器启动时的入口程序数组，如["node","app.js"]`,
+        },
+        {
+          name: "Cmd",
+          type: "array of string",
+          description: `Dockerfile Cmd参数配置，仅容器型服务需要。指定容器启动时的默认命令数组，如["npm","start"]`,
+        },
+        {
+          name: "InitialDelaySeconds",
+          type: "number",
+          description: `端口健康检查初始延迟（秒）。部署完成后先等待 N 秒才开始端口探测，之后约每 5s 检查一次、连续约 30 次；30 次全失败才判定部署失败（约 150s 探测窗口），不是「N 秒后立即失败」。启动耗时长的应用建议调到 60–120`,
+        },
+        {
+          name: "LogType",
+          type: "string",
+          description: `日志类型配置，指定服务的日志收集类型。影响日志的采集方式和存储格式`,
+        },
+        {
+          name: "LogSetId",
+          type: "string",
+          description: `CLS日志集ID配置，指定日志服务（CLS）的日志集ID。需要先开通CLS日志服务`,
+        },
+        {
+          name: "LogTopicId",
+          type: "string",
+          description: `CLS日志主题ID配置，指定日志服务（CLS）的日志主题ID。需要先开通CLS日志服务`,
+        },
+        {
+          name: "LogParseType",
+          type: "string",
+          description: `日志解析类型配置，指定日志的解析方式。用于将原始日志解析为结构化数据`,
+        },
+        {
+          name: "Tag",
+          type: "string",
+          description: `服务标签配置，用于标识服务类型。如设置为"function:"表示函数型服务。SDK会自动根据配置生成`,
+        },
+        {
+          name: "OperationMode",
+          type: "string",
+          description: `运行模式配置，指定服务的运行模式。影响服务的调度和资源分配方式`,
+        },
+        {
+          name: "SessionAffinity",
+          type: "string",
+          description: `会话保持配置，用于控制是否启用会话保持功能。启用后会将同一客户端的请求路由到同一实例`,
+        },
+        {
+          name: "TimerScale",
+          type: "array of object",
+          description: `定时扩缩容配置数组，用于配置服务的定时自动扩缩容策略。可配置多个时间段的扩缩容计划，支持每日/每周/每月循环`,
+          children: [
+            {
+              name: "CycleType",
+              type: "string",
+              required: true,
+              description: `循环类型：none=无循环，daily=每日循环，weekly=每周循环，monthly=每月循环 可填写的值: "none", "daily", "weekly", "monthly"`,
+            },
+            {
+              name: "StartDate",
+              type: "string",
+              description: `循环起始日期，格式：YYYY-MM-DD`,
+            },
+            {
+              name: "EndDate",
+              type: "string",
+              description: `循环结束日期，格式：YYYY-MM-DD`,
+            },
+            {
+              name: "StartTime",
+              type: "string",
+              required: true,
+              description: `起始时间，格式：HH:mm:ss`,
+            },
+            {
+              name: "EndTime",
+              type: "string",
+              required: true,
+              description: `结束时间，格式：HH:mm:ss`,
+            },
+            {
+              name: "ReplicaNum",
+              type: "number",
+              required: true,
+              description: `定时扩缩容的目标副本数，最小值0（缩容到0）`,
+            }
+          ],
+        },
+        {
+          name: "VpcConf",
+          type: "object",
+          description: `VPC网络配置（实例出网/私有网络）。用于让云托管实例接入指定 VPC，从而内网访问 MySQL/PostgreSQL/Redis/CVM 等资源。与 OpenAccessTypes（外部如何访问本服务）是不同概念。TCP 连库场景必须配置。禁止猜测 VpcId/SubnetId，须来自数据库控制台、已有资源详情、callCloudApi 或用户确认。创建时映射为 SDK vpcInfo(CreateType=2)；已存在服务可用 updateConfig 或 deploy（RMW 会保留未传入的远程 VpcConf）。部署/更新后必须用 queryCloudRun detail 复核 ServerConfig.VpcConf`,
+          children: [
+            {
+              name: "VpcId",
+              type: "string",
+              required: true,
+              description: `VPC网络ID，格式如 vpc-xxxxxxxx。必须与目标数据库/Redis 处于同一地域，并优先选择同一 VPC。禁止猜测或使用占位符；须来自数据库控制台、已有资源详情、callCloudApi 或用户确认。建议首次创建即配置；已存在服务也可在 deploy 时传入，部署后必须用 queryCloudRun detail 复核是否生效`,
+            },
+            {
+              name: "SubnetId",
+              type: "string",
+              required: true,
+              description: `子网ID，格式如 subnet-xxxxxxxx。云托管实例将占用该子网 IP，需确保有足够可用 IP`,
+            }
+          ],
+        },
+        {
+          name: "VolumesConf",
+          type: "array of object",
+          description: `存储卷配置数组，用于挂载云存储（如CFS）到服务实例中。可用于持久化数据或共享文件`,
+          children: [
+            {
+              name: "VolumeName",
+              type: "string",
+              required: true,
+              description: `存储卷名称`,
+            },
+            {
+              name: "VolumeType",
+              type: "string",
+              required: true,
+              description: `存储卷类型，如CFS表示云文件存储`,
+            },
+            {
+              name: "VolumePath",
+              type: "string",
+              required: true,
+              description: `存储卷挂载路径，服务代码中的目标路径`,
+            }
+          ],
+        },
+        {
+          name: "PublicNetConf",
+          type: "object",
+          description: `公网访问配置，用于控制服务的公网访问策略。可配置是否开启公网访问及访问路径`,
+          children: [
+            {
+              name: "PublicAccess",
+              type: "boolean",
+              description: `是否开启公网访问，true=开启公网访问，false=关闭公网访问`,
+            },
+            {
+              name: "PublicAccessPath",
+              type: "string",
+              description: `公网访问路径配置`,
+            }
+          ],
+        }
+      ],
+    },
+    {
+      name: "template",
+      type: "string",
+      description: `项目模板标识符，用于指定初始化项目时使用的模板。可通过queryCloudRun的templates操作获取可用模板列表。常用模板：helloworld=Hello World示例，nodejs=Node.js项目模板，python=Python项目模板等`,
+    },
+    {
+      name: "runOptions",
+      type: "object",
+      description: `本地运行参数配置，仅函数型云托管服务支持。用于配置本地开发环境的运行参数，不影响云端部署`,
+      children: [
+        {
+          name: "port",
+          type: "number",
+          description: `本地运行端口配置，仅函数型服务有效。指定服务在本地运行时监听的端口号，默认3000。确保端口未被其他程序占用`,
+        },
+        {
+          name: "envParams",
+          type: "object",
+          description: `本地运行时的附加环境变量配置，用于本地开发和调试。格式为键值对，如{"DEBUG":"true","LOG_LEVEL":"debug"}。这些变量仅在本地运行时生效`,
+        },
+        {
+          name: "runMode",
+          type: "string",
+          description: `运行模式：normal=普通函数模式，agent=Agent模式（用于AI智能体开发） 可填写的值: "normal", "agent"`,
+        },
+        {
+          name: "agentId",
+          type: "string",
+          description: `Agent ID，在agent模式下使用，用于标识特定的Agent实例`,
+        }
+      ],
+    },
+    {
+      name: "agentConfig",
+      type: "object",
+      description: `Agent配置项，仅在createAgent操作时使用`,
+      children: [
+        {
+          name: "agentName",
+          type: "string",
+          required: true,
+          description: `Agent名称，用于生成BotId`,
+        },
+        {
+          name: "botTag",
+          type: "string",
+          description: `Bot标签，用于生成BotId，不提供时自动生成`,
+        },
+        {
+          name: "description",
+          type: "string",
+          description: `Agent描述信息`,
+        },
+        {
+          name: "template",
+          type: "string",
+          description: `Agent模板类型，默认为blank（空白模板）`,
+        }
+      ],
+    },
+    {
+      name: "force",
+      type: "boolean",
+      description: `强制操作开关，用于跳过确认提示。默认false（需要确认），设置为true时跳过所有确认步骤。删除操作时强烈建议设置为true以避免误操作`,
+    },
+    {
+      name: "serverType",
+      type: "string",
+      description: `服务类型配置：function=函数型云托管（仅支持Node.js，有特殊的开发要求和限制，适合简单的API服务），container=容器型服务（推荐使用，支持任意语言和框架如Java/Go/Python/PHP/.NET等，适合大多数应用场景）。不提供时自动检测：1)现有服务类型 2)有Dockerfile→container 3)有@cloudbase/aiagent-framework依赖→function 4)其他情况→container 可填写的值: "function", "container"`,
+    },
+    {
+      name: "waitRegistration",
+      type: "boolean",
+      description: `deploy 时是否等待平台登记本次发布（默认 true，最多约 45 秒）。等待是为了拿到后续查询所需的标识（源码构建的 BuildId / 镜像部署的 RunId）；设为 false 时只做一次探测就返回，响应更快，适合不需要 buildId、之后再按需查询发布任务状态的场景`,
+    }
+  ]}
+/>
+
+---
+
+### `deployBuild`
+解析 cloudbaserc 并对 hosting[] 中配置了 buildCommand 的项目执行本地构建（仅执行 buildCommand，不安装依赖、不上传）。对应 CLI 的 tcb app build，但只处理 hosting[] 静态托管项，与 cloudbaserc 的 app 资源类型（云端构建管线）无关。声明式 hosting 部署拆分为「build → plan → apply」三步，本工具是第一步：先本地构建产物，再 deployPlan 预演，最后 deployApply 上传产物。deployApply 不再隐式本地构建 —— 带构建命令的 hosting 项在产物缺失时会报错引导先执行本工具。纯静态托管（未配置 buildCommand 且无法探测框架）自动跳过。构建为纯本地操作：不解析环境、不要求登录，也不需要 confirm。
+- cwd：项目根目录，默认当前工作目录
+- mode：环境名，命中 envOverrides.&lt;mode&gt; 时合并对应的多环境覆盖配置
+
+#### 参数
+
+<ParameterTable
+  parameters={[
+    {
+      name: "cwd",
+      type: "string",
+      description: `项目根目录，从此目录向下搜索 cloudbaserc；默认当前工作目录`,
+    },
+    {
+      name: "mode",
+      type: "string",
+      description: `环境名（如 production/staging），命中 envOverrides.<mode> 时合并覆盖`,
+    }
+  ]}
+/>
+
+---
+
+### `deployPlan`
+解析 cloudbaserc 并计算声明式部署计划（dry-run，不产生任何变更）。这是 deployApply 的预演对仗工具：plan 计算、deployApply 执行同一份 cloudbaserc。返回每个资源的动作分类：create=新建，update=覆盖更新，skip=无变更/不会执行，conflict=检测到冲突需中断，deploy=直传覆盖。计划已按 yes 复算为「实际会发生的动作」：不传 yes=true 时，云端已存在的函数会标为 skip（并在 declaredStatus 保留 update），与 deployApply 的实际执行结果一致，避免预演与执行相反。
+适用边界：本工具用于项目级声明式编排（一份 cloudbaserc 统一 plan/apply）；单资源临时直传请用 manageFunctions/manageHosting/manageApps。
+- cwd：项目根目录，默认当前工作目录
+- mode：环境名，命中 envOverrides.&lt;mode&gt; 时合并对应的多环境覆盖配置
+- envId：目标环境 ID，优先级高于 cloudbaserc 中的 envId；不传则用配置值或当前绑定环境
+- only：仅计算指定资源类型的计划
+- skip：跳过指定资源类型
+- yes：与 deployApply 的 yes 对齐，用于复算已存在函数的有效动作。true=预演为覆盖更新(update)；false（默认）=预演为保守跳过(skip)
+
+#### 参数
+
+<ParameterTable
+  parameters={[
+    {
+      name: "cwd",
+      type: "string",
+      description: `项目根目录，从此目录向下搜索 cloudbaserc；默认当前工作目录`,
+    },
+    {
+      name: "mode",
+      type: "string",
+      description: `环境名（如 production/staging），命中 envOverrides.<mode> 时合并覆盖`,
+    },
+    {
+      name: "envId",
+      type: "string",
+      description: `目标环境 ID，优先级高于 cloudbaserc 中的 envId；不传则用配置值或当前绑定环境`,
+    },
+    {
+      name: "only",
+      type: "array of string",
+      description: `仅计算指定资源类型的计划，可选值：database/functions/app/hosting/gateway`,
+    },
+    {
+      name: "skip",
+      type: "array of string",
+      description: `跳过指定资源类型，可选值：database/functions/app/hosting/gateway`,
+    },
+    {
+      name: "yes",
+      type: "boolean",
+      description: `与 deployApply 的 yes 对齐，用于复算已存在函数的有效动作。true=预演为覆盖更新；false（默认）=预演为保守跳过`,
+    }
+  ]}
+/>
+
+---
+
+### `deployApply`
+解析 cloudbaserc 并按 database→functions→app→hosting→gateway 顺序执行声明式部署。这是 deployPlan 的执行对仗工具（plan 预演 / deployApply 执行同一份 cloudbaserc），属于本地形态的 apply（读本地 cloudbaserc 并在本地构建上传），是会变更云端资源的写操作，必须显式传 confirm=true 才会执行。建议先用 deployPlan 预演，确认计划无误后再执行。
+适用边界：本工具用于项目级声明式编排（一份 cloudbaserc 统一 plan/apply）；单资源临时直传请用 manageFunctions/manageHosting/manageApps。
+- confirm：必须显式传 true 才执行部署，否则直接拒绝
+- confirmDestructive：当本次待执行的数据库迁移含破坏性语句（DROP/TRUNCATE/DELETE、ALTER…DROP/RENAME）时，除 confirm 外还必须显式传 confirmDestructive=true 才会执行；否则拒绝并列出命中的迁移与语句。无破坏性迁移时该参数不生效
+- cwd：项目根目录，默认当前工作目录
+- mode：环境名，命中 envOverrides.&lt;mode&gt; 时合并对应的多环境覆盖配置
+- envId：目标环境 ID，优先级高于 cloudbaserc 中的 envId；不传则用配置值或当前绑定环境
+- only：仅部署指定资源类型
+- skip：跳过指定资源类型
+- yes：遇到已存在资源时的处理方式。true=直接覆盖更新；false（默认）=保守跳过，在无法交互确认的场景下已存在资源不会被覆盖（与 deployPlan 的 yes 语义一致）
+- concurrency：同类型资源最大并行数，默认 1（串行）
+- continueOnError：某个资源失败后继续部署其余资源（database 失败仍强制中断）
+
+#### 参数
+
+<ParameterTable
+  parameters={[
+    {
+      name: "confirm",
+      type: "boolean",
+      description: `危险操作确认开关。部署会变更云端资源，必须显式传 confirm=true 才会执行`,
+    },
+    {
+      name: "confirmDestructive",
+      type: "boolean",
+      description: `破坏性数据库变更确认开关。当待执行迁移含 DROP/TRUNCATE/DELETE 或 ALTER…DROP/RENAME 时，必须在 confirm=true 之外额外显式传 confirmDestructive=true；无破坏性迁移时不生效`,
+    },
+    {
+      name: "cwd",
+      type: "string",
+      description: `项目根目录，从此目录向下搜索 cloudbaserc；默认当前工作目录`,
+    },
+    {
+      name: "mode",
+      type: "string",
+      description: `环境名（如 production/staging），命中 envOverrides.<mode> 时合并覆盖`,
+    },
+    {
+      name: "envId",
+      type: "string",
+      description: `目标环境 ID，优先级高于 cloudbaserc 中的 envId；不传则用配置值或当前绑定环境`,
+    },
+    {
+      name: "only",
+      type: "array of string",
+      description: `仅部署指定资源类型，可选值：database/functions/app/hosting/gateway`,
+    },
+    {
+      name: "skip",
+      type: "array of string",
+      description: `跳过指定资源类型，可选值：database/functions/app/hosting/gateway`,
+    },
+    {
+      name: "yes",
+      type: "boolean",
+      description: `遇到已存在资源时是否直接覆盖更新。true=覆盖；false（默认）=保守跳过已存在资源`,
+    },
+    {
+      name: "concurrency",
+      type: "integer",
+      description: `同类型资源最大并行数，默认 1（串行）；仅作用于同类型资源，跨类型依赖顺序不变`,
+    },
+    {
+      name: "continueOnError",
+      type: "boolean",
+      description: `某个资源失败后是否继续部署其余资源；database 失败始终强制中断`,
+    }
+  ]}
+/>
+
+---
+
+### `queryGateway`
+CloudBase HTTP 网关统一只读入口（Domain/Route）。查询域名下路径路由及其上游：WEB_SCF/SCF=云函数，CBR=云托管，STATIC_STORE=静态托管，LH=轻量应用服务器。主键为 Domain + Path；listRoutes / getRoute / listCustomDomains / getPrivilege。getPrivilege 查询 HTTP 网关总开关（enableService）与访问鉴权（enableAuth）状态。实现自定义域名访问前，先 listCustomDomains：若已有自定义域名，优先 createRoute 挂路由（无需证书 ID）；仅在没有可用自定义域名时才 bindCustomDomain。
+
+#### 参数
+
+<ParameterTable
+  parameters={[
+    {
+      name: "action",
+      type: "string",
+      required: true,
+      description: `只读操作类型：listRoutes、getRoute、listCustomDomains、getPrivilege。getPrivilege 无需其他参数，直接返回 HTTP 网关总开关与访问鉴权状态。自定义域名访问场景先 listCustomDomains 确认是否已有域名可复用。 可填写的值: "listRoutes", "getRoute", "listCustomDomains", "getPrivilege"`,
+    },
+    {
+      name: "targetName",
+      type: "string",
+      description: `上游资源名过滤（UpstreamResourceName）：云函数名、云托管服务名，或静态托管实例名（常见 staticstore）。`,
+    },
+    {
+      name: "routeId",
+      type: "string",
+      description: `路由 ID。getRoute 时可选`,
+    },
+    {
+      name: "path",
+      type: "string",
+      description: `路由路径。getRoute / listRoutes 过滤时可选`,
+    },
+    {
+      name: "domain",
+      type: "string",
+      description: `域名。getRoute / listRoutes 过滤时可选`,
+    }
+  ]}
+/>
+
+---
+
+### `manageGateway`
+CloudBase HTTP 网关统一写入口（Domain/Route）。createRoute/updateRoute/deleteRoute 把域名下的 path 转到上游；enableRoute/disableRoute 启用或禁用已有路由（底层 ModifyHTTPServiceRoute 的 Routes[].Enable，不是 ModifyGatewayRoute）。未传 domain 时用 DomainType=HTTPSERVICE 的 IsDefault 默认 HTTP 域名（形如 *.\{region\}.app.tcloudbase.com），不会使用静态托管 CDN 域名（*.tcloudbaseapp.com，DomainType=STATIC_STORE）。这是网关默认域上的路径路由，不是 STATIC_STORE 上游绑定；STATIC_STORE 上游必须显式传 upstreamResourceType=STATIC_STORE。关闭静态托管默认域名（*.tcloudbaseapp.com）：先 queryGateway(listRoutes) 找到 DomainType=STATIC_STORE 且 IsDefault=true 的 domain，再 manageGateway(action="disableRoute", domain=该域名, path="/")；勿用 manageHosting。创建后可用 queryGateway(action="listRoutes") 核对 Domain / DomainType / Path / UpstreamResourceType。上游类型只用一个参数 upstreamResourceType（也可写在 route.upstreamResourceType，route 优先）：WEB_SCF=HTTP云函数，SCF=Event云函数，CBR=云托管，STATIC_STORE=静态托管，LH=轻量应用服务器；配合 targetName 或 route.serviceName（云函数名/云托管服务名/静态托管实例名，常见 staticstore）。createRoute 只建网关入口，不改上游权限。enablePathTransmission：默认 false 剥触发路径前缀；true 透传完整路径（CBR 多路由、WEB_SCF 自管子路径常需 true；STATIC_STORE 自定义触发路径映射站点根通常 false）。⚠️ 自定义域名访问：若环境已有自定义域名（先 queryGateway listCustomDomains），优先 createRoute 并显式传入该 domain，无需 certificateId；仅首次绑定全新自定义域名时用 bindCustomDomain（certificateId 可选：未传时按域名自动检索证书，单证书自动选用、多证书返回选择指引）。createRoute / bindCustomDomain 创建前会调用 VerifyHTTPServiceRoute 做归属权等预检（探测→创建）；失败时返回 data.checks 与 DNS TXT 指引，配置后重试。CORS/安全域名（浏览器跨域白名单，与本工具的网关自定义域名无关）用 manageEnv(action=addSecurityDomain/removeSecurityDomain)。enableService/authSwitch：HTTP 网关总开关与访问鉴权开关；createRoute 后若访问报 HTTPSERVICE_NONACTIVATED，通常是总开关未开启（用 queryGateway getPrivilege 查询、enableService 开启）。
+
+#### 参数
+
+<ParameterTable
+  parameters={[
+    {
+      name: "action",
+      type: "string",
+      required: true,
+      description: `写操作：createRoute/updateRoute/deleteRoute 管理路由；enableRoute/disableRoute 启用或禁用已有路由（需 path，建议显式传 domain）；bindCustomDomain/deleteCustomDomain 管理自定义域名；enableService/authSwitch 开关 HTTP 网关总开关与访问鉴权（需配合 enable 参数）。createRoute/updateRoute 必须提供 upstreamResourceType；enableRoute/disableRoute 会先 listRoutes 定位已有路由，通常不必重填上游。updateRoute 也可传 enable/route.enable 直接改 Routes[].Enable。关闭 *.tcloudbaseapp.com 默认静态托管域：disableRoute + domain=该 STATIC_STORE IsDefault 域名 + path="/"。已有自定义域名时优先 createRoute(domain=已有域名) 实现访问，不必再次 bindCustomDomain / 传入 certificateId；bindCustomDomain 仅用于首次绑定新域名（certificateId 可选，未传则按域名自动检索；可选 accessType=DIRECT|CDN|CUSTOM，CUSTOM 需 customCname；普通场景用默认 DIRECT）。createRoute/bindCustomDomain 创建前会 VerifyHTTPServiceRoute 预检；失败时按返回的 DNS TXT 指引配置后重试。接入说明：https://docs.cloudbase.net/service/custom-domain 可填写的值: "createRoute", "updateRoute", "deleteRoute", "enableRoute", "disableRoute", "bindCustomDomain", "deleteCustomDomain", "enableService", "authSwitch"`,
+    },
+    {
+      name: "targetName",
+      type: "string",
+      description: `上游资源名称（UpstreamResourceName），与 route.serviceName 二选一（route 优先）。云函数=函数名；云托管=服务名；静态托管=实例名（常见 staticstore）。不会自动推断上游类型。`,
+    },
+    {
+      name: "path",
+      type: "string",
+      description: `触发路径（网关匹配前缀），默认 /{上游名}。例：云函数 /api/hello、云托管 /api、静态托管 / 或 /app。只建网关入口；与 enablePathTransmission 共同决定上游实际收到的路径。`,
+    },
+    {
+      name: "upstreamResourceType",
+      type: "string",
+      description: `上游类型（与 route.upstreamResourceType 二选一，route 优先）。WEB_SCF=HTTP云函数，SCF=Event云函数，CBR=云托管，STATIC_STORE=静态托管，LH=轻量应用服务器。createRoute/updateRoute 必填其一；勿把 manageFunctions 的 type=HTTP|Event 传到本字段。 可填写的值: "SCF", "WEB_SCF", "CBR", "STATIC_STORE", "LH"`,
+    },
+    {
+      name: "auth",
+      type: "boolean",
+      description: `网关路径鉴权（EnableAuth）。匿名/浏览器公网访问通常 false。只控制网关入口；云函数安全规则、云托管鉴权、静态托管权限需各自工具另行配置。`,
+    },
+    {
+      name: "enablePathTransmission",
+      type: "boolean",
+      description: `路径透传（EnablePathTransmission），平台默认 false。例 path=/api 且请求 /api/users：false→上游收到 /users；true→上游收到 /api/users。CBR 云托管（Express 等自管子路由）与 WEB_SCF 多路径函数常需 true；STATIC_STORE 把触发路径映射到站点根目录（如 /app → 托管 /）时通常 false；单入口/根路径处理保持 false。也可用 route.enablePathTransmission（route 优先）。`,
+    },
+    {
+      name: "route",
+      type: "object",
+      description: `路由对象（可选写法）。例：云函数 {upstreamResourceType:"WEB_SCF",serviceName:"fn",path:"/api"}；云托管 {upstreamResourceType:"CBR",serviceName:"svc",path:"/api"}；静态托管 {upstreamResourceType:"STATIC_STORE",serviceName:"staticstore",path:"/"}；禁用路由 {path:"/",enable:false}（配合 updateRoute，或直接用 disableRoute）。`,
+      children: [
+        {
+          name: "path",
+          type: "string",
+        },
+        {
+          name: "serviceName",
+          type: "string",
+          description: `上游实例名：云函数名 / 云托管服务名 / 静态托管实例名（常见 staticstore）/ LH 实例。优先于顶层 targetName。`,
+        },
+        {
+          name: "upstreamResourceType",
+          type: "string",
+          description: `同顶层 upstreamResourceType。route 内设置时优先于顶层。 可填写的值: "SCF", "WEB_SCF", "CBR", "STATIC_STORE", "LH"`,
+        },
+        {
+          name: "auth",
+          type: "boolean",
+        },
+        {
+          name: "enablePathTransmission",
+          type: "boolean",
+          description: `同顶层 enablePathTransmission。route 内设置时优先于顶层。`,
+        },
+        {
+          name: "enable",
+          type: "boolean",
+          description: `路由级开关（Routes[].Enable / Route.Enable）。createRoute/updateRoute 可用：enable=false 禁用该 Domain+Path（访问返回 GATEWAY_ROUTE_DISABLED）；enable=true 重新启用。updateRoute 也可用顶层 enable 表达同一语义；也可用专用 action enableRoute/disableRoute。route.enable 优先于顶层 enable。`,
+        }
+      ],
+    },
+    {
+      name: "domain",
+      type: "string",
+      description: `域名。省略时自动使用环境 DomainType=HTTPSERVICE 的 IsDefault 默认 HTTP 域名（*.{region}.app.tcloudbase.com），不会回退到静态托管 CDN 域名（*.tcloudbaseapp.com，DomainType=STATIC_STORE）；也不是 STATIC_STORE 上游绑定。可用 queryGateway(action="listRoutes") 核对实际 Domain / DomainType。enableRoute/disableRoute 操作 *.tcloudbaseapp.com 时必须显式传入该域名。已有自定义域名时请显式传入该域名并 createRoute/updateRoute/deleteRoute，即可实现自定义域名访问且无需证书 ID；仅 bindCustomDomain 时表示要新绑定的域名。`,
+    },
+    {
+      name: "certificateId",
+      type: "string",
+      description: `证书 ID。仅 bindCustomDomain 使用：显式传入时跳过自动检索；省略时按 domain 调用 describeCertificates(SearchKey=domain)——单证书自动选用，无证书报错，多证书返回结构化选择指引（MCP 非交互）。在已有自定义域名上 createRoute / updateRoute / deleteRoute 不需要 certificateId。`,
+    },
+    {
+      name: "accessType",
+      type: "string",
+      description: `绑定类型（仅 bindCustomDomain，默认 DIRECT）。DIRECT=直连（普通绑域名用这个）；CDN=云开发 CDN；CUSTOM=自有 CDN/WAF（需 customCname）。详见 https://docs.cloudbase.net/service/custom-domain 可填写的值: "DIRECT", "CDN", "CUSTOM"`,
+    },
+    {
+      name: "customCname",
+      type: "string",
+      description: `自有 CDN/WAF 的回源/回填地址（仅 bindCustomDomain 且 accessType=CUSTOM）。不是 DNS 里用户域名要解析到的那个 CNAME；DIRECT/CDN 不要传。详见 https://docs.cloudbase.net/service/custom-domain`,
+    },
+    {
+      name: "enable",
+      type: "boolean",
+      description: `开关目标状态：enableService / authSwitch 必填（true 开启 / false 关闭）；bindCustomDomain 可选：enable=false 表示绑定后禁用域名（默认启用）；updateRoute 可选：映射到 Routes[].Enable（也可用 route.enable，route 优先；也可用专用 action enableRoute/disableRoute）。省略或非布尔值在 enableService/authSwitch 会返回参数错误。`,
+    }
+  ]}
+/>
+
+---
+
+### `queryAppAuth`
+CloudBase 应用侧认证配置只读入口。用于查询登录方式、provider、publishable key、API key、client 配置和静态域名等认证准备状态。⚠️ 本工具为管理端配置查询工具，不执行用户登录。当任务要求编写客户端登录代码时（例如「用 JS SDK 登录」），应先通过本工具确认配置状态，再在项目代码中编写 @cloudbase/js-sdk 客户端登录代码（如 auth.signInWithPassword()），而非使用本工具完成登录。若业务要接受普通用户名样式标识符，先查询 action=getLoginConfig；若 usernamePassword=false，下一步应立即调用 manageAppAuth(action=patchLoginStrategy, patch=\{ usernamePassword: true \})，不要直接写 email 登录 API。
+
+#### 参数
+
+<ParameterTable
+  parameters={[
+    {
+      name: "action",
+      type: "string",
+      required: true,
+      description: ` 可填写的值: "getLoginConfig", "listProviders", "getProvider", "getClientConfig", "getPublishableKey", "getStaticDomain", "listApiKeys"`,
+    },
+    {
+      name: "providerId",
+      type: "string",
+      description: `provider 标识，如 email、google`,
+    },
+    {
+      name: "clientId",
+      type: "string",
+      description: `OAuth client_id / DescribeClient 的 Id；省略时默认使用当前环境 ID（默认客户端）`,
+    },
+    {
+      name: "keyType",
+      type: "string",
+      description: `API key 类型过滤，可选 publish_key 或 api_key 可填写的值: "publish_key", "api_key"`,
+    },
+    {
+      name: "pageNumber",
+      type: "integer",
+      description: `API key 列表页码，从 1 开始`,
+    },
+    {
+      name: "pageSize",
+      type: "integer",
+      description: `API key 列表每页条数`,
+    }
+  ]}
+/>
+
+---
+
+### `manageAppAuth`
+CloudBase 应用侧认证配置写入口。用于修改登录方式、provider、client 配置，确保 publishable key，以及创建或删除 API key、自定义登录密钥。⚠️ 本工具为管理端配置工具，不执行用户登录。当任务要求编写客户端登录代码时（例如「用 JS SDK 登录」），应先通过本工具完成配置（如启用 usernamePassword、获取 publishable key），再在项目代码中编写 @cloudbase/js-sdk 客户端登录代码（如 auth.signInWithPassword()），而非使用本工具完成登录。若前端要接受普通用户名样式标识符，应先执行 action=patchLoginStrategy 并传入 patch=\{ usernamePassword: true \}，再实现对应前端登录逻辑。⚠️ 短信验证码登录（patch=\{ phone: true \}）使用云开发默认短信通道，开启后即可收发验证码，不需要配置短信签名/模板/自定义 Provider；仅当需要自定义模板/签名或更换短信服务商时才需配置 SmsVerificationConfig 或自定义短信通道。⚠️ action=createApiKey 返回体中的 created 字段表示是否真正新建：created=false 说明复用了环境中已存在的 key，此时 keyName/expireIn 入参不会生效，返回的 keyName/expireAt 均为服务端真实值，并会附带 warnings，切勿把它当作临时凭证分发。
+
+#### 参数
+
+<ParameterTable
+  parameters={[
+    {
+      name: "action",
+      type: "string",
+      required: true,
+      description: ` 可填写的值: "patchLoginStrategy", "addProvider", "updateProvider", "deleteProvider", "updateClientConfig", "ensurePublishableKey", "createApiKey", "deleteApiKey", "createCustomLoginKeys"`,
+    },
+    {
+      name: "patch",
+      type: "object",
+      description: `patchLoginStrategy 使用的简化登录策略 patch，如 { usernamePassword: true }`,
+    },
+    {
+      name: "providerId",
+      type: "string",
+      description: `provider 标识，如 email、google；addProvider 时也可作为自定义 provider Id`,
+    },
+    {
+      name: "providerType",
+      type: "string",
+      description: `addProvider 时的 provider 协议类型 可填写的值: "OAUTH", "OIDC", "SAML", "WX_MICRO_APP", "WX_QRCODE_MICRO_APP", "WX_CLOUDBASE_MICRO_APP", "WX_MP", "WX_OPEN", "WX_WORK_INTERNAL", "WX_WORK_AGENT", "WX_WORK_THIRD_PARTY", "WX_WORK_THIRD_PARTY_ASSOCIATION", "CUSTOM", "EMAIL"`,
+    },
+    {
+      name: "displayName",
+      type: "union",
+      description: `addProvider 时的展示名称，可传字符串或多语言对象`,
+    },
+    {
+      name: "clientId",
+      type: "string",
+      description: `updateClientConfig 时的客户端 Id；省略时默认使用当前环境 ID`,
+    },
+    {
+      name: "config",
+      type: "object",
+      description: `provider / client 的配置对象`,
+    },
+    {
+      name: "keyType",
+      type: "string",
+      description: `createApiKey 时的 API key 类型，默认 publish_key 可填写的值: "publish_key", "api_key"`,
+    },
+    {
+      name: "keyName",
+      type: "string",
+      description: `createApiKey 时的 API key 名称；服务端可能忽略该值（如 publish_key 每环境唯一时），返回体中的 keyName 一律为服务端实际存储的名称`,
+    },
+    {
+      name: "expireIn",
+      type: "integer",
+      description: `createApiKey 时的有效期，单位秒；0 表示不过期。复用已有 key 时该值不生效，此时返回体会带 created=false 与 warnings`,
+    },
+    {
+      name: "keyId",
+      type: "string",
+      description: `deleteApiKey 时的 API key 唯一标识`,
+    }
+  ]}
+/>
+
+---
+
+### `queryApps`
+查询 CloudBase 应用部署的应用和版本。可查应用列表/详情、版本列表/详情；部署后用 getAppVersion 按 buildId 轮询构建状态；getBuildLog 可查询构建日志用于诊断失败原因。
+action=getUploadUrl（只读）可获取预签名上传 URL：无本地文件系统时（cloud mode），先拿到 uploadUrl 自行 PUT 代码 zip，再用返回的 unixTimestamp 调 manageApps(action=deployApp, cosTimestamp) 触发部署。uploadUrl 是一次性上传凭据，不要外传或写进工单。
+
+#### 参数
+
+<ParameterTable
+  parameters={[
+    {
+      name: "action",
+      type: "string",
+      required: true,
+      description: ` 可填写的值: "listApps", "getApp", "listAppVersions", "getAppVersion", "getBuildLog", "getUploadUrl"`,
+    },
+    {
+      name: "serviceName",
+      type: "string",
+      description: `CloudBase 应用服务名。getApp / listAppVersions / getAppVersion / getBuildLog / getUploadUrl 时必填；重新部署后复用同一个 serviceName 查询版本历史。`,
+    },
+    {
+      name: "searchKey",
+      type: "string",
+      description: `按应用服务名模糊搜索关键词，仅 action=listApps 时使用。`,
+    },
+    {
+      name: "pageNo",
+      type: "number",
+      description: `分页页码，从 1 开始。`,
+    },
+    {
+      name: "pageSize",
+      type: "number",
+      description: `分页大小。`,
+    },
+    {
+      name: "versionName",
+      type: "string",
+      description: `版本名称。getAppVersion 时可与 buildId 二选一；已知版本号时优先传该值。`,
+    },
+    {
+      name: "buildId",
+      type: "string,number",
+      description: `构建 ID（数字或数字字符串均可）。getAppVersion 时可与 versionName 二选一；部署返回 BuildId 后可直接用它轮询状态。getBuildLog 时必填。`,
+    },
+    {
+      name: "start",
+      type: "number",
+      description: `构建日志偏移量，用于分页拉取后续日志。仅 action=getBuildLog 时使用，不传时从开头返回。`,
+    }
+  ]}
+/>
+
+---
+
+### `manageApps`
+部署 Web 应用到 CloudBase（构建前后端，部署到独立子域名）。
+云端上传通道（cloud mode，无本地文件系统）：queryApps(action=getUploadUrl) 或 manageApps(action=getUploadUrl) 获取预签名上传 URL → agent 自行 PUT 代码 zip 到 uploadUrl（带 uploadHeaders 与 Content-Type: application/zip）→ 用返回的 unixTimestamp 作为 cosTimestamp 调 deployApp 触发部署。
+action=getUploadUrl 获取预签名上传 URL（cloud mode 下使用），返回上传地址和 cosTimestamp。
+action=deployApp 上传源码 ZIP 并触发远端构建部署管道：
+  1. 远端 npm install（可通过 installCmd="" 跳过）
+  2. 远端 npm run build（可通过 buildCmd="" 跳过）
+  3. 远端 tcb hosting deploy
+
+域名格式：`&lt;serviceName&gt;-&lt;envId&gt;.webapps.tcloudbase.com`（每个 serviceName 一个独立子域名）
+
+✅ 推荐用法（新项目／需要独立域名的 Web 应用，首选此工具）：
+  新建项目首次部署时，传 framework=static, installCmd="", buildCmd="" 跳过远端构建，
+  只执行 tcb hosting deploy。部署后获得独立子域名，支持版本管理。
+
+⚠️ 兼容性说明：
+- 已有项目若之前用 manageHosting 部署过（域名格式：`&lt;envId&gt;-&lt;appId&gt;.tcloudbaseapp.com`），
+  切换到 manageApps 会产生全新的 URL，老链接失效。请保持原部署方式不变。
+- 如需判断：调用 queryHosting 检查是否已有托管文件。
+
+与 manageHosting 对比：
+- manageApps（本工具，新项目首选）：域名 `&lt;serviceName&gt;-&lt;envId&gt;.webapps.tcloudbase.com`，独立子域名，支持版本管理
+- manageHosting（已有项目或 fallback）：域名 `&lt;envId&gt;-&lt;appId&gt;.tcloudbaseapp.com/&lt;path&gt;`，共享环境域名
+两者均可绑定自定义域名。
+
+⚠️ 如果 manageApps 构建失败，先用 queryApps(action="getBuildLog") 查日志；仍不行再 fallback 到 manageHosting。
+
+#### 参数
+
+<ParameterTable
+  parameters={[
+    {
+      name: "action",
+      type: "string",
+      required: true,
+      description: ` 可填写的值: "deployApp", "getUploadUrl", "deleteApp", "deleteAppVersion"`,
+    },
+    {
+      name: "serviceName",
+      type: "string",
+      required: true,
+      description: `CloudBase 应用服务名，会体现在域名中：\`<serviceName>-<envId>.webapps.tcloudbase.com\`。deployApp 时复用现有 serviceName 会新增一个部署版本并触发重新部署，而不是删除重建。首次部署请用新名称。`,
+    },
+    {
+      name: "filePath",
+      type: "string",
+      description: `要上传并部署的本地项目根目录绝对路径。本地模式下 deployApp 时必填；通常传源码所在目录（含 package.json 和源码），不是 dist 目录。构建产物目录请用 buildPath 指定。cloud mode 下无需传此参数，改用 cosTimestamp。`,
+    },
+    {
+      name: "cosTimestamp",
+      type: "string,number",
+      description: `COS 时间戳（getUploadUrl 返回的 unixTimestamp，字符串或数字均可）。传入则直接用已上传的代码创建应用，跳过本地打包上传；需先 getUploadUrl 拿预签名 URL 并 PUT ZIP。cloud mode 必填。与 filePath 严格二选一，同时提供或都不提供都会报错。`,
+    },
+    {
+      name: "appPath",
+      type: "string",
+      description: `应用线上访问路径（hosting mount path），例如 /my-web-app。不是本地目录路径；CloudApp 已有独立子域名，省略时默认为 /（根路径）。`,
+    },
+    {
+      name: "buildPath",
+      type: "string",
+      description: `构建产物目录，相对于 filePath，例如 dist 或 build。 ⚠️ 传此值后远端构建系统会 cd 到此目录再执行 tcb hosting deploy，因此 deployCmd 会自动使用 .（当前目录）而非目录名，避免路径重复（如 dist/dist 错误）。 纯静态 HTML 如果在项目根目录可省略，但注意 deployCmd 默认用 dist。`,
+    },
+    {
+      name: "framework",
+      type: "string",
+      description: `前端框架类型。可选值：vue、react、next、nuxt、vite、angular、static。 即使传 static，仍会经过远端构建管道。如果本地已构建好，建议改用 manageHosting 直接上传，可完全跳过远端构建。 可填写的值: "vue", "react", "next", "nuxt", "vite", "angular", "static"`,
+    },
+    {
+      name: "nodeJsVersion",
+      type: "string",
+      description: `构建时使用的 Node.js 版本；不传时由 CloudBase 使用默认值。`,
+    },
+    {
+      name: "installCmd",
+      type: "string",
+      description: `依赖安装命令，例如 npm install。不传时默认 npm install。本地已安装或无需安装可传空字符串 '' 跳过，但远端仍会执行 tcb hosting deploy。`,
+    },
+    {
+      name: "buildCmd",
+      type: "string",
+      description: `构建命令，例如 npm run build。不传时默认 npm run build。本地已构建好可传空字符串 '' 跳过构建步骤。若希望完全跳过远端管道，请改用 manageHosting。`,
+    },
+    {
+      name: "deployCmd",
+      type: "string",
+      description: `自定义部署命令。通常无需填写，默认自动生成 tcb hosting deploy 命令。有 buildPath 时远端已 cd 到该目录，默认用 . 作为源码路径；无 buildPath 时默认用 dist。`,
+    },
+    {
+      name: "ignore",
+      type: "array of string",
+      description: `上传时忽略的文件/目录 glob 模式，例如 **/node_modules/**。 ⚠️ 打包的是项目根目录（filePath）而非 buildPath 产物目录：若项目根含 target/（Rust）、.next/、dist-old/、build/ 等大构建产物，必须加进 ignore（如 **/target/**），否则整个目录被打进上传 zip（实证 54GB target → 34GB zip）。默认已排除 node_modules/.git/.DS_Store/**/target/**/.next/**/.next.bak/**。`,
+    },
+    {
+      name: "versionName",
+      type: "string",
+      description: `要删除的历史版本名，仅 action=deleteAppVersion 时必填。`,
+    }
+  ]}
+/>
+
+---
+
+### `queryPermissions`
+查询 CloudBase 权限与用户配置，支持查询资源权限（数据库/云函数/存储桶等）、角色列表/详情、应用用户列表/详情，以及网关 OPA 授权策略（对齐 CLI `tcb policy list/get`）。
+
+示例：
+- 查询存储桶权限：`action="getResourcePermission", resourceType="storage", resourceId="bucket-name"`
+- 列出旧网关策略：`action="listPolicy"`（PG / OPA 引擎环境返回空列表，与 CLI 一致）
+- 读取用户 Rego：`action="getPolicy"`；平台扩展策略：`action="getPolicy", extension=true`
+
+📌 跨后端边界提示：调用前先用 `queryEnv(action="info", envId=...)` 看 `EnvInfo.RuntimeBackends`。`resourceType="noSqlDatabase"` 查询的是 CloudBase NoSQL 集合规则，与 CloudBase PostgreSQL（PG）表的行级安全（RLS）是两套独立机制——同一个 PG 环境里 NoSQL 集合若仍在使用，对那些集合查询本工具结果**仍然有效**。要查 PG 表 RLS，请改用 `queryPgDatabase(action="sql", sql="SELECT * FROM pg_policies WHERE tablename=...")`。本工具不涉及 MySQL 权限。
+
+⚠️ PostgreSQL 环境：平台 `DescribeResourcePermission` 对 PG 环境会直接拒绝。当 `resourceType="function"` 时，本工具会自动回退到 Manager SDK `describeEnvAuthzConfig`（与 CLI `tcb policy get` 一致，读取 `authz.user.rego`）。显式 OPA 策略请用 `listPolicy` / `getPolicy`。
+
+⚠️ 角色类 action（`listRoles` / `getRole`）在 **PostgreSQL 类型环境**下平台侧一律拒绝（`The current API does not support PostgreSQL type environments.`）——这是平台能力边界，不是配置问题，**不要在 PG 环境反复重试**；PG 环境请改用 RLS（`managePgDatabase(action="execute")` 跑 `CREATE POLICY`）或控制台管理权限。
+
+#### 参数
+
+<ParameterTable
+  parameters={[
+    {
+      name: "action",
+      type: "string",
+      required: true,
+      description: ` 可填写的值: "getResourcePermission", "listResourcePermissions", "listRoles", "getRole", "listUsers", "getUser", "listPolicy", "getPolicy"`,
+    },
+    {
+      name: "resourceType",
+      type: "string",
+      description: ` 可填写的值: "noSqlDatabase", "sqlDatabase", "function", "storage"`,
+    },
+    {
+      name: "resourceId",
+      type: "string",
+    },
+    {
+      name: "resourceIds",
+      type: "array of string",
+    },
+    {
+      name: "roleId",
+      type: "string",
+    },
+    {
+      name: "roleIdentity",
+      type: "string",
+    },
+    {
+      name: "roleName",
+      type: "string",
+    },
+    {
+      name: "uid",
+      type: "string",
+    },
+    {
+      name: "username",
+      type: "string",
+    },
+    {
+      name: "pageNo",
+      type: "number",
+    },
+    {
+      name: "pageSize",
+      type: "number",
+    },
+    {
+      name: "extension",
+      type: "boolean",
+      description: `仅 action=getPolicy。true=读取平台为该环境单独配置的策略（authz.platform.extension.rego），默认 false=用户策略（authz.user.rego），对齐 CLI \`tcb policy get --extension\`。`,
+    },
+    {
+      name: "policyResourceType",
+      type: "string",
+      description: `仅 action=listPolicy。按资源类型过滤，当前仅支持 \`policy\`，对齐 CLI \`tcb policy list --resource-type policy\`。 可填写的值: "policy"`,
+    }
+  ]}
+/>
+
+---
+
+### `managePermissions`
+管理 CloudBase 权限与用户配置，支持修改资源权限（数据库/云函数/存储桶等）、角色管理、成员与策略增删、应用用户 CRUD，以及设置网关 OPA Rego 策略（对齐 CLI `tcb policy set`）。
+
+示例：
+- 设置存储桶为私有：`action="updateResourcePermission", resourceType="storage", resourceId="bucket-name", permission="PRIVATE"`
+- 创建角色：`action="createRole", roleName="admin", roleIdentity="admin"`
+- 放开云函数匿名/未登录访问（PG 会走 OPA，对齐 CLI `tcb policy set`）：`action="updateResourcePermission", resourceType="function", resourceId="myFn", permission="CUSTOM", securityRule='\{"invoke":true\}'`
+- 直接设置用户 Rego：`action="setPolicy", regoContent="package authz.user\n\ndefault allow := false\n", confirm=true`（⚠️ 立即禁用旧网关鉴权）
+
+注意：`createUser` / `updateUser` 是环境侧应用用户管理能力，适合测试账号、管理员或预置用户，不应替代浏览器里的 Web SDK 注册表单；前端用户名密码注册应使用 `auth.signUp(\{ username, password \})`，登录应使用 `auth.signInWithPassword(\{ username, password \})`。直接在浏览器里用 `auth.signUp` 创建用户名密码用户取决于 SDK/provider 支持，使用前必须验证；不支持时应走后端或管理端边界，不能在浏览器暴露密钥。`securityRule` 的详细语义取决于 `resourceType`：`doc._openid`、`auth.openid`、查询条件子集校验，以及 `create` / `update` / `delete` JSON 模板仅适用于 `resourceType="noSqlDatabase"` 的文档数据库安全规则；配置 `function` 或 `storage` 时，请参考各自官方安全规则文档，而不是复用 NoSQL 模板。
+
+📌 跨后端边界提示：调用前先用 `queryEnv(action="info", envId=...)` 看 `EnvInfo.RuntimeBackends`：
+- `resourceType="noSqlDatabase"` 仅作用于 CloudBase NoSQL 文档数据库的集合；CloudBase PostgreSQL（PG）表的行级权限**不**受它控制——PG 表请改用 RLS：`managePgDatabase(action="execute", confirm=true)` 跑 `ALTER TABLE ... ENABLE ROW LEVEL SECURITY` 与 `CREATE POLICY ...`。同一个 PG 环境里如果还有 NoSQL 集合在用，对那些**集合**继续使用 `noSqlDatabase` 规则是正确的——不是"PG 环境就禁用本工具"。
+- `resourceType="storage"` 控制的是 NoSQL/COS 存储桶 ACL；PG 的 `pgstore` bucket 不在此 `resourceType` 覆盖范围内。
+- 本工具不涉及 MySQL；MySQL 数据库权限请走 MySQL 自身的 GRANT/REVOKE 语句（通过 `manageMysqlDatabase`）。
+
+⚠️ PostgreSQL 环境：平台 `ModifyResourcePermission` 对 PG 环境会直接拒绝。当 `resourceType="function"` 时，本工具会自动回退到 Manager SDK `modifyEnvAuthzConfig`（与 CLI `tcb policy set` 一致，写入 `authz.user.rego`）。`securityRule` 可传完整 Rego（`package authz.user`）或 `'\{"invoke":true\}'`（自动生成放通 anonymous/unauthenticated 调 functions 的策略）。设置 Rego 后旧网关鉴权会失效，行为与 CLI 相同。显式 OPA 策略请优先用 `action="setPolicy"`。
+
+⚠️ 角色类 action（`createRole` / `deleteRoles` / `updateRole`）在 **PostgreSQL 类型环境**下平台侧一律拒绝（`The current API does not support PostgreSQL type environments.`）——平台能力边界，不是配置问题，**不要在 PG 环境反复重试**；PG 环境请改用 RLS（`managePgDatabase(action="execute")` 跑 `CREATE POLICY`）或控制台管理权限。
+
+#### 参数
+
+<ParameterTable
+  parameters={[
+    {
+      name: "action",
+      type: "string",
+      required: true,
+      description: ` 可填写的值: "updateResourcePermission", "createRole", "updateRole", "deleteRoles", "addRoleMembers", "removeRoleMembers", "addRolePolicies", "removeRolePolicies", "createUser", "updateUser", "deleteUsers", "setPolicy"`,
+    },
+    {
+      name: "resourceType",
+      type: "string",
+      description: `目标资源类型。\`securityRule\` 的具体语义依赖这个值；\`noSqlDatabase\` 使用集合安全规则，\`function\` 与 \`storage\` 也有各自独立的安全规则语义，不要套用 NoSQL 规则语法。 可填写的值: "noSqlDatabase", "sqlDatabase", "function", "storage"`,
+    },
+    {
+      name: "resourceId",
+      type: "string",
+    },
+    {
+      name: "permission",
+      type: "string",
+      description: ` 可填写的值: "READONLY", "PRIVATE", "ADMINWRITE", "ADMINONLY", "CUSTOM"`,
+    },
+    {
+      name: "securityRule",
+      type: "string",
+      description: `资源类型特定的规则内容，详细语义依赖 \`resourceType\`。当 \`resourceType="noSqlDatabase"\` 且 \`permission="CUSTOM"\` 时，应传文档数据库安全规则 JSON（文档型数据库规则：\`https://docs.cloudbase.net/database/security-rules\`）；键通常为 \`read\` / \`create\` / \`update\` / \`delete\`，值为表达式。重要：\`create\` 规则验证写入数据，此时文档尚不存在，不能使用 \`doc.*\`；\`read\` / \`update\` / \`delete\` 规则可使用 \`doc.*\` 引用已有文档字段。不要把 \`doc._openid\`、\`auth.openid\`、查询条件子集校验或 \`create\` / \`update\` / \`delete\` 模板误用于 \`function\`、\`storage\` 或 \`sqlDatabase\`。如需配置 \`function\` 或 \`storage\`，请改查官方安全规则文档：云函数 \`https://docs.cloudbase.net/cloud-function/security-rules\`，云存储 \`https://docs.cloudbase.net/storage/security-rules\`。示例：{"read":"auth.uid != null","create":"auth.uid != null && auth.loginType != "ANONYMOUS"","update":"auth.uid != null && doc._openid == auth.openid","delete":"auth.uid != null && doc._openid == auth.openid"}`,
+    },
+    {
+      name: "roleId",
+      type: "string",
+    },
+    {
+      name: "roleIds",
+      type: "array of string",
+    },
+    {
+      name: "roleName",
+      type: "string",
+    },
+    {
+      name: "roleIdentity",
+      type: "string",
+      description: `角色标识符（字母/数字/_-:@.），action=createRole 时必填，用于程序化引用角色`,
+    },
+    {
+      name: "description",
+      type: "string",
+    },
+    {
+      name: "memberUids",
+      type: "array of string",
+    },
+    {
+      name: "policies",
+      type: "array of object",
+    },
+    {
+      name: "policyIds",
+      type: "array of string",
+      description: `策略 ID 列表（当前不支持直接按 ID 绑定，请改传 policies 详情对象）`,
+    },
+    {
+      name: "uid",
+      type: "string",
+    },
+    {
+      name: "uids",
+      type: "array of string",
+    },
+    {
+      name: "username",
+      type: "string",
+    },
+    {
+      name: "password",
+      type: "string",
+    },
+    {
+      name: "userStatus",
+      type: "string",
+      description: ` 可填写的值: "ACTIVE", "BLOCKED"`,
+    },
+    {
+      name: "regoContent",
+      type: "string",
+      description: `仅 action=setPolicy。用户 OPA Rego 全文，必须以 \`package authz.user\` 开头，对齐 CLI \`tcb policy set <regoContent>\`。`,
+    },
+    {
+      name: "confirm",
+      type: "boolean",
+      description: `仅 action=setPolicy。设置 Rego 后会立即禁用旧网关鉴权，必须显式传 confirm=true（对齐 CLI 确认提示）。`,
+    }
+  ]}
+/>
+
+---
+
+### `queryLogs`
+CloudBase 日志域统一只读入口。支持检查日志服务状态并搜索 CLS 日志。
+
+**重要区分**：
+- 查询云函数日志：使用 `queryFunctions(action="listFunctionLogs", functionName="xxx")`
+- 查询 CLS 日志（跨服务日志聚合）：使用本工具 `queryLogs(action="searchLogs")`
+- 开通 CLS 日志服务：使用 `manageLogs(action="createLogService", confirm=true)`
+
+**适用场景**：
+- 检查 CLS 日志服务是否开通：`action="checkLogService"`
+- 跨服务日志搜索（如搜索所有 ERROR 日志）：`action="searchLogs"`
+- 按 CLS 语法检索特定服务的日志：`action="searchLogs", service="tcb|tcbr"`
+
+#### 参数
+
+<ParameterTable
+  parameters={[
+    {
+      name: "action",
+      type: "string",
+      required: true,
+      description: `操作类型： - \`checkLogService\`: 检查 CLS 日志服务是否开通 - \`searchLogs\`: 搜索 CLS 日志（需要提供 queryString） 可填写的值: "checkLogService", "searchLogs"`,
+    },
+    {
+      name: "queryString",
+      type: "string",
+      description: `CLS 查询语句，**action="searchLogs" 时必填**，需严格遵循 CLS（Cloud Log Service）语法规范，详见 https://cloud.tencent.com/document/api/876/128127 **云函数相关查询**： - 云函数日志：\`(src:app OR src:system) AND log:"START RequestId"\` - 聚合云函数请求状态：\`| select request_id, max(status_code) as status where ((request_id='44738f94-16dd-11f1-****' AND retry_num=0) AND retry_num=0) AND status_code!=202 group by request_id, retry_num\` **云数据库 / 文档型**： - 云数据库（文档型）：\`module:database\` - 云数据库（文档型）事件：\`module:database AND eventType:(MongoSlowQuery)\`（MongoSlowQuery 为文档型数据库慢查询事件） **云数据库 / SQL 型**： - 云数据库（SQL 型）：\`module:rdb\` - 云数据库（SQL 型）事件：\`module:rdb AND eventType:(MysqlFreeze OR MysqlRecover OR MysqlSlowQuery)\`（MysqlFreeze 冻结、MysqlRecover 恢复、MysqlSlowQuery 慢查询） **其它服务**： - 审批流：\`module:workflow\` - 模型：\`module:model\` - 用户权限：\`module:auth\` - 大模型：\`module:llm AND logType:llm-tracelog\` - 网关服务调用：\`logType:accesslog\` - 应用发布/删除事件：\`module:app AND eventType:(AppProdPub OR AppProdDel)\`（AppProdPub 发布事件、AppProdDel 删除事件） 以上仅为示例，实际使用时请根据具体日志内容调整。 **注意**：查询特定云函数的执行日志时，优先使用 \`queryFunctions(action="listFunctionLogs", functionName="xxx")\`。`,
+    },
+    {
+      name: "service",
+      type: "string",
+      description: `日志来源服务： - \`tcb\`: 云函数、数据库、存储等基础服务日志 - \`tcbr\`: CloudRun 容器服务日志 可填写的值: "tcb", "tcbr"`,
+    },
+    {
+      name: "startTime",
+      type: "string",
+      description: `查询开始时间，格式：\`YYYY-MM-DD HH:mm:ss\`，如 \`2024-01-01 00:00:00\``,
+    },
+    {
+      name: "endTime",
+      type: "string",
+      description: `查询结束时间，格式：\`YYYY-MM-DD HH:mm:ss\`，如 \`2024-01-01 23:59:59\``,
+    },
+    {
+      name: "limit",
+      type: "number",
+      description: `返回日志条数限制，默认 20`,
+    },
+    {
+      name: "context",
+      type: "string",
+      description: `翻页上下文，用于继续上一次查询`,
+    },
+    {
+      name: "sort",
+      type: "string",
+      description: `按时间排序：\`asc\` 升序，\`desc\` 降序 可填写的值: "asc", "desc"`,
+    }
+  ]}
+/>
+
+---
+
+### `manageLogs`
+CloudBase 日志域写入入口。用于开通 CLS 日志服务（对齐 Manager SDK `log.createLogService` / CreateEnvResource Resources=['log']）。
+
+**适用场景**：
+- 开通 CLS 日志服务：`action="createLogService", confirm=true`
+
+开通为异步操作：接口成功不代表立即可用，请随后用 `queryLogs(action="checkLogService")` 轮询确认。
+
+#### 参数
+
+<ParameterTable
+  parameters={[
+    {
+      name: "action",
+      type: "string",
+      required: true,
+      description: `操作类型： - \`createLogService\`: 开通 CLS 日志服务（需 \`confirm=true\`） 可填写的值: "createLogService"`,
+    },
+    {
+      name: "confirm",
+      type: "boolean",
+      description: `开通日志服务前的显式确认。必须传 \`confirm=true\`；未传时返回 CONFIRM_REQUIRED。`,
+    }
+  ]}
+/>
+
+---
+
+### `queryAgents`
+CloudBase Agent 域统一只读入口。支持列表、详情与日志查询。
+
+#### 参数
+
+<ParameterTable
+  parameters={[
+    {
+      name: "action",
+      type: "string",
+      required: true,
+      description: ` 可填写的值: "listAgents", "getAgent", "getAgentLogs"`,
+    },
+    {
+      name: "agentId",
+      type: "string",
+    },
+    {
+      name: "pageNumber",
+      type: "number",
+    },
+    {
+      name: "pageSize",
+      type: "number",
+    },
+    {
+      name: "params",
+      type: "object",
+    }
+  ]}
+/>
+
+---
+
+### `manageAgents`
+CloudBase Agent 域统一写入口。支持创建、更新和删除远端 Agent。
+
+#### 参数
+
+<ParameterTable
+  parameters={[
+    {
+      name: "action",
+      type: "string",
+      required: true,
+      description: ` 可填写的值: "createAgent", "updateAgent", "deleteAgent"`,
+    },
+    {
+      name: "agentId",
+      type: "string",
+    },
+    {
+      name: "name",
+      type: "string",
+    },
+    {
+      name: "description",
+      type: "string",
+    },
+    {
+      name: "runtime",
+      type: "string",
+    },
+    {
+      name: "timeout",
+      type: "number",
+    },
+    {
+      name: "memorySize",
+      type: "number",
+    },
+    {
+      name: "installDependency",
+      type: "boolean",
+    },
+    {
+      name: "zipFile",
+      type: "string",
+    },
+    {
+      name: "cosBucketRegion",
+      type: "string",
+    },
+    {
+      name: "tempCosObjectName",
+      type: "string",
+    },
+    {
+      name: "sessionConfig",
+      type: "object",
+    },
+    {
+      name: "cwd",
+      type: "string",
+    },
+    {
+      name: "params",
+      type: "object",
+    }
+  ]}
+/>
+
+---
+
+### `callCloudApi`
+通用的云 API 调用工具，主要用于 CloudBase / 腾讯云管控面与依赖资源相关 API 调用。**调用前必读接口索引** https://docs.cloudbase.net/ai/cloudbase-ai-toolkit/api-reference.md （每日自动同步的 Action 级索引，含 rate limit；先查此索引确认 service/Action/参数，避免猜测 Action 名称；索引未覆盖的产品再去该产品官方 API 文档核对）。如果你的目标是通过 HTTP 协议直接集成 auth/functions/cloudrun/storage/mysqldb 等 CloudBase 业务 API，请不要优先使用 callCloudApi，而应优先查看对应 OpenAPI / Swagger。现有 OpenAPI / Swagger 能力不是通用的管控面 Action 集合；管控面 API 请优先参考 CloudBase API 概览 https://cloud.tencent.com/document/product/876/34809 与云开发依赖资源接口指引 https://cloud.tencent.com/document/product/876/34808。对于 tcb service，常用 Action 分类如下：
+
+**环境管理**: `CreateEnv`、`ModifyEnv`、`DescribeEnvs`、`DestroyEnv`
+**用户管理**: `CreateUser`、`ModifyUser`、`DescribeUserList`、`DeleteUsers`
+**认证配置**: `EditAuthConfig`、`DescribeAuthDomains`
+**云函数**: `DescribeFunctions`、`CreateFunction`、`UpdateFunctionCode`、`DeleteFunction`
+**数据库**: `CreateMySQLInstance`、`DescribeMySQLInstances`、`DestroyMySQLInstance`
+
+⚠️ 云托管（CloudBase Run）统一走 tcbr service（CreateCloudRunEnv / CreateCloudRunServer / DescribeEnvBaseInfo / DescribeCloudRunEnvs，version="2022-02-17"），tcb 旧小租户接口 CreateCloudBaseRunResource 等已被禁用；部署请用 manageCloudRun。查询单个环境基础信息/是否已开通云托管用 DescribeEnvBaseInfo（EnvId 必填），查询环境列表及资源信息用 DescribeCloudRunEnvs（EnvId 可选过滤）。
+
+⚠️ Region 必须作为本工具顶层参数 `region` 传入（对应 X-TC-Region / 地域 endpoint），不要放进 params。params 里的 Region 会被剥离并当作顶层 region 使用。
+
+销毁环境时，常见做法是至少带上 `EnvId` 和 `BypassCheck: true`，如果环境已经处于隔离期再按文档补 `IsForce: true`。
+
+#### 参数
+
+<ParameterTable
+  parameters={[
+    {
+      name: "service",
+      type: "string",
+      required: true,
+      description: `腾讯云产品标识，**取值只能来自本字段的 enum 白名单（共 58 个）**，决定请求域名 https://<service>.tencentcloudapi.com。名单外的取值一律拒绝，不要臆造；COS 不在云 API 体系内。产品名与 Action 对照见 skill cloud-api-operations。云托管统一走 tcbr。 可填写的值: "tcb", "tcbr", "scf", "sts", "cam", "cloudaudit", "tag", "billing", "region", "ba", "cvm", "lighthouse", "tke", "cbs", "cfs", "tcr", "cdb", "mariadb", "postgres", "sqlserver", "redis", "mongodb", "cynosdb", "dcdb", "tcaplusdb", "keewidb", "vpc", "clb", "cdn", "ecdn", "dnspod", "privatedns", "domain", "ssl", "teo", "gaap", "kms", "ssm", "waf", "cwp", "tcss", "ckafka", "tdmq", "tdmysql", "apigateway", "monitor", "cls", "apm", "tsf", "tat", "hunyuan", "lkeap", "tts", "trtc", "live", "vod", "sms", "ses"`,
+    },
+    {
+      name: "action",
+      type: "string",
+      required: true,
+      description: `具体 Action 名称，需符合对应服务的官方 API 定义。**不确定时先查官方文档，不要用近义词或历史命名猜测**（猜错会被服务端报成 action invalid，很难排查）。常用 Action 见 skill cloud-api-operations。`,
+    },
+    {
+      name: "version",
+      type: "string",
+      description: `API 版本（多数场景可省略）。白名单里**只有一个官方版本的产品会自动补齐**，不必传；以下多版本产品必须显式传，缺省会报错并列出可选项：tke、mongodb、teo、monitor、vod、sms。示例：service="tcbr", version="2022-02-17", action="CreateCloudRunEnv", params={EnvId:"env-xxx",PackageType:"Standard"}；service="monitor" 需显式传 "2018-07-24"（告警策略族 Action 属于该版本）。`,
+    },
+    {
+      name: "params",
+      type: "object",
+      description: `Action 对应的参数对象，键名与官方 API 定义一致，不确定时先查文档。**不要把 Region 放这里**，跨地域用顶层 region。CloudBase 业务 API 请优先用 searchKnowledgeBase(mode="openapi")，不要用本工具。示例见 skill cloud-api-operations。`,
+    },
+    {
+      name: "region",
+      type: "string",
+      description: `云 API 地域（X-TC-Region），如 ap-shanghai。跨地域必须传此顶层参数，不要写进 params。⚠️ ap-singapore 同属国内站与国际站，未指定站点按国际站（site=intl）处理：要操作国内站该地域环境，先 auth(action="start_auth", site="domestic") 或设 TCB_SITE=domestic。`,
+    }
+  ]}
+/>
+
+---
+
+### `prepareFeedback`
+把当前这次 CloudBase 开发整理成用户可以自己提交的反馈。作品做出来了，用它生成案例，方便展示；开发不顺利，用它生成复盘，方便把卡点反馈给平台。
+
+**什么时候用**：
+- `channel="case"`：部署或发布已经成功，用户愿意把作品放到案例墙时使用。返回案例草稿；用户确认后附上预填好的新建 issue 链接。
+- `channel="retrospective"`：用户表示这次开发不顺利、想反馈时使用。根据本会话里真实的工具调用失败生成复盘草稿；用户确认后同样附上预填链接。
+
+**怎么用**：
+- 第一次不要传 `confirmed`。先把返回的草稿全文给用户看。
+- 用户明确同意后，再以 `confirmed=true` 调用。这时才会返回可打开的链接。
+- 本工具不会替用户提交。链接里的正文就是本次返回的 draft，不要改写成另一份再让用户提交。
+- 不采集对话轮次，不要编造轮次、作品名、简介或公网地址。
+- 国际站是英文草稿和 GitHub 链接（body 参数）。国内站是中文草稿，链接指向 CNB 上公开的 CloudBase-AI-ToolKit 仓库，正文放在模板字段 session。若页面没自动填上，把 draft 粘贴到「本次会话记录」。
+
+#### 参数
+
+<ParameterTable
+  parameters={[
+    {
+      name: "channel",
+      type: "string",
+      required: true,
+      description: `反馈用途：\`case\` 是把已完成的作品整理成案例；\`retrospective\` 是把这次不顺利的开发整理成复盘。 可填写的值: "case", "retrospective"`,
+    },
+    {
+      name: "confirmed",
+      type: "boolean",
+      description: `用户是否已经看过草稿全文并明确同意提交。省略或 false 时只返回草稿、不给链接。`,
+    }
+  ]}
+/>
+
+---
+
+### `queryMessagePush`
+查询小程序云开发消息推送配置（qbase getappconfig）或全部合法消息推送事件约束（getcallbacksupportlist）。推送模式有两种：云函数（默认，按 (msgType,event) 逐条回调）与云托管（qbase_open=true，整包接收所有消息到容器 path）。action=list 同时返回 pushMode（cloudfunction|container）、containerConfig、callbacks 与 version；云托管模式下 callbacks 可能仍存在但不生效（见 note），需 ensureCloudFunctionMode 切回云函数模式后才会按回调推送。action=listSupportedEvents 返回全部合法约束（按消息类型分组）。需要微信 IDE 登录态通道（宿主注入 cloudBaseOptions.requestFn）。
+
+#### 参数
+
+<ParameterTable
+  parameters={[
+    {
+      name: "appid",
+      type: "string",
+      required: true,
+      description: `小程序 AppID（必填，与微信开发者工具一致；用于选择微信登录态会话）`,
+    },
+    {
+      name: "env",
+      type: "string",
+      description: `可选：环境 ID；传入时 list 仅返回该环境的订阅条目`,
+    },
+    {
+      name: "action",
+      type: "string",
+      required: true,
+      description: `list: 查询当前消息推送配置列表（含 pushMode/containerConfig） listSupportedEvents: 查询全部合法消息推送事件约束（按 msgType 分组） 可填写的值: "list", "listSupportedEvents"`,
+    }
+  ]}
+/>
+
+---
+
+### `manageMessagePush`
+管理小程序云开发消息推送配置（写操作，需 confirm="yes" 确认）。推送模式：云函数（默认，按 (msgType,event) 回调）vs 云托管（整包接收；云托管模式下 subscribe/unsubscribe/setEnable 会被拒绝，先 ensureCloudFunctionMode）。基于「读全量 → merge → 全量覆盖（带 version 乐观锁）」实现声明式幂等。msg_type 缺省 "event"；消息类型用 msg_type=text|image|voice|video|miniprogrampage。action=subscribe 前会校验 function_name 在环境中真实存在。action=ensureCloudFunctionMode 关闭云托管整包接收；action=ensureContainerMode 开启云托管（需 qbase_container_path/qbase_env/text_mode）；action=setContainerCallback 更新云托管 path/env/text_mode。集合无变化时不发起写请求（幂等 no-op）。需要微信 IDE 登录态通道。
+
+#### 参数
+
+<ParameterTable
+  parameters={[
+    {
+      name: "appid",
+      type: "string",
+      required: true,
+      description: `小程序 AppID（必填，与微信开发者工具一致；用于选择微信登录态会话）`,
+    },
+    {
+      name: "env_id",
+      type: "string",
+      required: true,
+      description: `环境 ID（云函数订阅绑定的云开发环境；ensureContainerMode/setContainerCallback 未传 qbase_env 时也可作为云托管环境默认值）`,
+    },
+    {
+      name: "function_name",
+      type: "string",
+      required: true,
+      description: `接收消息推送的云函数名（subscribe/unsubscribe/setEnable/ensureCloudFunctionMode 使用；云托管相关 action 可传占位）`,
+    },
+    {
+      name: "action",
+      type: "string",
+      required: true,
+      description: `subscribe: 订阅到指定云函数（云托管模式下拒绝） unsubscribe: 移除匹配订阅（云托管模式下拒绝） setEnable: 启用/停用匹配订阅（云托管模式下拒绝） ensureCloudFunctionMode: 切到云函数推送模式（关闭 qbase_open） ensureContainerMode: 切到云托管整包接收（需 qbase_container_path + text_mode） setContainerCallback: 更新云托管回调 path/env/text_mode 可填写的值: "subscribe", "unsubscribe", "setEnable", "ensureCloudFunctionMode", "ensureContainerMode", "setContainerCallback"`,
+    },
+    {
+      name: "msg_type",
+      type: "string",
+      description: `消息类型（缺省 "event"）。"event"：事件类条目，需配合 event_types（subscribe 可缺省=虚拟支付 7 事件）。"text"|"image"|"voice"|"video"|"miniprogrampage"：消息类型条目（event 固定空串），勿传 event_types。 可填写的值: "event", "text", "image", "voice", "video", "miniprogrampage"`,
+    },
+    {
+      name: "event_types",
+      type: "array of string",
+      description: `要操作的事件列表（仅 msg_type="event" 时使用；可先 queryMessagePush(action=listSupportedEvents) 查询全量约束）。subscribe 缺省时默认订阅虚拟支付 7 个事件；unsubscribe / setEnable 且 msg_type=event 时必填。`,
+    },
+    {
+      name: "enable",
+      type: "boolean",
+      description: `setEnable 时必填：true 启用订阅 / false 停用订阅`,
+    },
+    {
+      name: "qbase_container_path",
+      type: "string",
+      description: `云托管回调路径/URL（ensureContainerMode 必填；setContainerCallback 可选更新）`,
+    },
+    {
+      name: "qbase_env",
+      type: "string",
+      description: `云托管服务所在环境 ID（ensureContainerMode/setContainerCallback 可选；缺省用 env_id）`,
+    },
+    {
+      name: "text_mode",
+      type: "number",
+      description: `云托管消息正文编码：1=json，2=xml（ensureContainerMode 必填；setContainerCallback 可选更新） 可填写的值: 1, 2`,
+    },
+    {
+      name: "confirm",
+      type: "string",
+      description: `写操作确认：确认执行请传 confirm="yes"；不传或传其他值将返回待确认的配置摘要（CONFIRM_REQUIRED），核对后再重试。集合无变化时无需确认。`,
+    }
+  ]}
+/>
+
+---

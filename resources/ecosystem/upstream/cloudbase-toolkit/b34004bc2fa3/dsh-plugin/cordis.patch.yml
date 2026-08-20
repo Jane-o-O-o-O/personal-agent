@@ -1,0 +1,21 @@
+# CloudBase DSH plugin bundle patch.
+# dsh-mcp-client speaks MCP to cloudbase-mcp. mcp-launch.mjs only execs the
+# binary after stripping API keys and proxy variables. It does not parse frames.
+# Login still uses cloudbase-mcp device-code; no API Key forwarded here.
+# 脚本路径用 !!js 表达式按 baseUrl（profile 目录）解析到包的真实安装位置，
+# 相对路径会以 dsh 启动时的 cwd 解析，从其他目录启动必然 MODULE_NOT_FOUND。
+
+- insert:
+    - id: mcp-cloudbase
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: cloudbase
+        transport: stdio
+        command: node
+        # fileURLToPath is unavailable in the !!js evaluator; replicate it safely.
+        # On Windows URL#pathname yields "/C:/..." (leading slash), which node
+        # then resolves as "C:\C:\..." → MODULE_NOT_FOUND. Strip it on win32.
+        args: [!!js '(() => { const raw = new URL("node_modules/@cloudbase/dsh-plugin/scripts/mcp-launch.mjs", baseUrl).pathname; let p = raw; try { p = decodeURIComponent(raw); } catch (e) { p = raw; } return /^\/[A-Za-z]:/.test(p) ? p.slice(1) : p; })()']
+        env: {}
+    - id: cloudbase-dsh-plugin
+      name: '@cloudbase/dsh-plugin'

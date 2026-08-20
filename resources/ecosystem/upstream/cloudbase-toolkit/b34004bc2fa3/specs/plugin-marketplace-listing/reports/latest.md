@@ -1,0 +1,2243 @@
+# CloudBase Plugin Marketplace Analysis
+
+Generated: 2026-09-24T03:02:55.621Z
+
+> This report does not auto-submit to any marketplace. All submissions are manual.
+
+## Summary
+
+Total markets: **56**
+
+| Priority | Count |
+|----------|------:|
+| ready_to_submit | 7 |
+| needs_packaging_or_manifest | 4 |
+| needs_partner_outreach | 14 |
+| listed | 11 |
+| not_applicable | 16 |
+| unknown | 4 |
+
+## Stale reviews
+
+None.
+
+## ready_to_submit
+
+### claude-code-community — Claude Code
+
+- Region: global
+- Channel: `community_plugin_directory`
+- Eligibility: `public_github_repo_required`
+- Last reviewed: 2026-07-28
+- Manual submit only: yes
+
+Statuses:
+
+- `official_curated`: not_applicable
+- `community_directory`: submittable
+- `self_marketplace`: listed
+- `native_connector_or_builtin`: not_applicable
+- `open_plugin_spec`: listed
+- `mcp_or_skill_registry`: not_applicable
+- `docs_only`: listed
+
+Local evidence:
+
+- `self_marketplace_claude`: **present** — .claude-plugin/marketplace.json lists cloudbase
+- `claude_plugin_manifest`: **present** — plugin/cloudbase/.claude-plugin/plugin.json exists
+- `open_plugin_spec_cloudbase`: **present** — plugin/cloudbase/.plugin/plugin.json has $schema
+
+Submit checklist:
+
+- [ ] Public GitHub repository URL
+- [ ] Valid .claude-plugin/plugin.json (or marketplace entry)
+- [ ] README with install and usage
+- [ ] claude plugin validate locally
+
+Process:
+
+```
+Submit public GitHub plugin via claude.ai or platform.claude.com forms; lands in anthropics/claude-plugins-community after review.
+Status 2026-07-28: human submit deferred; packet ready at specs/plugin-marketplace-listing/claude-submission-packet.md
+```
+
+Evidence:
+
+- https://code.claude.com/docs/en/plugins
+- https://platform.claude.com/plugins/submit
+- https://claude.ai/admin-settings/directory/submissions/plugins/new
+
+Recommended install docs: `doc/ide-setup/claude-code.mdx`
+
+### cursor-marketplace — Cursor
+
+- Region: global
+- Channel: `official_curated_marketplace`
+- Eligibility: `public_github_repo_required`
+- Last reviewed: 2026-07-28
+- Manual submit only: yes
+
+Statuses:
+
+- `official_curated`: submittable
+- `community_directory`: not_applicable
+- `self_marketplace`: not_applicable
+- `native_connector_or_builtin`: not_applicable
+- `open_plugin_spec`: listed
+- `mcp_or_skill_registry`: not_applicable
+- `docs_only`: listed
+
+Local evidence:
+
+- `cursor_plugin_manifest`: **present** — Found plugin/cloudbase/.cursor-plugin/plugin.json, .cursor-plugin/marketplace.json
+- `open_plugin_spec_cloudbase`: **present** — plugin/cloudbase/.plugin/plugin.json has $schema
+
+Submit checklist:
+
+- [ ] .cursor-plugin/plugin.json at plugin root
+- [ ] README.md
+- [ ] Valid relative paths in manifest
+- [ ] Tested locally under ~/.cursor/plugins/local/
+- [ ] Submit at cursor.com/marketplace/publish
+
+Process:
+
+```
+Submit publisher application at https://cursor.com/marketplace/publish (manual review).
+Needs .cursor-plugin/plugin.json (and marketplace.json for multi-plugin repos).
+Status 2026-07-28: publisher application submitted (Tencent CloudBase / @tencent-cloudbase).
+Awaiting follow-up from marketplace-publishing@cursor.com. Not yet listed.
+```
+
+Evidence:
+
+- https://cursor.com/docs/plugins
+- https://cursor.com/marketplace/publish
+- https://cursor.com/docs/reference/plugins
+
+Recommended install docs: `doc/ide-setup/cursor.mdx`
+
+### cursor-directory — Cursor
+
+- Region: global
+- Channel: `community_plugin_directory`
+- Eligibility: `public_github_repo_required`
+- Last reviewed: 2026-07-28
+- Manual submit only: yes
+
+Statuses:
+
+- `official_curated`: not_applicable
+- `community_directory`: submittable
+- `self_marketplace`: not_applicable
+- `native_connector_or_builtin`: not_applicable
+- `open_plugin_spec`: listed
+- `mcp_or_skill_registry`: not_applicable
+- `docs_only`: listed
+
+Local evidence:
+
+- `cursor_plugin_manifest`: **present** — Found plugin/cloudbase/.cursor-plugin/plugin.json, .cursor-plugin/marketplace.json
+- `open_plugin_spec_cloudbase`: **present** — plugin/cloudbase/.plugin/plugin.json has $schema
+
+Submit checklist:
+
+- [ ] Public repo with root .mcp.json (cloudbase-plugin)
+- [ ] Listing on cursor.directory
+
+Process:
+
+```
+Community listing via cursor.directory (plugin discovery). Prefer official Cursor Marketplace for primary listing.
+Status 2026-07-28: submitted — https://cursor.directory/plugins/cloudbase (being verified).
+Source repo: https://github.com/TencentCloudBase/cloudbase-plugin (root .mcp.json).
+```
+
+Evidence:
+
+- https://cursor.directory/plugins/cloudbase
+- https://cursor.directory
+- https://cursor.directory/plugins/new
+- https://cursor.com/docs/plugins
+
+Recommended install docs: `doc/ide-setup/cursor.mdx`
+
+### codex-universal — Codex / ChatGPT Work
+
+- Region: global
+- Channel: `official_curated_marketplace`
+- Eligibility: `openai_platform_submission`
+- Last reviewed: 2026-07-27
+- Manual submit only: yes
+
+Statuses:
+
+- `official_curated`: submittable
+- `community_directory`: not_applicable
+- `self_marketplace`: listed
+- `native_connector_or_builtin`: not_applicable
+- `open_plugin_spec`: listed
+- `mcp_or_skill_registry`: not_applicable
+- `docs_only`: listed
+
+Local evidence:
+
+- `self_marketplace_codex`: **present** — .agents/plugins/marketplace.json lists cloudbase
+- `codex_plugin_manifest`: **present** — plugin/cloudbase/.codex-plugin/plugin.json exists
+- `open_plugin_spec_cloudbase`: **present** — plugin/cloudbase/.plugin/plugin.json has $schema
+
+Submit checklist:
+
+- [ ] Listing metadata (name, descriptions, logo, category)
+- [ ] Developer identity verification
+- [ ] Website / support / privacy / terms URLs
+- [ ] MCP details and test cases if MCP included
+- [ ] Submit through OpenAI plugin portal; publish after approval
+
+Process:
+
+```
+Submit via OpenAI plugin submission portal for universal Plugins Directory shared by ChatGPT and Codex.
+```
+
+Evidence:
+
+- https://developers.openai.com/plugins/deploy/submission
+- https://developers.openai.com/codex/plugins/build
+
+Recommended install docs: `doc/ide-setup/codex.mdx`
+
+### grok-marketplace — Grok Build
+
+- Region: global
+- Channel: `community_plugin_directory`
+- Eligibility: `public_github_pr_required`
+- Last reviewed: 2026-08-28
+- Manual submit only: yes
+
+Statuses:
+
+- `official_curated`: not_applicable
+- `community_directory`: submittable
+- `self_marketplace`: not_applicable
+- `native_connector_or_builtin`: not_applicable
+- `open_plugin_spec`: listed
+- `mcp_or_skill_registry`: not_applicable
+- `docs_only`: unknown
+
+Local evidence:
+
+- `open_plugin_spec_cloudbase`: **present** — plugin/cloudbase/.plugin/plugin.json has $schema
+
+Submit checklist:
+
+- [ ] Plugin installable from public GitHub
+- [ ] Entry in .grok-plugin/marketplace.json (remote source + commit pin)
+- [ ] PR to xai-org/plugin-marketplace
+
+Process:
+
+```
+Open a PR to xai-org/plugin-marketplace adding a remote catalog entry pinned to commit SHA.
+Status 2026-07-28: PR opened https://github.com/xai-org/plugin-marketplace/pull/151
+Source: TencentCloudBase/cloudbase-plugin @ b615a7f8bfad6637f2297e1a993d29f6a292a13d
+```
+
+Evidence:
+
+- https://github.com/xai-org/plugin-marketplace
+- https://github.com/xai-org/plugin-marketplace/pull/151
+- https://x.ai/news/grok-plugin-marketplace
+
+### qianwen-ai-platform-hub — QianWen AI Platform hubs (千问AI平台 Skills / MCP hub)
+
+- Region: cn
+- Channel: `skill_registry`
+- Eligibility: `public_self_serve_submission`
+- Last reviewed: 2026-09-24
+- Manual submit only: yes
+
+Statuses:
+
+- `official_curated`: not_applicable
+- `community_directory`: not_applicable
+- `self_marketplace`: submittable
+- `native_connector_or_builtin`: not_applicable
+- `open_plugin_spec`: not_applicable
+- `mcp_or_skill_registry`: submittable
+- `docs_only`: unknown
+
+Blockers:
+
+- Publishing needs an Alibaba Cloud account that has passed real-name verification (individual or enterprise)
+- The publisher must accept the 千问AI平台技能市场服务协议 and set a public marketplace display name
+- Each upload is a single-skill ZIP, so a multi-skill set has to be published skill by skill
+- No direct upload path to the MCP hub — it mirrors 云市场 / 百炼
+
+Local evidence:
+
+- `config/source/skills (every SKILL.md already carries name and description frontmatter)`: **invalid** — Unknown local_evidence id "config/source/skills (every SKILL.md already carries name and description frontmatter)"
+
+Submit checklist:
+
+- [ ] Finish real-name verification on the Alibaba Cloud account and accept the marketplace agreement
+- [ ] Pick the skills to publish and decide the marketplace display name
+- [ ] Publish one ZIP per skill, then confirm the entries render under 我的 Skills
+
+Process:
+
+```
+Skills hub, https://www.qianwenai.com/hub/skills. The platform documents a fully self-serve public publish
+flow at https://platform.qianwenai.com/docs/agent-infra/skills/publish and states that the marketplace is
+an open skill-sharing community any user may publish to. Verified in-product on 2026-09-24:
+  1. Click 「Skill 发布」 on the hub; while logged out it bounces through Aliyun SSO
+     (account.aliyun.com/sso/login.htm, client_id=qianwenai) and returns to the hub.
+  2. First-time publishers set a marketplace display name and accept the 千问AI平台技能市场服务协议, after
+     which a 「管理 Skills」 entry appears next to 「Skill 发布」.
+  3. Real-name verification (individual or enterprise) is required before uploading.
+  4. Upload one ZIP. A pre-check validates the SKILL.md frontmatter inside it for name and description.
+  5. Confirm the metadata fields, then submit for review.
+Review runs 安全检测 → 人工审核 → 发布上线. A 危险 safety result cannot proceed and must be fixed and
+resubmitted; a 提醒/可疑 result leaves the choice to the publisher. Versions are managed at
+https://www.qianwenai.com/hub/skills/manage with statuses 待处置 / 审核中 / 已上线 / 已下线.
+Package rules (https://platform.qianwenai.com/docs/agent-infra/skills/introduction): SKILL.md at the ZIP
+root carrying name and description in YAML frontmatter, whole ZIP <= 10 MiB, name unique per account.
+Metadata fields: 英文标识 (auto-namespaced as @user_xxx/<name>), Skill 名称, optional 图标, 简介
+(<= 200 chars, defaults to description), 版本, and 开源协议 limited to MIT or Apache-2.0.
+Install side (https://platform.qianwenai.com/docs/agent-infra/skills/custom): published skills are consumed
+by skill-capable agents such as Qoder and Claude Code — via a prompt pointing at
+https://www.qianwenai.com/hub/install/skillshub.md, via CLI (`npm install -g @qianwenai/qianwen-cli@latest`
+then `qianwen skills install @<scope>/<name>`), or via direct ZIP download. Multi-skill sets are grouped as
+技能包 on the platform rather than uploaded as a single ZIP.
+MCP hub, https://www.qianwenai.com/hub/mcp — 105 entries at review time, every one observed carrying
+提供方：云市场 or 提供方：阿里云百炼, i.e. the hub mirrors Alibaba Cloud Marketplace and Model Studio rather
+than accepting uploads. The console's 自定义 MCP 服务 path (script deploy / AI gateway import / OpenAPI
+import) mounts services onto one's own Managed Agents and does not reach this hub.
+Status 2026-09-24: CloudBase absent from both hubs. The Skills side is a genuine self-serve public
+marketplace; the MCP side still requires a 云市场 or 百炼 listing first.
+```
+
+Evidence:
+
+- https://www.qianwenai.com/hub/skills
+- https://www.qianwenai.com/hub/skills/manage
+- https://www.qianwenai.com/hub/mcp
+- https://platform.qianwenai.com/skills
+- https://platform.qianwenai.com/docs/agent-infra/skills/introduction
+- https://platform.qianwenai.com/docs/agent-infra/skills/publish
+- https://platform.qianwenai.com/docs/agent-infra/skills/custom
+- https://platform.qianwenai.com/docs/agent-infra/mcp/official-services
+- https://platform.qianwenai.com/docs/agent-infra/mcp/custom-services
+- https://www.qianwenai.com/hub/install/skillshub.md
+- https://terms.alicdn.com/legal-agreement/terms/common_platform_service/20260917200955495/20260917200955495.html
+
+### coze-skill-and-plugin-store — Coze (扣子)
+
+- Region: cn
+- Channel: `skill_registry`
+- Eligibility: `public_self_serve_submission`
+- Last reviewed: 2026-09-15
+- Manual submit only: yes
+
+Statuses:
+
+- `official_curated`: unknown
+- `community_directory`: not_applicable
+- `self_marketplace`: not_applicable
+- `native_connector_or_builtin`: not_applicable
+- `open_plugin_spec`: not_applicable
+- `mcp_or_skill_registry`: submittable
+- `docs_only`: listed
+
+Submit checklist:
+
+- [ ] Apply for skill publishing eligibility on the account that will own the listing
+- [ ] Decide between shipping a skill and shipping a plugin that wraps the CloudBase MCP server
+- [ ] Collect 3 shareable sample conversation links per skill
+
+Process:
+
+```
+Two documented public rails. Skill: 我的技能 → ⋮ → 申请技能上架资质 (a one-off eligibility form, reviewed),
+then 技能商店 → 上架到商店, which requires 3 shareable sample conversation links per skill; the Coze team
+reviews icon / name / description / behaviour and reports the result in 站内信, commonly in 1-3 working
+days. Plugin: publish the plugin, then 上架到商店 — Coze plugin store or the enterprise plugin store, one
+channel only. The docs cover building a plugin on top of an MCP server, which is the path that fits
+CloudBase: https://space.coze.cn/open/docs/guides/create_a_plugin_based_on_mcp
+Status 2026-09-15: CloudBase absent. The process is documented and self-serve; whether a given account is
+granted publishing eligibility is subject to Coze's review.
+```
+
+Evidence:
+
+- https://docs.coze.cn/cozespace_what_is_skill
+- https://docs.coze.cn/create-plugin
+- https://space.coze.cn/open/docs/guides/create_a_plugin_based_on_mcp
+
+## needs_packaging_or_manifest
+
+### composio-awesome-claude-plugins — Claude Code
+
+- Region: global
+- Channel: `community_plugin_directory`
+- Eligibility: `public_github_pr_required`
+- Last reviewed: 2026-08-18
+- Manual submit only: yes
+
+Statuses:
+
+- `official_curated`: not_applicable
+- `community_directory`: submittable
+- `self_marketplace`: listed
+- `native_connector_or_builtin`: not_applicable
+- `open_plugin_spec`: listed
+- `mcp_or_skill_registry`: not_applicable
+- `docs_only`: listed
+
+Blockers:
+
+- Awaiting maintainer merge of composio-community/awesome-claude-plugins#424
+
+Local evidence:
+
+- `self_marketplace_claude`: **present** — .claude-plugin/marketplace.json lists cloudbase
+- `open_plugin_spec_cloudbase`: **present** — plugin/cloudbase/.plugin/plugin.json has $schema
+
+Submit checklist:
+
+- [ ] README Integrations bullet linking CloudBase-AI-Toolkit
+- [ ] Setup link to official Claude Code ide-setup docs
+- [ ] PR to composio-community/awesome-claude-plugins
+- [ ] [object Object]
+
+Process:
+
+```
+Open a README PR to composio-community/awesome-claude-plugins (Integrations section).
+External plugins are listed as GitHub links (same pattern as kaggle-skill / taisly).
+Status 2026-08-18: PR https://github.com/composio-community/awesome-claude-plugins/pull/424
+still OPEN (MERGEABLE/CLEAN). No CI, no maintainer comments. Upstream README
+Integrations does not yet list CloudBase — do not flip to listed until merge.
+```
+
+Evidence:
+
+- https://github.com/composio-community/awesome-claude-plugins
+- https://github.com/composio-community/awesome-claude-plugins/pull/424
+- https://docs.cloudbase.net/ai/cloudbase-ai-toolkit/ide-setup/claude
+- https://github.com/TencentCloudBase/CloudBase-AI-Toolkit
+
+Recommended install docs: `doc/ide-setup/claude-code.mdx`
+
+### vscode-agent-plugins — Visual Studio Code
+
+- Region: global
+- Channel: `self_hosted_marketplace`
+- Eligibility: `marketplace_add_or_catalog_pr`
+- Last reviewed: 2026-08-13
+- Manual submit only: yes
+
+Statuses:
+
+- `official_curated`: unknown
+- `community_directory`: submittable
+- `self_marketplace`: listed
+- `native_connector_or_builtin`: not_applicable
+- `open_plugin_spec`: listed
+- `mcp_or_skill_registry`: not_applicable
+- `docs_only`: listed
+
+Blockers:
+
+- awaiting maintainer /approve on re-submission github/awesome-copilot#2645 to trigger the Add cloudbase listing PR
+
+Local evidence:
+
+- `self_marketplace_claude`: **present** — .claude-plugin/marketplace.json lists cloudbase
+- `open_plugin_spec_cloudbase`: **present** — plugin/cloudbase/.plugin/plugin.json has $schema
+
+Submit checklist:
+
+- [ ] Users can add TencentCloudBase/CloudBase-MCP as marketplace
+- [ ] Strip remote skill-fetch URLs; sync cloudbase-plugin; /rerun-intake on
+- [ ] Re-submission
+- [ ] [object Object]
+
+Process:
+
+```
+Users add marketplaces via chat.plugins.marketplaces (default: github/copilot-plugins, awesome-copilot). Can point at this repo; curated default catalog inclusion needs outreach.
+Status 2026-08-05: Awesome Copilot #2459 intake re-passed after stripping remote skill-fetch URLs (SHA 4082ba95...). Label ready-for-review.
+Status 2026-08-12: maintainer aaronpowell closed #2459 as COMPLETED (no comment); cloudbase NOT yet in plugins/external.json.
+Status 2026-08-13: Reopening #2459 blocked by permissions; commented on #2459 asking for /approve (issuecomment-5276131129); opened re-submission #2645, intake passed, ready-for-review.
+Status 2026-08-13 poll: #2645 still OPEN (labels external-plugin + ready-for-review); no /approve yet; cloudbase NOT in plugins/external.json.
+See specs/plugin-marketplace-listing/awesome-copilot-rejection-response.md
+```
+
+Evidence:
+
+- https://code.visualstudio.com/docs/agent-customization/agent-plugins
+- https://github.com/github/awesome-copilot/issues/2459
+- https://github.com/github/awesome-copilot/issues/2645
+- specs/plugin-marketplace-listing/awesome-copilot-rejection-response.md
+
+Recommended install docs: `doc/ide-setup/vscode.mdx`
+
+### qoder-plugin — Qoder / QoderWork
+
+- Region: cn
+- Channel: `community_plugin_directory`
+- Eligibility: `public_github_repo_required`
+- Last reviewed: 2026-07-30
+- Manual submit only: yes
+
+Statuses:
+
+- `official_curated`: unknown
+- `community_directory`: unknown
+- `self_marketplace`: submittable
+- `native_connector_or_builtin`: not_applicable
+- `open_plugin_spec`: listed
+- `mcp_or_skill_registry`: submittable
+- `docs_only`: listed
+
+Blockers:
+
+- Awaiting QoderWork review / listing confirmation
+
+Local evidence:
+
+- `open_plugin_spec_cloudbase`: **present** — plugin/cloudbase/.plugin/plugin.json has $schema
+- `qoder_plugin_manifest`: **invalid** — Unknown local_evidence id "qoder_plugin_manifest"
+
+Submit checklist:
+
+- [ ] Pack Plugin zip (dist/cloudbase-qoder-v*.zip)
+- [ ] Pack Skill zip (dist/cloudbase-skill-v*.zip)
+- [ ] Submit Plugin + Skill in QoderWork
+- [ ] [object Object]
+
+Process:
+
+```
+QoderWork self-serve: Plugin (专家套件) + Skill marketplace.
+Pack: npm run pack:qoder-plugin / pack:qoder-skill
+Guide: plugin/cloudbase/docs/qoder-submit.md
+Status 2026-07-30: Plugin zip + Skill zip both submitted (awaiting review).
+Qoder CN AppHub: https://qoder.com.cn/account/apphub-publications (optional follow-up).
+```
+
+Evidence:
+
+- https://docs.qoder.com/zh/qoderwork/skill-marketplace-guidelines
+- https://qoder.com.cn/account/apphub-publications
+- doc/ide-setup/qoder.mdx
+- plugin/cloudbase/docs/qoder-submit.md
+
+Recommended install docs: `doc/ide-setup/qoder.mdx`
+
+### qwen-open-platform — Qwen Open Platform (千问开放平台)
+
+- Region: cn
+- Channel: `skill_registry`
+- Eligibility: `public_self_serve_submission`
+- Last reviewed: 2026-09-24
+- Manual submit only: yes
+
+Statuses:
+
+- `official_curated`: submittable
+- `community_directory`: not_applicable
+- `self_marketplace`: not_applicable
+- `native_connector_or_builtin`: not_applicable
+- `open_plugin_spec`: not_applicable
+- `mcp_or_skill_registry`: blocked
+- `docs_only`: listed
+
+Blockers:
+
+- Skill 接入 is marked 即将开放, so a skill package cannot be submitted yet
+- MCP服务Skill is 待上线 as well, so the MCP-shaped track is still closed
+- The live track onboards brand agents, not a distributable skill or connector package
+- 申请入驻 requires an Alibaba/Tongyi account login before the form appears
+
+Submit checklist:
+
+- [ ] Decide whether an assistant-app entry point is wanted; if so submit the 申请入驻 form
+- [ ] Re-check whether Skill 接入 / MCP服务Skill has opened before packaging for it
+
+Process:
+
+```
+Distinct from QwenWork: this onboards third-party services into the Qwen assistant app
+(mobile / PC / AI glasses). Entry point is https://open.qianwen.com/ with a 申请入驻 button.
+Two tracks — AI 智能体接入 (live, marked recommended: a brand agent in its own conversation space, with
+account / AI payment / order infrastructure, front-end components and end-to-end debugging provided) and
+Skill 接入 (marked 即将开放 / 敬请期待, i.e. not submittable yet). agent.flow, an enterprise knowledge
+base and MCP services are listed as platform capabilities.
+Status 2026-09-24: intent form plus review; no in-product submission path reviewed.
+Status 2026-09-24, later (official 接入文档 read directly, https://open.qianwen.com/guide):
+the published process is 了解平台 → 选择接入模式 → 提交入驻资料 → 审核通过 → 技术对接 → 上线, with the
+review stated as taking about 7 days and a DingTalk 官方入驻服务助手 available for progress questions.
+Step 2 is described as filling in company/brand details plus qualification material.
+The capability tables split by phase: 第一阶段 AI智能体 已开放接入 (its entry is 左侧导航栏 > AI能力 >
+AI智能体); 第二阶段 知识库 SKILL 与 MCP服务SKILL are 即将开放, and the 子能力一览表 marks Skill and
+MCP服务Skill as 待上线. So the MCP-shaped track exists on the roadmap but cannot be submitted today.
+Both the 申请入驻 and 入驻申请 controls pull in a Tongyi login iframe first, so the form is account-gated.
+Public contact address in the site footer: openqianwen.feedback@service.alibaba.com
+```
+
+Evidence:
+
+- https://open.qianwen.com/
+- https://open.qianwen.com/guide
+- https://baike.baidu.com/item/千问开放平台/68538985
+- https://www.cinn.cn/xf/2026/08-10/gD7OpAqD.html
+
+## needs_partner_outreach
+
+### claude-code-official — Claude Code
+
+- Region: global
+- Channel: `official_curated_marketplace`
+- Eligibility: `anthropic_discretion_only`
+- Last reviewed: 2026-07-27
+- Manual submit only: yes
+
+Statuses:
+
+- `official_curated`: unknown
+- `community_directory`: not_applicable
+- `self_marketplace`: listed
+- `native_connector_or_builtin`: not_applicable
+- `open_plugin_spec`: listed
+- `mcp_or_skill_registry`: not_applicable
+- `docs_only`: listed
+
+Blockers:
+
+- No public submission path for claude-plugins-official
+
+Local evidence:
+
+- `self_marketplace_claude`: **present** — .claude-plugin/marketplace.json lists cloudbase
+- `open_plugin_spec_cloudbase`: **present** — plugin/cloudbase/.plugin/plugin.json has $schema
+
+Process:
+
+```
+Anthropic-curated only; no public application. Community form does not add to official marketplace.
+```
+
+Evidence:
+
+- https://code.claude.com/docs/en/discover-plugins
+- https://github.com/anthropics/claude-plugins-official
+
+Recommended install docs: `doc/ide-setup/claude-code.mdx`
+
+### kimi-code-marketplace — Kimi Code
+
+- Region: cn
+- Channel: `community_plugin_directory`
+- Eligibility: `unknown_or_partner`
+- Last reviewed: 2026-07-27
+- Manual submit only: yes
+
+Statuses:
+
+- `official_curated`: unknown
+- `community_directory`: unknown
+- `self_marketplace`: not_applicable
+- `native_connector_or_builtin`: not_applicable
+- `open_plugin_spec`: listed
+- `mcp_or_skill_registry`: not_applicable
+- `docs_only`: unknown
+
+Blockers:
+
+- Official third-party listing process not fully documented
+
+Local evidence:
+
+- `open_plugin_spec_cloudbase`: **present** — plugin/cloudbase/.plugin/plugin.json has $schema
+
+Submit checklist:
+
+- [ ] Confirm Kimi official vs third-party submission path
+- [ ] Plugin zip or GitHub URL installable via /plugins
+
+Process:
+
+```
+Official / third-party marketplace tabs plus custom marketplace JSON URL (KIMI_CODE_PLUGIN_MARKETPLACE_URL). Public third-party listing path needs verification.
+```
+
+Evidence:
+
+- https://www.kimi.com/code/docs/en/kimi-code-cli/customization/plugins.html
+
+### codebuddy-plugin — CodeBuddy
+
+- Region: cn
+- Channel: `native_connector_or_builtin`
+- Eligibility: `partner_outreach_required`
+- Last reviewed: 2026-07-29
+- Manual submit only: yes
+
+Statuses:
+
+- `official_curated`: listed
+- `community_directory`: unknown
+- `self_marketplace`: not_applicable
+- `native_connector_or_builtin`: listed
+- `open_plugin_spec`: not_applicable
+- `mcp_or_skill_registry`: not_applicable
+- `docs_only`: listed
+
+Blockers:
+
+- Awaiting merge of https://cnb.cool/codebuddy/marketplace/-/pulls/19 (refresh to v2.25.0)
+
+Local evidence:
+
+- `config/codebuddy-plugin`: **invalid** — Unknown local_evidence id "config/codebuddy-plugin"
+- `specs/plugin-marketplace-listing/submission-log.md`: **invalid** — Unknown local_evidence id "specs/plugin-marketplace-listing/submission-log.md"
+
+Submit checklist:
+
+- [ ] Await merge of https://cnb.cool/codebuddy/marketplace/-/pulls/19
+- [ ] Confirm keep rules/cloudbase_rules.md in marketplace package
+- [ ] Ask CodeBuddy product team about built-in IDE sync if needed
+
+Process:
+
+```
+Official catalog already has plugins/cloudbase on cnb.cool/codebuddy/marketplace (content stale vs v2.25.0).
+Fork: https://cnb.cool/tencent/cloud/cloudbase/marketplace
+PR open: https://cnb.cool/codebuddy/marketplace/-/pulls/19 (from fork main).
+```
+
+Evidence:
+
+- https://cnb.cool/codebuddy/marketplace/-/tree/main/plugins/cloudbase
+- https://cnb.cool/tencent/cloud/cloudbase/marketplace
+- https://cnb.cool/codebuddy/marketplace/-/pulls/19
+- https://www.codebuddy.cn/docs/cli/plugins
+- doc/ide-setup/codebuddy.mdx
+
+Recommended install docs: `doc/ide-setup/codebuddy.mdx`
+
+### codebuddy-code-plugin — CodeBuddy Code
+
+- Region: cn
+- Channel: `community_plugin_directory`
+- Eligibility: `partner_outreach_required`
+- Last reviewed: 2026-07-27
+- Manual submit only: yes
+
+Statuses:
+
+- `official_curated`: unknown
+- `community_directory`: unknown
+- `self_marketplace`: not_applicable
+- `native_connector_or_builtin`: not_applicable
+- `open_plugin_spec`: not_applicable
+- `mcp_or_skill_registry`: not_applicable
+- `docs_only`: listed
+
+Blockers:
+
+- Public submit path not fully verified
+
+Submit checklist:
+
+- [ ] plugin.json + README
+- [ ] Marketplace listing steps from CodeBuddy docs
+
+Process:
+
+```
+Share via CodeBuddy Code plugin marketplace after plugin.json packaging. Confirm public submit path.
+```
+
+Evidence:
+
+- https://www.codebuddy.cn/docs/cli/plugins
+- doc/ide-setup/codebuddy-code.mdx
+
+Recommended install docs: `doc/ide-setup/codebuddy-code.mdx`
+
+### qoderwork-connector — QoderWork
+
+- Region: cn
+- Channel: `native_connector_or_builtin`
+- Eligibility: `partner_outreach_required`
+- Last reviewed: 2026-07-27
+- Manual submit only: yes
+
+Statuses:
+
+- `official_curated`: unknown
+- `community_directory`: unknown
+- `self_marketplace`: not_applicable
+- `native_connector_or_builtin`: unknown
+- `open_plugin_spec`: not_applicable
+- `mcp_or_skill_registry`: not_applicable
+- `docs_only`: unknown
+
+Blockers:
+
+- No confirmed CloudBase listing
+- Third-party connector submit path unclear
+
+Submit checklist:
+
+- [ ] Confirm connector onboarding with QoderWork
+- [ ] MCP or connector packaging requirements
+
+Process:
+
+```
+QoderWork has connector / integration marketplace plus custom MCP. CloudBase listing requires partner outreach.
+```
+
+Evidence:
+
+- https://docs.qoder.com/zh/qoderwork/connectors
+
+### tencent-marvis — Tencent Marvis
+
+- Region: cn
+- Channel: `native_connector_or_builtin`
+- Eligibility: `internal_channel_or_partner_outreach`
+- Last reviewed: 2026-09-15
+- Manual submit only: yes
+
+Statuses:
+
+- `official_curated`: unknown
+- `community_directory`: not_applicable
+- `self_marketplace`: not_applicable
+- `native_connector_or_builtin`: submittable
+- `open_plugin_spec`: not_applicable
+- `mcp_or_skill_registry`: unknown
+- `docs_only`: unknown
+
+Blockers:
+
+- Not in the curated official 连接 / Skill lists (no Tencent Cloud MCP among the 10)
+- No public submission form for the curated lists
+
+Submit checklist:
+
+- [ ] Confirm the internal channel for the curated 连接 / Skill lists
+- [ ] Add a Marvis section to doc/ide-setup once the config path is written up
+
+Process:
+
+```
+Self-serve custom MCP: 技能广场 → 工具箱 → 连接(MCP/CLI) → 我的连接 → + 自定义连接, then paste an MCP
+server JSON. The paste dialog says "优先使用 NPX 或 UVX 配置" → stdio via npx is supported, so
+`npx -y @cloudbase/cloudbase-mcp@latest` works with no packaging step.
+Official 连接 list is Tencent-curated (10 first-party servers) and 技能(Skill) is curated too; no public
+submission form. Tencent products are expected to go through an internal channel.
+Status 2026-09-15: CloudBase absent from the curated list; self-serve path usable today.
+Only public contact channel found: marvis@tencent.com, linked as a mailto on the official site. The product
+docs at /docs document concepts and usage only — no MCP / Skill submission process.
+```
+
+Evidence:
+
+- https://marvis.qq.com/
+- https://marvis.qq.com/docs
+
+### qwenwork-connector — QwenWork (千问办公)
+
+- Region: cn
+- Channel: `native_connector_or_builtin`
+- Eligibility: `partner_outreach_required`
+- Last reviewed: 2026-09-24
+- Manual submit only: yes
+
+Statuses:
+
+- `official_curated`: unknown
+- `community_directory`: not_applicable
+- `self_marketplace`: not_applicable
+- `native_connector_or_builtin`: submittable
+- `open_plugin_spec`: not_applicable
+- `mcp_or_skill_registry`: unknown
+- `docs_only`: unknown
+
+Blockers:
+
+- No public connector submission form; market entries are onboarded with the vendor
+- CloudBase not present in the 连接器 market yet
+- The public catalog carries platform-curated resources only; the Extensions FAQ states that individual users cannot publish custom skills to the public marketplace
+
+Submit checklist:
+
+- [ ] Confirm connector onboarding terms with the QwenWork partner team
+- [ ] Add a QwenWork section to doc/ide-setup once the config path is written up
+
+Process:
+
+```
+Self-serve: 左侧「扩展」→「连接器」→ 右上 + 添加 →「粘贴 JSON 配置」/「手动填写配置」.
+The manual form's server-type dropdown includes STDIO (a 命令 field plus env vars; the official example is
+`npx -y @modelcontextprotocol/server-filesystem`), and Streamable HTTP / SSE are supported as well.
+Official 连接器 market is partner-curated — the production tier already carries Supabase, Vercel and Neon
+— with no public submission form. Skills install to `~/.qwenworkcn/skills/`.
+Enterprise-scoped self-serve rails exist but do not reach the public catalog: 组织技能库 lets an
+organization upload SKILL.md or a ZIP and publish it to its own members after an admin review, and the
+enterprise AI asset console manages skills, connectors and expert kits.
+Status 2026-09-15: CloudBase absent from the market; self-serve custom connector works today.
+Status 2026-09-24: unchanged. Third-party entries reach the public catalog through vendor onboarding —
+CamScanner (合合信息) listed a skill and a connector together on 2026-09-22 — not through a portal form.
+```
+
+Evidence:
+
+- https://help.aliyun.com/zh/qwenwork/desktop-connectors
+- https://help.aliyun.com/zh/qwenwork/skills
+- https://help.aliyun.com/zh/qwenwork/skills-management
+- https://help.aliyun.com/zh/qwenwork/enterprise-ultimate-ai-assets/
+- https://help.aliyun.com/zh/qwenwork/expert-kit
+- https://www.alibabacloud.com/help/en/qwenwork/qwenwork-extensions
+- https://www.cnfin.com/gs-lb/detail/20260922/4473408_1.html
+
+### aliyun-blossom-partner-plan — Alibaba Cloud AI product partner plan (繁花计划)
+
+- Region: cn
+- Channel: `official_curated_marketplace`
+- Eligibility: `partner_outreach_required`
+- Last reviewed: 2026-09-24
+- Manual submit only: yes
+
+Statuses:
+
+- `official_curated`: submittable
+- `community_directory`: not_applicable
+- `self_marketplace`: not_applicable
+- `native_connector_or_builtin`: not_applicable
+- `open_plugin_spec`: not_applicable
+- `mcp_or_skill_registry`: submittable
+- `docs_only`: listed
+
+Blockers:
+
+- Gated on Alibaba Cloud Marketplace partner status with corporate qualification thresholds
+- Applies as a company entity, so it is a business decision rather than a repo task
+
+Process:
+
+```
+Public recruitment page at https://www.qianwenai.com/partner-recruitment, linked from the site footer as
+「AI 伙伴招募计划」. Its 立即加入 button resolves to
+https://aps.aliyun.com/partnerApply/#/identityInfo?param=27Partner, which requires an Alibaba Cloud login.
+Five stated cooperation tracks: Skills; 数据类型 covering MCP, APIs and datasets; Connector 类型 covering
+SaaS interfaces such as CRM/ERP that connect to and act on systems; Agent 类型; and 行业共创类. MCP and
+Connector are therefore first-class categories rather than an afterthought.
+Three-step onboarding: 1) join the product ecosystem as a 云市场 partner — trading for at least one year,
+at least 20 employees and registered capital of at least 1M CNY; 2) list the product, where MCP, API, SaaS
+and AI model are all supported commodity types with pricing and service-level configuration; 3) product
+adaptation, including token-usage telemetry if the product calls Alibaba Cloud models through Model Studio.
+Benefit tiers run L1 注册级 → L2 优选级 → L3 精选级 → L4 旗舰级.
+```
+
+Evidence:
+
+- https://www.qianwenai.com/partner-recruitment
+- https://aps.aliyun.com/partnerApply/#/identityInfo?param=27Partner
+
+### doubao-work-connector — Doubao Work (豆包工作)
+
+- Region: cn
+- Channel: `native_connector_or_builtin`
+- Eligibility: `partner_outreach_required`
+- Last reviewed: 2026-09-15
+- Manual submit only: yes
+
+Statuses:
+
+- `official_curated`: unknown
+- `community_directory`: not_applicable
+- `self_marketplace`: not_applicable
+- `native_connector_or_builtin`: submittable
+- `open_plugin_spec`: not_applicable
+- `mcp_or_skill_registry`: unknown
+- `docs_only`: unknown
+
+Blockers:
+
+- Custom connectors are desktop-client only (web / mobile / cloud PC unsupported)
+- No public submission form for the curated official 连接器 list
+
+Submit checklist:
+
+- [ ] Confirm connector onboarding terms with the Doubao partner team
+- [ ] Add a Doubao Work section to doc/ide-setup once the config path is written up
+
+Process:
+
+```
+Self-serve: 技能·连接器·伙伴 → 右上 + 新建 →「新建自定义连接器」.
+Transfer type offers HTTP and STDIO; the STDIO form exposes 服务器名称 / 命令 / 参数 / 环境变量, so
+`npx -y @cloudbase/cloudbase-mcp@latest` works. The dialog warns that custom connectors only work on the
+local desktop client — not the web, mobile or cloud-PC clients.
+Official 连接器 list (200+, curated, includes Tencent Meeting and Tencent Docs) has no public submission
+form; skills can be uploaded locally or created in chat.
+Status 2026-09-15: CloudBase absent from the official list.
+```
+
+Evidence:
+
+- https://www.doubao.com/chat/
+
+### trae-mcp-marketplace — Trae IDE / Trae Work
+
+- Region: cn
+- Channel: `mcp_registry_or_aggregator`
+- Eligibility: `partner_outreach_required`
+- Last reviewed: 2026-08-05
+- Manual submit only: yes
+
+Statuses:
+
+- `official_curated`: unknown
+- `community_directory`: listed
+- `self_marketplace`: not_applicable
+- `native_connector_or_builtin`: not_applicable
+- `open_plugin_spec`: not_applicable
+- `mcp_or_skill_registry`: unknown
+- `docs_only`: listed
+
+Blockers:
+
+- No public developer submit form for Trae official MCP marketplace
+- Awaiting Trae product / community reply on curation sync + partner contact
+
+Local evidence:
+
+- `trae_mcp_deeplink_docs`: **present** — Trae docs present: doc/ide-setup/trae.mdx
+
+Submit checklist:
+
+- [ ] Partner outreach for official MCP marketplace inclusion
+- [ ] Await reply on trae-community/trae-mcp#5
+- [ ] [object Object]
+
+Process:
+
+```
+Users can add MCP from Trae built-in MCP marketplace or manual config. Third-party submission into Trae MCP marketplace is not publicly documented.
+Status 2026-08-05: Community list PR merged https://github.com/trae-community/trae-mcp/pull/4 (README catalog; not official Trae store).
+Outreach 2026-08-05: Asked community maintainers for official in-app curation path — https://github.com/trae-community/trae-mcp/issues/5
+Packet: specs/plugin-marketplace-listing/trae-official-outreach-packet.md
+```
+
+Evidence:
+
+- https://docs.trae.cn/work_remote-mcp-server
+- https://docs.trae.cn/ide_model-context-protocol
+- https://github.com/trae-community/trae-mcp/pull/4
+- https://github.com/trae-community/trae-mcp/issues/5
+- https://github.com/trae-community/trae-mcp/blob/main/README.md
+- doc/ide-setup/trae.mdx
+- specs/plugin-marketplace-listing/trae-official-outreach-packet.md
+
+Recommended install docs: `doc/ide-setup/trae.mdx`
+
+### trae-work-skills-marketplace — Trae Work
+
+- Region: cn
+- Channel: `skill_registry`
+- Eligibility: `partner_outreach_required`
+- Last reviewed: 2026-08-05
+- Manual submit only: yes
+
+Statuses:
+
+- `official_curated`: unknown
+- `community_directory`: listed
+- `self_marketplace`: not_applicable
+- `native_connector_or_builtin`: not_applicable
+- `open_plugin_spec`: not_applicable
+- `mcp_or_skill_registry`: listed
+- `docs_only`: listed
+
+Blockers:
+
+- Official Trae Work in-app skill market publisher path not documented
+- Awaiting Trae product / community reply on curation sync + partner contact
+
+Submit checklist:
+
+- [ ] Confirm Trae Work official skill market publisher process
+- [ ] Await reply on trae-community/trae-skills#21
+- [ ] Package SKILL.md zip if official market requires it
+- [ ] [object Object]
+
+Process:
+
+```
+Community catalog: trae-community/trae-skills (merged PR #20).
+Users can also upload local SKILL.md zip/.skill or install from Trae Work skills marketplace.
+Official Trae Work publisher onboarding still unclear / partner outreach.
+Status 2026-08-05: Community skills PR merged https://github.com/trae-community/trae-skills/pull/20
+Outreach 2026-08-05: Asked community maintainers for official skills market path — https://github.com/trae-community/trae-skills/issues/21
+Forum signal (custom skills not globally shareable via upload): https://forum.trae.cn/t/topic/171994
+Packet: specs/plugin-marketplace-listing/trae-official-outreach-packet.md
+```
+
+Evidence:
+
+- https://docs.trae.cn/solo_skills
+- https://github.com/trae-community/trae-skills/pull/20
+- https://github.com/trae-community/trae-skills/issues/21
+- https://github.com/trae-community/trae-skills/blob/main/README.md
+- https://github.com/trae-community/trae-skills/blob/main/skills/cloudbase/SKILL.md
+- https://forum.trae.cn/t/topic/171994
+- specs/plugin-marketplace-listing/trae-official-outreach-packet.md
+
+Recommended install docs: `doc/ide-setup/trae.mdx`
+
+### smithery — Smithery
+
+- Region: global
+- Channel: `mcp_registry_or_aggregator`
+- Eligibility: `hosted_http_mcp_or_registry`
+- Last reviewed: 2026-09-24
+- Manual submit only: yes
+
+Statuses:
+
+- `official_curated`: not_applicable
+- `community_directory`: not_applicable
+- `self_marketplace`: not_applicable
+- `native_connector_or_builtin`: not_applicable
+- `open_plugin_spec`: not_applicable
+- `mcp_or_skill_registry`: unknown
+- `docs_only`: unknown
+
+Submit checklist:
+
+- [ ] Public MCP URL or registry entry
+- [ ] Complete Smithery publish flow if needed
+
+Process:
+
+```
+Publish hosted HTTPS MCP or rely on registry ingest; see smithery.ai/new.
+Status 2026-09-24: no CloudBase entry surfaced in a public search; presence not verified in-product.
+```
+
+Evidence:
+
+- https://smithery.ai/docs/build/publish.md
+
+### pulsemcp — PulseMCP
+
+- Region: global
+- Channel: `mcp_registry_or_aggregator`
+- Eligibility: `via_official_registry`
+- Last reviewed: 2026-07-27
+- Manual submit only: yes
+
+Statuses:
+
+- `official_curated`: not_applicable
+- `community_directory`: not_applicable
+- `self_marketplace`: not_applicable
+- `native_connector_or_builtin`: not_applicable
+- `open_plugin_spec`: not_applicable
+- `mcp_or_skill_registry`: unknown
+- `docs_only`: unknown
+
+Submit checklist:
+
+- [ ] Ensure official MCP registry listing first
+
+Process:
+
+```
+Typically ingests from official MCP registry; expedite via contact after registry publish.
+```
+
+Evidence:
+
+- https://www.pulsemcp.com
+
+### mcp-so — mcp.so
+
+- Region: global
+- Channel: `mcp_registry_or_aggregator`
+- Eligibility: `github_pr`
+- Last reviewed: 2026-07-27
+- Manual submit only: yes
+
+Statuses:
+
+- `official_curated`: not_applicable
+- `community_directory`: not_applicable
+- `self_marketplace`: not_applicable
+- `native_connector_or_builtin`: not_applicable
+- `open_plugin_spec`: not_applicable
+- `mcp_or_skill_registry`: unknown
+- `docs_only`: unknown
+
+Submit checklist:
+
+- [ ] PR adding CloudBase MCP listing line
+
+Process:
+
+```
+Community PR / listing line in mcp.so source catalog.
+```
+
+Evidence:
+
+- https://mcp.so
+
+## listed
+
+### awesome-dsh-plugin — DeepSeek Harness (DSH)
+
+- Region: global
+- Channel: `community_plugin_directory`
+- Eligibility: `public_github_pr_required`
+- Last reviewed: 2026-09-23
+- Manual submit only: yes
+
+Statuses:
+
+- `official_curated`: not_applicable
+- `community_directory`: listed
+- `self_marketplace`: not_applicable
+- `native_connector_or_builtin`: not_applicable
+- `open_plugin_spec`: not_applicable
+- `mcp_or_skill_registry`: not_applicable
+- `docs_only`: listed
+
+Submit checklist:
+
+- [ ] One YAML under data/plugins/ (no hand-edit of README)
+- [ ] package.json declares dsh.bundle + cordis.patch.yml
+- [ ] Accurate description (no superlatives); category tools
+- [ ] Repo topic dsh-plugin; npm @cloudbase/dsh-plugin optional but recommended
+
+Process:
+
+```
+Community main repo: awesome-dsh-plugin/awesome-dsh-plugin (not deepseek-ai/awesome-dsh-plugin — 404).
+Add ONE file: data/plugins/<owner>__<repo>.yml (monorepo subpkg: owner__repo--path-segments.yml).
+Do NOT edit README.md / README.zh.md by hand — sync-readme.yml regenerates after merge.
+Requires dsh.bundle in package.json (+ cordis.patch.yml); dsh.client alone is rejected.
+Status 2026-09-15: PR #5120 merged. Entry live in data/plugins + generated READMEs (category tools).
+```
+
+Evidence:
+
+- https://github.com/awesome-dsh-plugin/awesome-dsh-plugin
+- https://github.com/awesome-dsh-plugin/awesome-dsh-plugin/pull/5120
+- https://github.com/awesome-dsh-plugin/awesome-dsh-plugin/blob/main/data/plugins/TencentCloudBase__CloudBase-AI-Toolkit--dsh-plugin.yml
+- https://github.com/awesome-dsh-plugin/awesome-dsh-plugin/blob/main/contributing.md
+- https://github.com/TencentCloudBase/CloudBase-AI-Toolkit/tree/main/dsh-plugin
+
+Recommended install docs: `dsh-plugin/README.md`
+
+### github-copilot-cli — GitHub Copilot CLI
+
+- Region: global
+- Channel: `open_plugin_spec_target`
+- Eligibility: `marketplace_add_or_ops`
+- Last reviewed: 2026-07-27
+- Manual submit only: yes
+
+Statuses:
+
+- `official_curated`: unknown
+- `community_directory`: unknown
+- `self_marketplace`: listed
+- `native_connector_or_builtin`: not_applicable
+- `open_plugin_spec`: listed
+- `mcp_or_skill_registry`: not_applicable
+- `docs_only`: listed
+
+Local evidence:
+
+- `open_plugin_spec_cloudbase`: **present** — plugin/cloudbase/.plugin/plugin.json has $schema
+- `ops_publish_repo_docs`: **present** — doc/ai-agent-plugins.mdx documents npx plugins add
+
+Submit checklist:
+
+- [ ] Confirm default Copilot curated catalog submission if desired
+
+Process:
+
+```
+Shares agent plugin format with VS Code; install via marketplace add or npx plugins --target github-copilot.
+```
+
+Evidence:
+
+- https://code.visualstudio.com/docs/agent-customization/agent-plugins
+- https://open-plugins.com/plugin-builders/specification
+
+Recommended install docs: `doc/ide-setup/github-copilot.mdx`
+
+### workbuddy-connector — WorkBuddy
+
+- Region: cn
+- Channel: `native_connector_or_builtin`
+- Eligibility: `n_a`
+- Last reviewed: 2026-07-27
+- Manual submit only: yes
+
+Statuses:
+
+- `official_curated`: not_applicable
+- `community_directory`: not_applicable
+- `self_marketplace`: not_applicable
+- `native_connector_or_builtin`: listed
+- `open_plugin_spec`: not_applicable
+- `mcp_or_skill_registry`: not_applicable
+- `docs_only`: listed
+
+Process:
+
+```
+Already listed as built-in CloudBase connector.
+```
+
+Evidence:
+
+- doc/ide-setup/workbuddy.mdx
+- doc/ai-agent-plugins.mdx
+
+Recommended install docs: `doc/ide-setup/workbuddy.mdx`
+
+### zcode-plugin — ZCode
+
+- Region: cn
+- Channel: `native_connector_or_builtin`
+- Eligibility: `n_a`
+- Last reviewed: 2026-07-27
+- Manual submit only: yes
+
+Statuses:
+
+- `official_curated`: not_applicable
+- `community_directory`: not_applicable
+- `self_marketplace`: not_applicable
+- `native_connector_or_builtin`: listed
+- `open_plugin_spec`: not_applicable
+- `mcp_or_skill_registry`: not_applicable
+- `docs_only`: listed
+
+Process:
+
+```
+Listed as cloudbase-skills under ZCode plugins (>= 3.4.1).
+```
+
+Evidence:
+
+- doc/ide-setup/zcode.mdx
+- doc/ai-agent-plugins.mdx
+
+Recommended install docs: `doc/ide-setup/zcode.mdx`
+
+### trae-mcp-deeplink — Trae IDE
+
+- Region: cn
+- Channel: `deeplink_or_install_assist`
+- Eligibility: `n_a`
+- Last reviewed: 2026-07-27
+- Manual submit only: yes
+
+Statuses:
+
+- `official_curated`: not_applicable
+- `community_directory`: not_applicable
+- `self_marketplace`: not_applicable
+- `native_connector_or_builtin`: not_applicable
+- `open_plugin_spec`: not_applicable
+- `mcp_or_skill_registry`: not_applicable
+- `docs_only`: listed
+
+Local evidence:
+
+- `trae_mcp_deeplink_docs`: **present** — Trae docs present: doc/ide-setup/trae.mdx
+
+Process:
+
+```
+Distribution assist via trae-cn:// MCP import deep link (already documented). Not a store listing.
+```
+
+Evidence:
+
+- https://docs.trae.cn/ide_mcp-server-install-links
+- doc/ide-setup/trae.mdx
+
+Recommended install docs: `doc/ide-setup/trae.mdx`
+
+### ops-cli — Open Plugin Spec CLI
+
+- Region: global
+- Channel: `open_plugin_spec_target`
+- Eligibility: `n_a`
+- Last reviewed: 2026-07-27
+- Manual submit only: yes
+
+Statuses:
+
+- `official_curated`: not_applicable
+- `community_directory`: not_applicable
+- `self_marketplace`: not_applicable
+- `native_connector_or_builtin`: not_applicable
+- `open_plugin_spec`: listed
+- `mcp_or_skill_registry`: not_applicable
+- `docs_only`: listed
+
+Local evidence:
+
+- `open_plugin_spec_cloudbase`: **present** — plugin/cloudbase/.plugin/plugin.json has $schema
+- `ops_publish_repo_docs`: **present** — doc/ai-agent-plugins.mdx documents npx plugins add
+
+Process:
+
+```
+Already installable via npx plugins add TencentCloudBase/cloudbase-plugin (targets: claude-code, cursor, codex, grok, kimi, github-copilot, vscode).
+```
+
+Evidence:
+
+- doc/ai-agent-plugins.mdx
+- https://open-plugins.com/plugin-builders/specification
+
+Recommended install docs: `doc/ai-agent-plugins.mdx`
+
+### self-marketplace-claude — Claude Code (self marketplace)
+
+- Region: global
+- Channel: `self_hosted_marketplace`
+- Eligibility: `n_a`
+- Last reviewed: 2026-07-27
+- Manual submit only: yes
+
+Statuses:
+
+- `official_curated`: not_applicable
+- `community_directory`: not_applicable
+- `self_marketplace`: listed
+- `native_connector_or_builtin`: not_applicable
+- `open_plugin_spec`: listed
+- `mcp_or_skill_registry`: not_applicable
+- `docs_only`: listed
+
+Local evidence:
+
+- `self_marketplace_claude`: **present** — .claude-plugin/marketplace.json lists cloudbase
+- `claude_plugin_manifest`: **present** — plugin/cloudbase/.claude-plugin/plugin.json exists
+
+Process:
+
+```
+Users add TencentCloudBase/CloudBase-MCP then install cloudbase@tencent-cloudbase.
+```
+
+Evidence:
+
+- .claude-plugin/marketplace.json
+- doc/ide-setup/claude-code.mdx
+
+Recommended install docs: `doc/ide-setup/claude-code.mdx`
+
+### self-marketplace-codex — Codex (self marketplace)
+
+- Region: global
+- Channel: `self_hosted_marketplace`
+- Eligibility: `n_a`
+- Last reviewed: 2026-07-27
+- Manual submit only: yes
+
+Statuses:
+
+- `official_curated`: not_applicable
+- `community_directory`: not_applicable
+- `self_marketplace`: listed
+- `native_connector_or_builtin`: not_applicable
+- `open_plugin_spec`: listed
+- `mcp_or_skill_registry`: not_applicable
+- `docs_only`: listed
+
+Local evidence:
+
+- `self_marketplace_codex`: **present** — .agents/plugins/marketplace.json lists cloudbase
+- `codex_plugin_manifest`: **present** — plugin/cloudbase/.codex-plugin/plugin.json exists
+
+Process:
+
+```
+Users add marketplace from this repo. Codex prefers .agents/plugins/marketplace.json (root marketplace.json kept for compat). Recommended: --sparse .agents/plugins --sparse plugin.
+```
+
+Evidence:
+
+- .agents/plugins/marketplace.json
+- marketplace.json
+- doc/ide-setup/codex.mdx
+- doc/ai-agent-plugins.mdx
+
+Recommended install docs: `doc/ide-setup/codex.mdx`
+
+### mcp-official-registry — Official MCP Registry
+
+- Region: global
+- Channel: `mcp_registry_or_aggregator`
+- Eligibility: `mcp_publisher_cli`
+- Last reviewed: 2026-09-24
+- Manual submit only: yes
+
+Statuses:
+
+- `official_curated`: not_applicable
+- `community_directory`: not_applicable
+- `self_marketplace`: not_applicable
+- `native_connector_or_builtin`: not_applicable
+- `open_plugin_spec`: not_applicable
+- `mcp_or_skill_registry`: listed
+- `docs_only`: listed
+
+Local evidence:
+
+- `mcp_registry_server_json`: **present** — mcp/server.json matches npm mcpName io.github.TencentCloudBase/cloudbase-mcp
+
+Process:
+
+```
+Publish via mcp-publisher CLI to registry.modelcontextprotocol.io; aggregators may ingest afterward.
+Status 2026-08-17: listed as io.github.TencentCloudBase/cloudbase-mcp v2.27.0 (hosted remotes).
+npm packages[] will attach on the next npm release after mcpName ships in @cloudbase/cloudbase-mcp.
+Status 2026-09-24: registry now carries every release up to v2.34.6, with both hosted remotes
+(domestic + international) and the npm package records attached. Publishing is fully automated in
+.github/workflows/npm-publish.yaml: sync the server.json version, then mcp-publisher login github-oidc,
+then publish (with retries while the npm package propagates).
+```
+
+Evidence:
+
+- https://registry.modelcontextprotocol.io/v0/servers?search=cloudbase
+- https://github.com/TencentCloudBase/CloudBase-AI-Toolkit
+
+Recommended install docs: `mcp/server.json`
+
+### tencent-cloud-mcp-server-platform — Tencent Cloud MCP Server Platform
+
+- Region: cn
+- Channel: `mcp_registry_or_aggregator`
+- Eligibility: `n_a`
+- Last reviewed: 2026-09-15
+- Manual submit only: yes
+
+Statuses:
+
+- `official_curated`: not_applicable
+- `community_directory`: not_applicable
+- `self_marketplace`: not_applicable
+- `native_connector_or_builtin`: not_applicable
+- `open_plugin_spec`: not_applicable
+- `mcp_or_skill_registry`: listed
+- `docs_only`: listed
+
+Process:
+
+```
+Platform at https://tcb.cloud.tencent.com/mcp-server with a 申请上架 entry point. CloudBase is already
+listed with two servers — 云开发基础能力 and 云开发 AI 能力 — alongside third-party servers such as
+Hunyuan 3D, Tencent Maps, Lighthouse, Puppeteer and a memory module.
+```
+
+Evidence:
+
+- https://tcb.cloud.tencent.com/mcp-server
+
+### glama — Glama
+
+- Region: global
+- Channel: `mcp_registry_or_aggregator`
+- Eligibility: `public_github_mcp`
+- Last reviewed: 2026-09-24
+- Manual submit only: yes
+
+Statuses:
+
+- `official_curated`: not_applicable
+- `community_directory`: not_applicable
+- `self_marketplace`: not_applicable
+- `native_connector_or_builtin`: not_applicable
+- `open_plugin_spec`: not_applicable
+- `mcp_or_skill_registry`: unknown
+- `docs_only`: unknown
+
+Local evidence:
+
+- `mcp_registry_server_json`: **present** — mcp/server.json matches npm mcpName io.github.TencentCloudBase/cloudbase-mcp
+
+Process:
+
+```
+Indexes public GitHub MCP repos / registry.
+```
+
+Evidence:
+
+- https://glama.ai/mcp/servers
+- https://glama.ai/mcp/servers/TencentCloudBase/CloudBase-MCP
+
+## not_applicable
+
+### qianwen-device-platform — QianWen AI Hardware Open Platform (千问AI硬件开放平台)
+
+- Region: cn
+- Channel: `skill_registry`
+- Eligibility: `public_self_serve_submission`
+- Last reviewed: 2026-09-24
+- Manual submit only: yes
+
+Statuses:
+
+- `official_curated`: unknown
+- `community_directory`: not_applicable
+- `self_marketplace`: not_applicable
+- `native_connector_or_builtin`: not_applicable
+- `open_plugin_spec`: not_applicable
+- `mcp_or_skill_registry`: submittable
+- `docs_only`: listed
+
+Blockers:
+
+- Console and docs both require sign-in (千问 App QR code)
+- The surface is AI glasses; documented cases are industrial inspection, retail shelf checks, real-estate sales assist and in-car voice, none of which match CloudBase tooling
+
+Process:
+
+```
+device.qianwen.com publishes a four-step developer flow: 01 成为开发者 (signing in to the open platform
+completes developer verification — "填写基本信息即可开始开发"), 02 开发 Skill (create or import),
+03 测试和审核 (cloud sandbox plus on-device verification, then a one-click review submission),
+04 发布上线 (auto-publish after approval, then usable by voice).
+Creation modes are 对话创建 / 模板创建 / 空白文档, followed by a 插件工具 configuration step.
+The console is at /aistudio/skill-dev and the docs at /docs; both gate on login and offer
+「用千问APP扫码登录」. There is also a public 立即加入 developer-kit entry.
+```
+
+Evidence:
+
+- https://device.qianwen.com/
+- https://device.qianwen.com/aistudio/skill-dev
+
+### trae-ide-extension — Trae IDE
+
+- Region: cn
+- Channel: `editor_extension_marketplace`
+- Eligibility: `n_a`
+- Last reviewed: 2026-07-27
+- Manual submit only: yes
+
+Statuses:
+
+- `official_curated`: not_applicable
+- `community_directory`: not_applicable
+- `self_marketplace`: not_applicable
+- `native_connector_or_builtin`: not_applicable
+- `open_plugin_spec`: not_applicable
+- `mcp_or_skill_registry`: not_applicable
+- `docs_only`: not_applicable
+
+Process:
+
+```
+VS Code-compatible .vsix extension marketplace. Not the correct channel for CloudBase agent plugin / MCP listing.
+```
+
+Evidence:
+
+- https://docs.trae.cn/ide_manage-extensions
+
+Recommended install docs: `doc/ide-setup/trae.mdx`
+
+### tongyi-lingma — Tongyi Lingma
+
+- Region: cn
+- Channel: `docs_config_only`
+- Eligibility: `unknown_or_partner`
+- Last reviewed: 2026-07-27
+- Manual submit only: yes
+
+Statuses:
+
+- `official_curated`: unknown
+- `community_directory`: unknown
+- `self_marketplace`: not_applicable
+- `native_connector_or_builtin`: not_applicable
+- `open_plugin_spec`: not_applicable
+- `mcp_or_skill_registry`: not_applicable
+- `docs_only`: listed
+
+Process:
+
+```
+MCP / rules via ide-setup docs; dedicated agent plugin store status unknown.
+```
+
+Evidence:
+
+- doc/ide-setup/tongyi-lingma.mdx
+
+Recommended install docs: `doc/ide-setup/tongyi-lingma.mdx`
+
+### baidu-comate — Baidu Comate
+
+- Region: cn
+- Channel: `docs_config_only`
+- Eligibility: `unknown_or_partner`
+- Last reviewed: 2026-07-27
+- Manual submit only: yes
+
+Statuses:
+
+- `official_curated`: unknown
+- `community_directory`: unknown
+- `self_marketplace`: not_applicable
+- `native_connector_or_builtin`: not_applicable
+- `open_plugin_spec`: not_applicable
+- `mcp_or_skill_registry`: not_applicable
+- `docs_only`: listed
+
+Process:
+
+```
+MCP / rules via ide-setup docs; store listing unknown.
+```
+
+Evidence:
+
+- doc/ide-setup/baidu-comate.mdx
+
+Recommended install docs: `doc/ide-setup/baidu-comate.mdx`
+
+### windsurf — WindSurf
+
+- Region: global
+- Channel: `docs_config_only`
+- Eligibility: `n_a`
+- Last reviewed: 2026-07-27
+- Manual submit only: yes
+
+Statuses:
+
+- `official_curated`: not_applicable
+- `community_directory`: not_applicable
+- `self_marketplace`: not_applicable
+- `native_connector_or_builtin`: not_applicable
+- `open_plugin_spec`: not_applicable
+- `mcp_or_skill_registry`: not_applicable
+- `docs_only`: listed
+
+Process:
+
+```
+MCP + rules config; no confirmed CloudBase agent plugin marketplace.
+```
+
+Evidence:
+
+- doc/ide-setup/windsurf.mdx
+
+Recommended install docs: `doc/ide-setup/windsurf.mdx`
+
+### docs-cline — Cline
+
+- Region: global
+- Channel: `docs_config_only`
+- Eligibility: `n_a`
+- Last reviewed: 2026-07-27
+- Manual submit only: yes
+
+Statuses:
+
+- `official_curated`: not_applicable
+- `community_directory`: not_applicable
+- `self_marketplace`: not_applicable
+- `native_connector_or_builtin`: not_applicable
+- `open_plugin_spec`: not_applicable
+- `mcp_or_skill_registry`: not_applicable
+- `docs_only`: listed
+
+Process:
+
+```
+No dedicated CloudBase store channel; use MCP + rules docs.
+```
+
+Evidence:
+
+- doc/ide-setup/cline.mdx
+
+Recommended install docs: `doc/ide-setup/cline.mdx`
+
+### docs-gemini-cli — Gemini CLI
+
+- Region: global
+- Channel: `docs_config_only`
+- Eligibility: `n_a`
+- Last reviewed: 2026-07-27
+- Manual submit only: yes
+
+Statuses:
+
+- `official_curated`: not_applicable
+- `community_directory`: not_applicable
+- `self_marketplace`: not_applicable
+- `native_connector_or_builtin`: not_applicable
+- `open_plugin_spec`: not_applicable
+- `mcp_or_skill_registry`: not_applicable
+- `docs_only`: listed
+
+Process:
+
+```
+Docs-only MCP/rules setup.
+```
+
+Evidence:
+
+- doc/ide-setup/gemini-cli.mdx
+
+Recommended install docs: `doc/ide-setup/gemini-cli.mdx`
+
+### docs-opencode — OpenCode
+
+- Region: global
+- Channel: `docs_config_only`
+- Eligibility: `n_a`
+- Last reviewed: 2026-07-27
+- Manual submit only: yes
+
+Statuses:
+
+- `official_curated`: not_applicable
+- `community_directory`: not_applicable
+- `self_marketplace`: not_applicable
+- `native_connector_or_builtin`: not_applicable
+- `open_plugin_spec`: not_applicable
+- `mcp_or_skill_registry`: not_applicable
+- `docs_only`: listed
+
+Process:
+
+```
+Docs-only MCP/rules setup.
+```
+
+Evidence:
+
+- doc/ide-setup/opencode.mdx
+
+Recommended install docs: `doc/ide-setup/opencode.mdx`
+
+### docs-qwen-code — Qwen Code
+
+- Region: cn
+- Channel: `docs_config_only`
+- Eligibility: `n_a`
+- Last reviewed: 2026-07-27
+- Manual submit only: yes
+
+Statuses:
+
+- `official_curated`: not_applicable
+- `community_directory`: not_applicable
+- `self_marketplace`: not_applicable
+- `native_connector_or_builtin`: not_applicable
+- `open_plugin_spec`: not_applicable
+- `mcp_or_skill_registry`: not_applicable
+- `docs_only`: listed
+
+Process:
+
+```
+Docs-only MCP/rules setup.
+```
+
+Evidence:
+
+- doc/ide-setup/qwen-code.mdx
+
+Recommended install docs: `doc/ide-setup/qwen-code.mdx`
+
+### docs-augment-code — Augment Code
+
+- Region: global
+- Channel: `docs_config_only`
+- Eligibility: `n_a`
+- Last reviewed: 2026-07-27
+- Manual submit only: yes
+
+Statuses:
+
+- `official_curated`: not_applicable
+- `community_directory`: not_applicable
+- `self_marketplace`: not_applicable
+- `native_connector_or_builtin`: not_applicable
+- `open_plugin_spec`: not_applicable
+- `mcp_or_skill_registry`: not_applicable
+- `docs_only`: listed
+
+Process:
+
+```
+Docs-only MCP/rules setup.
+```
+
+Evidence:
+
+- doc/ide-setup/augment-code.mdx
+
+Recommended install docs: `doc/ide-setup/augment-code.mdx`
+
+### docs-roocode — RooCode
+
+- Region: global
+- Channel: `docs_config_only`
+- Eligibility: `n_a`
+- Last reviewed: 2026-07-27
+- Manual submit only: yes
+
+Statuses:
+
+- `official_curated`: not_applicable
+- `community_directory`: not_applicable
+- `self_marketplace`: not_applicable
+- `native_connector_or_builtin`: not_applicable
+- `open_plugin_spec`: not_applicable
+- `mcp_or_skill_registry`: not_applicable
+- `docs_only`: listed
+
+Process:
+
+```
+Docs-only MCP/rules setup (deprecated product guidance may apply).
+```
+
+Evidence:
+
+- doc/ide-setup/roocode.mdx
+
+Recommended install docs: `doc/ide-setup/roocode.mdx`
+
+### docs-antigravity — Google Antigravity
+
+- Region: global
+- Channel: `docs_config_only`
+- Eligibility: `n_a`
+- Last reviewed: 2026-07-27
+- Manual submit only: yes
+
+Statuses:
+
+- `official_curated`: not_applicable
+- `community_directory`: not_applicable
+- `self_marketplace`: not_applicable
+- `native_connector_or_builtin`: not_applicable
+- `open_plugin_spec`: not_applicable
+- `mcp_or_skill_registry`: not_applicable
+- `docs_only`: listed
+
+Process:
+
+```
+Docs-only MCP/rules setup.
+```
+
+Evidence:
+
+- doc/ide-setup/antigravity.mdx
+
+Recommended install docs: `doc/ide-setup/antigravity.mdx`
+
+### docs-kiro — Kiro
+
+- Region: global
+- Channel: `docs_config_only`
+- Eligibility: `n_a`
+- Last reviewed: 2026-07-27
+- Manual submit only: yes
+
+Statuses:
+
+- `official_curated`: not_applicable
+- `community_directory`: not_applicable
+- `self_marketplace`: not_applicable
+- `native_connector_or_builtin`: not_applicable
+- `open_plugin_spec`: not_applicable
+- `mcp_or_skill_registry`: not_applicable
+- `docs_only`: listed
+
+Process:
+
+```
+Docs-only MCP/rules setup.
+```
+
+Evidence:
+
+- doc/ide-setup/kiro.mdx
+
+Recommended install docs: `doc/ide-setup/kiro.mdx`
+
+### docs-aider — Aider
+
+- Region: global
+- Channel: `docs_config_only`
+- Eligibility: `n_a`
+- Last reviewed: 2026-07-27
+- Manual submit only: yes
+
+Statuses:
+
+- `official_curated`: not_applicable
+- `community_directory`: not_applicable
+- `self_marketplace`: not_applicable
+- `native_connector_or_builtin`: not_applicable
+- `open_plugin_spec`: not_applicable
+- `mcp_or_skill_registry`: not_applicable
+- `docs_only`: listed
+
+Process:
+
+```
+Docs-only MCP/rules setup. Dedicated ide-setup page not present yet.
+```
+
+### docs-iflow-cli — iFlow CLI
+
+- Region: cn
+- Channel: `docs_config_only`
+- Eligibility: `n_a`
+- Last reviewed: 2026-07-27
+- Manual submit only: yes
+
+Statuses:
+
+- `official_curated`: not_applicable
+- `community_directory`: not_applicable
+- `self_marketplace`: not_applicable
+- `native_connector_or_builtin`: not_applicable
+- `open_plugin_spec`: not_applicable
+- `mcp_or_skill_registry`: not_applicable
+- `docs_only`: listed
+
+Process:
+
+```
+Docs-only MCP/rules setup.
+```
+
+Evidence:
+
+- doc/ide-setup/iflow-cli.mdx
+
+Recommended install docs: `doc/ide-setup/iflow-cli.mdx`
+
+### docs-openclaw — OpenClaw
+
+- Region: global
+- Channel: `docs_config_only`
+- Eligibility: `n_a`
+- Last reviewed: 2026-07-27
+- Manual submit only: yes
+
+Statuses:
+
+- `official_curated`: not_applicable
+- `community_directory`: not_applicable
+- `self_marketplace`: not_applicable
+- `native_connector_or_builtin`: not_applicable
+- `open_plugin_spec`: not_applicable
+- `mcp_or_skill_registry`: not_applicable
+- `docs_only`: listed
+
+Process:
+
+```
+Docs-only setup; skill registry via ClawHub tracked separately.
+```
+
+Evidence:
+
+- doc/ide-setup/openclaw.mdx
+
+Recommended install docs: `doc/ide-setup/openclaw.mdx`
+
+## unknown
+
+### aliyun-marketplace-bailian-plugins — Alibaba Cloud Marketplace → Model Studio (百炼) plugin plaza
+
+- Region: cn
+- Channel: `official_curated_marketplace`
+- Eligibility: `public_self_serve_submission`
+- Last reviewed: 2026-09-24
+- Manual submit only: yes
+
+Statuses:
+
+- `official_curated`: submittable
+- `community_directory`: not_applicable
+- `self_marketplace`: not_applicable
+- `native_connector_or_builtin`: not_applicable
+- `open_plugin_spec`: not_applicable
+- `mcp_or_skill_registry`: submittable
+- `docs_only`: listed
+
+Blockers:
+
+- Needs Alibaba Cloud Marketplace supplier onboarding, which is a company-level commitment (business licence ≥ 1 year, registered capital ≥ ¥1,000,000 for 数据与API, 5x8 support, deposit)
+- Targets Model Studio agent plugins rather than AI coding clients, so it is a different surface from the MCP / plugin listings elsewhere in this matrix
+
+Submit checklist:
+
+- [ ] Decide whether a Model Studio plugin listing justifies Marketplace supplier onboarding
+- [ ] [object Object]
+- [ ] [object Object]
+
+Process:
+
+```
+A documented self-serve route onto an official Alibaba Cloud recommendation surface. Prerequisites: the
+API is already published on Alibaba Cloud API Gateway, and an API product is live (status 已上架) on the
+Marketplace under the 数据与API category. Then, on the Data Exchange platform, select the published API and
+choose 插件输出 — the API group is converted to OAS 3.0 (one group becomes one plugin), the result enters
+插件审核, and once approved it is synced automatically into the Model Studio (百炼) official plugin plaza
+and the add-plugin recommendation area.
+Status 2026-09-24: not attempted. Recorded as the only self-serve, review-based public listing flow found
+in the Alibaba stack.
+```
+
+Evidence:
+
+- https://help.aliyun.com/document_detail/2866083.html
+- https://help.aliyun.com/zh/marketplace/cloud-market-category-qualification
+- https://developer.aliyun.com/article/1483445
+
+### qianwen-ai-github-org — QianWen-AI GitHub organisation
+
+- Region: global
+- Channel: `community_plugin_directory`
+- Eligibility: `public_github_pr_required`
+- Last reviewed: 2026-09-24
+- Manual submit only: yes
+
+Statuses:
+
+- `official_curated`: not_applicable
+- `community_directory`: submittable
+- `self_marketplace`: not_applicable
+- `native_connector_or_builtin`: not_applicable
+- `open_plugin_spec`: not_applicable
+- `mcp_or_skill_registry`: unknown
+- `docs_only`: unknown
+
+Blockers:
+
+- The org hosts the vendor's own skills; nothing indicates a third-party product listing would be accepted
+
+Process:
+
+```
+github.com/QianWen-AI is the public org behind the 千问AI平台 skill pack. Its project page invites three
+kinds of contribution: report a bug through an Issue with reproduction steps, request features, or fork and
+open a Pull Request.
+Repos at review time: qianwen-ai (the skill pack), qianwen-cli, qianwenai-deploy, homebrew-tap and
+apsara-conference-2026.
+```
+
+Evidence:
+
+- https://github.com/QianWen-AI
+- https://platform.qianwenai.com/skills
+
+### aliyun-mse-ai-registry — Alibaba Cloud MSE AI Registry (AI 注册中心)
+
+- Region: cn
+- Channel: `skill_registry`
+- Eligibility: `public_self_serve_submission`
+- Last reviewed: 2026-09-24
+- Manual submit only: yes
+
+Statuses:
+
+- `official_curated`: not_applicable
+- `community_directory`: not_applicable
+- `self_marketplace`: not_applicable
+- `native_connector_or_builtin`: not_applicable
+- `open_plugin_spec`: not_applicable
+- `mcp_or_skill_registry`: submittable
+- `docs_only`: unknown
+
+Blockers:
+
+- Consumers are AgentScope / Nacos clients, not the AI coding clients we target
+- Needs an Alibaba Cloud account plus AI Security Guardrail activation
+
+Process:
+
+```
+Documented self-serve skill publishing: import a preset skill or upload a zipped skill directory (a draft
+version is generated on import) → 提交审核, which runs a content security scan covering prompt-injection
+detection and compliance → on approval the version sits 待发布, then 发布版本 and enable it.
+The security scan requires Alibaba Cloud AI Security Guardrail to be activated first.
+Consumption paths are Nacos CLI, the Java SDK or AgentScope, over public or VPC endpoints.
+```
+
+Evidence:
+
+- https://help.aliyun.com/en/mse/user-guide/ai-registry-skill-quick-start-guide
+
+### clawhub — ClawHub
+
+- Region: global
+- Channel: `skill_registry`
+- Eligibility: `clawhub_cli_workflow`
+- Last reviewed: 2026-07-27
+- Manual submit only: yes
+
+Statuses:
+
+- `official_curated`: not_applicable
+- `community_directory`: not_applicable
+- `self_marketplace`: not_applicable
+- `native_connector_or_builtin`: not_applicable
+- `open_plugin_spec`: not_applicable
+- `mcp_or_skill_registry`: unknown
+- `docs_only`: listed
+
+Submit checklist:
+
+- [ ] Follow existing ClawHub publish spec
+
+Process:
+
+```
+Covered by specs/clawhub-public-skill-registry-publish; do not duplicate publish pipeline here.
+```
+
+Evidence:
+
+- specs/clawhub-public-skill-registry-publish/requirements.md
+

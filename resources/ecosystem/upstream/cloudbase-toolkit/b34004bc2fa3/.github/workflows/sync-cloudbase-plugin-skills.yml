@@ -1,0 +1,121 @@
+name: Sync CloudBase Plugin Skills
+
+on:
+  schedule:
+    - cron: '0 */12 * * *'
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      # Deliberately NOT config/source/skills/**: that path also triggers
+      # Push Skills Repository, so both jobs started in the same second and this
+      # pull-back cloned TencentCloudBase/skills before the push had landed —
+      # finding no drift, reporting success and doing nothing. Push Skills
+      # Repository now dispatches this workflow after its push succeeds; the
+      # 12h cron stays as a safety net. Keep the two self-triggers below so a
+      # change to this job or its script still runs it directly.
+      - 'scripts/sync-cloudbase-plugin-skills.mjs'
+      - '.github/workflows/sync-cloudbase-plugin-skills.yml'
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  sync-plugin-skills:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.2.2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '20'
+
+      - name: Enable corepack
+        run: corepack enable
+
+      # build-skill-manifest.mjs needs js-yaml from the root lockfile.
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Sync CloudBase plugin skills
+        run: node scripts/sync-cloudbase-plugin-skills.mjs
+
+      # Derived artifacts must be regenerated in the same commit that changes
+      # plugin skills. GITHUB_TOKEN pushes do not retrigger other workflows, so
+      # a stale generated/skill-manifest.json or .qoder-plugin/plugin.json would
+      # otherwise stay unnoticed on main until a PR or the npm publish workflow
+      # fails there (v2.33.2 incident). Skip when nothing changed to avoid
+      # timestamp-only commits.
+      - name: Regenerate derived artifacts when skills changed
+        run: |
+          if ! git diff --quiet -- plugin/cloudbase/skills; then
+            echo "Skills changed; regenerating derived artifacts"
+            node scripts/build-skill-manifest.mjs
+            node scripts/build-open-plugin-spec.mjs
+          else
+            echo "No skill changes; skipping regeneration"
+          fi
+
+      # GITHUB_TOKEN pushes do not retrigger path-filtered workflows (e.g. Push Plugin Repos).
+      # After we land skill changes under plugin/cloudbase/, explicitly dispatch that workflow.
+      # workflow_dispatch is an exception to the GITHUB_TOKEN non-retrigger rule.
+      - name: Commit and push changes
+        id: commit_skills
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          # Dedicated sync job on a fresh checkout: stage everything the sync +
+          # regeneration steps touched (skills, .sync-metadata.json,
+          # generated/skill-manifest.json, open plugin spec artifacts).
+          git add -A
+          if git diff --staged --quiet; then
+            echo "No changes, skipping."
+            echo "pushed=false" >> "$GITHUB_OUTPUT"
+          else
+            git commit -m "chore: sync cloudbase plugin skills from upstream"
+            # Release bots often push main in parallel. Rebase can conflict on
+            # generated .sync-metadata.json; recover by resetting to origin/main
+            # and regenerating a clean sync commit.
+            pushed=false
+            for i in 1 2 3; do
+              if git push; then
+                pushed=true
+                break
+              fi
+              echo "Push rejected (attempt $i); resetting onto origin/main and re-syncing..."
+              git rebase --abort 2>/dev/null || true
+              git fetch origin main
+              git reset --hard origin/main
+              node scripts/sync-cloudbase-plugin-skills.mjs --force
+              node scripts/build-skill-manifest.mjs
+              node scripts/build-open-plugin-spec.mjs
+              git add -A
+              if git diff --staged --quiet; then
+                echo "Remote already has synced skills after reset."
+                pushed=true
+                break
+              fi
+              git commit -m "chore: sync cloudbase plugin skills from upstream"
+              sleep $((i * 2))
+            done
+            if [ "$pushed" != "true" ]; then
+              echo "Failed to push after retries"
+              exit 1
+            fi
+            echo "pushed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Trigger Push Plugin Repos
+        if: steps.commit_skills.outputs.pushed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh workflow run "Push Plugin Repos" --ref main
+          echo "Dispatched Push Plugin Repos for dedicated plugin repo sync."

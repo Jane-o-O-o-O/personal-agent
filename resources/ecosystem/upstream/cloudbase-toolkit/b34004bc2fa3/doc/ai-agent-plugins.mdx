@@ -1,0 +1,97 @@
+import IDESelector from './components/IDESelector';
+
+# CloudBase AI 插件
+
+一键把 CloudBase 接入 AI 编程助手：同时捆绑 [MCP Server](/ai/cloudbase-ai-toolkit/getting-started) 与 [Agent Skills](/ai/cloudbase-ai-toolkit/prompts/how-to-use)，安装后即可查库、管云函数、部署托管等，无需再分别配置。
+
+相比单独装 Skills，插件还带上 Hooks 等能力，**Skill 激活更稳定**，推荐优先用插件。
+
+**最快上手：** 复制下面的 AI Prompt，粘贴到你的 AI IDE。
+
+```text
+帮我把 CloudBase 接好，按下面做：
+1. 打开 https://docs.cloudbase.net/skill.md，按说明完成接入。
+2. 接入完成后告诉我，并建议最相关的下一步。
+```
+
+## 安装
+
+### 方式 1：一键安装（推荐）
+
+通过兼容 [Open Plugin Specification](https://open-plugins.com/plugin-builders/specification) 的 `plugins` CLI 安装，会自动检测本机 AI 工具。**优先用这条路径，不要手写 MCP JSON。**
+
+默认 `--scope user`（全局）：
+
+```bash
+npx plugins add TencentCloudBase/cloudbase-plugin -y --scope user
+
+# Sites 插件（可选）
+npx plugins add TencentCloudBase/cloudbase-sites-plugin -y --scope user
+```
+
+<details>
+<summary><strong>支持的 AI IDE（npx plugins targets）</strong></summary>
+
+| `--target` ID | AI IDE | 说明 |
+|---------------|--------|------|
+| `claude-code` | Claude Code | `~/.claude` |
+| `cursor` | Cursor | `~/.cursor` |
+| `codex` | Codex | `~/.codex` |
+| `grok` | Grok Build | `~/.grok`（仅 per-user） |
+| `kimi` | Kimi Code | `~/.kimi-code`（仅 per-user） |
+| `github-copilot` | GitHub Copilot CLI | `~/.copilot`（独立 `copilot` CLI，不是 `gh copilot`） |
+| `vscode` | Visual Studio Code | Agent plugins（Preview，仅 per-user） |
+
+不写 `--target` 时，会安装到本机**所有已检测到**的上述目标。查看检测结果：
+
+```bash
+npx plugins targets
+```
+
+只装某一个工具时：
+
+```bash
+npx plugins add TencentCloudBase/cloudbase-plugin -y --scope user --target cursor
+```
+
+安装后重启 / reload 对应工具即可。
+
+</details>
+
+<details>
+<summary><strong>GitHub 不可达时（CNB 镜像）</strong></summary>
+
+`owner/repo` 短名会固定解析到 GitHub。若 `git clone` GitHub 失败，改用 **完整 CNB URL**（由 CI 从 OPS 产物同步，不含 marketplace 元数据）：
+
+```bash
+npx plugins add https://cnb.cool/tencent/cloud/cloudbase/cloudbase-plugin.git -y --scope user
+
+# Sites 插件（可选）
+npx plugins add https://cnb.cool/tencent/cloud/cloudbase/cloudbase-sites-plugin.git -y --scope user
+```
+
+> 不要用 monorepo 镜像 `CloudBase-AI-ToolKit` 做 `npx plugins add`：其 marketplace 结构与 OPS 专用仓不同，CLI 可能装不上。
+
+若插件仍无法安装，可退回 Skills CNB 或 npm MCP，见 [skill.md](https://docs.cloudbase.net/skill.md)。
+
+</details>
+
+### 方式 2：按客户端安装
+
+不在上面 targets 列表里的工具，在这里选 —— 有插件市场的优先走插件市场，其余按 MCP 配置连接：
+
+<IDESelector defaultIDE="codex-app" />
+
+## 插件里有什么
+
+| 能力 | 说明 |
+|------|------|
+| **MCP Server** | 环境、数据库、云函数、托管、存储、云托管、认证、权限、日志等，详见 [MCP 工具](mcp-tools.md) |
+| **Agent Skills** | 平台、Web / 小程序、云函数、认证、数据库、AI 模型、UI 等专业知识，详见 [如何使用 Skill](prompts/how-to-use.mdx) |
+
+## 相关文档
+
+- [快速开始](getting-started.mdx)
+- [如何使用 Skill](prompts/how-to-use.mdx)
+- [连接方式](connection-modes.mdx)
+- [常见问题](faq.md)

@@ -1,0 +1,437 @@
+import { McpServer, type RegisteredTool } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { registerDatabaseTools } from "./tools/databaseNoSQL.js";
+import { registerPGDatabaseTools } from "./tools/databasePG.js";
+import { registerSQLDatabaseTools } from "./tools/databaseSQL.js";
+import { registerEnvTools } from "./tools/env.js";
+import { registerFunctionTools } from "./tools/functions.js";
+import { registerHostingTools } from "./tools/hosting.js";
+import { registerRagTools } from "./tools/rag.js";
+import { registerSetupTools } from "./tools/setup.js";
+import { registerPGStorageTools } from "./tools/storagePG.js";
+import { registerStorageTools } from "./tools/storage.js";
+// import { registerMiniprogramTools } from "./tools/miniprogram.js";
+import { SetLevelRequestSchema } from '@modelcontextprotocol/sdk/types.js';
+import { registerCapiTools } from "./tools/capi.js";
+import { registerCloudRunTools } from "./tools/cloudrun.js";
+import { registerDeployTools } from "./tools/deploy.js";
+import { registerDataModelTools } from "./tools/dataModel.js";
+import { registerGatewayTools } from "./tools/gateway.js";
+import { registerAgentTools } from "./tools/agents.js";
+import { registerAppAuthTools } from "./tools/app-auth.js";
+import { registerAppTools } from "./tools/apps.js";
+import { registerLogTools } from "./tools/logs.js";
+import { registerPermissionTools } from "./tools/permissions.js";
+import { registerMsgPushTools } from "./tools/msg-push.js";
+import { registerFeedbackTools } from "./tools/feedback.js";
+import { CloudBaseOptions, Logger, PluginOptions } from "./types.js";
+import type { AuthOptions } from "./auth.js";
+import { isMessageKey, resolveInstanceLang, setInstanceLang, t, type Lang } from "./i18n/index.js";
+import { localizeZodSchemaShape } from "./i18n/schema.js";
+import { enableCloudMode } from "./utils/cloud-mode.js";
+import { info } from './utils/logger.js';
+import { resolveSiteAndRegion, SITE_REGION_MAP } from "./utils/site-map.js";
+import { buildJsonToolResult, isToolPayloadError } from "./utils/tool-result.js";
+import { wrapServerWithTelemetry, applyCategoryAnnotationMeta, type ToolAnnotations } from "./utils/tool-wrapper.js";
+import { normalizeClientName } from "./utils/telemetry.js";
+
+// 插件定义
+interface PluginDefinition {
+  name: string;
+  register: (server: ExtendedMcpServer) => void | Promise<void>;
+}
+
+// 默认插件列表
+const DEFAULT_PLUGINS = [
+  "env",
+  "database",
+  "pg_database",
+  "pg_storage",
+  "mysql_database",
+  "functions",
+  "hosting",
+  "storage",
+  "setup",
+  "rag",
+  "cloudrun",
+  "deploy",
+  "gateway",
+  "app-auth",
+  "apps",
+  "permissions",
+  "logs",
+  "agents",
+  "capi",
+  "feedback",
+];
+
+function registerDatabase(server: ExtendedMcpServer) {
+  // NoSQL 数据库按站点能力集合注册（国际站默认不支持 NoSQL）
+  const { site } = resolveSiteAndRegion({
+    site: server.cloudBaseOptions?.site,
+    region: server.cloudBaseOptions?.region,
+  });
+  if (SITE_REGION_MAP[site].capabilities.noSql) {
+    registerDatabaseTools(server);
+  }
+  registerDataModelTools(server);
+}
+
+function registerMysqlDatabase(server: ExtendedMcpServer) {
+  registerSQLDatabaseTools(server);
+}
+
+function registerNoSQLDatabase(server: ExtendedMcpServer) {
+  const { site } = resolveSiteAndRegion({
+    site: server.cloudBaseOptions?.site,
+    region: server.cloudBaseOptions?.region,
+  });
+  if (SITE_REGION_MAP[site].capabilities.noSql) {
+    registerDatabaseTools(server);
+  }
+}
+
+// 可用插件映射
+const AVAILABLE_PLUGINS: Record<string, PluginDefinition> = {
+  env: { name: "env", register: registerEnvTools },
+  database: { name: "database", register: registerDatabase },
+  mysql_database: { name: "mysql_database", register: registerMysqlDatabase },
+  pg_database: { name: "pg_database", register: registerPGDatabaseTools },
+  pg_storage: { name: "pg_storage", register: registerPGStorageTools },
+  "database-nosql": { name: "database-nosql", register: registerNoSQLDatabase },
+  "database-sql": { name: "database-sql", register: registerSQLDatabaseTools },
+  "data-model": { name: "data-model", register: registerDataModelTools },
+  functions: { name: "functions", register: registerFunctionTools },
+  hosting: { name: "hosting", register: registerHostingTools },
+  storage: { name: "storage", register: registerStorageTools },
+  setup: { name: "setup", register: registerSetupTools },
+  rag: { name: "rag", register: registerRagTools },
+  gateway: { name: "gateway", register: registerGatewayTools },
+  "app-auth": { name: "app-auth", register: registerAppAuthTools },
+  permissions: { name: "permissions", register: registerPermissionTools },
+  logs: { name: "logs", register: registerLogTools },
+  agents: { name: "agents", register: registerAgentTools },
+  apps: { name: "apps", register: registerAppTools },
+  cloudrun: { name: "cloudrun", register: registerCloudRunTools },
+  deploy: { name: "deploy", register: registerDeployTools },
+  capi: { name: "capi", register: registerCapiTools },
+  "msg-push": { name: "msg-push", register: registerMsgPushTools },
+  feedback: { name: "feedback", register: registerFeedbackTools },
+};
+
+const PLUGIN_ALIASES: Record<string, string> = {
+  "access-control": "permissions",
+  "auth-config": "app-auth",
+  "security-rule": "permissions",
+  "security-rules": "permissions",
+  "secret-rule": "permissions",
+  "secret-rules": "permissions",
+  mysql: "mysql_database",
+  "mysql-database": "mysql_database",
+  "sql-database": "mysql_database",
+  users: "permissions",
+};
+
+function normalizePluginName(name: string): string {
+  const normalized = name.trim().toLowerCase().replace(/\s+/g, "-");
+  return PLUGIN_ALIASES[normalized] ?? normalized;
+}
+
+/**
+ * Parse enabled plugins list
+ * @param pluginsEnabled Optional array of enabled plugin names (takes precedence over env var)
+ * @param pluginsDisabled Optional array of disabled plugin names (merged with env var)
+ * @returns Array of enabled plugin names
+ */
+function parseEnabledPlugins(
+  pluginsEnabled?: string[],
+  pluginsDisabled?: string[]
+): string[] {
+  const enabledEnv = process.env.CLOUDBASE_MCP_PLUGINS_ENABLED;
+  const disabledEnv = process.env.CLOUDBASE_MCP_PLUGINS_DISABLED;
+
+  let enabledPlugins: string[];
+
+  // Priority: parameter > environment variable > default plugins
+  if (pluginsEnabled && pluginsEnabled.length > 0) {
+    enabledPlugins = pluginsEnabled;
+  } else if (enabledEnv) {
+    enabledPlugins = enabledEnv.split(",").map((p) => p.trim());
+  } else {
+    enabledPlugins = [...DEFAULT_PLUGINS];
+  }
+
+  const allDisabledPlugins = new Set<string>();
+
+  if (disabledEnv) {
+    disabledEnv
+      .split(",")
+      .map((p) => normalizePluginName(p))
+      .forEach((p) => allDisabledPlugins.add(p));
+  }
+
+  if (pluginsDisabled && pluginsDisabled.length > 0) {
+    pluginsDisabled
+      .map((p) => normalizePluginName(p))
+      .forEach((p) => allDisabledPlugins.add(p));
+  }
+
+  enabledPlugins = Array.from(
+    new Set(
+      enabledPlugins
+        .map((p) => normalizePluginName(p))
+        .filter((p) => !allDisabledPlugins.has(p)),
+    ),
+  );
+
+  return enabledPlugins;
+}
+
+/**
+ * registerTool config with CloudBase `annotations.category` retained after
+ * MCP SDK >=1.26 closed ToolAnnotations to strip unknown keys at the type level.
+ */
+export type CloudBaseRegisterToolConfig = {
+  title?: string;
+  description?: string;
+  inputSchema?: any;
+  outputSchema?: any;
+  annotations?: ToolAnnotations;
+  _meta?: Record<string, unknown>;
+};
+
+// Extend McpServer with CloudBase options and category-aware registerTool.
+export interface ExtendedMcpServer extends McpServer {
+  cloudBaseOptions?: CloudBaseOptions;
+  authOptions?: AuthOptions;
+  /** 实例输出语言（zh/en）：description 注册选择 + 工具输出文案默认语言 */
+  lang?: Lang;
+  ide?: string;
+  /** MCP client 来源标识（hosted 场景由上游解析注入，如 cursor / claude-code） */
+  client?: string;
+  logger?: Logger;
+  enabledPlugins?: string[];
+  pluginOptions?: PluginOptions;
+  /** Registered tools for external hosts (e.g. WeChat IDE) to re-register. */
+  toolDefs: Array<{ name: string; description: string; inputSchema: any; handler: (input: any) => Promise<any> }>;
+
+  setLogger(logger: Logger): void;
+
+  /**
+   * Same as MCP SDK registerTool, but annotations may include CloudBase `category`.
+   * Handler typing stays intentionally loose to match existing tool call sites.
+   */
+  registerTool(
+    name: string,
+    config: CloudBaseRegisterToolConfig,
+    cb: (...args: any[]) => any,
+  ): RegisteredTool;
+}
+
+/**
+ * 把工具 description / title 里写的词典 key 解析成实例语言的实际文案。
+ * 非 key 的字符串（存量动态拼出来的 description）原样返回，保证向后兼容。
+ */
+function resolveToolText(value: string, lang?: Lang): string {
+  return isMessageKey(value) ? t(value, undefined, lang) : value;
+}
+
+/**
+ * Create and configure a CloudBase MCP Server instance
+ * @param options Server configuration options
+ * @returns Configured McpServer instance
+ *
+ * @example
+ * import { createCloudBaseMcpServer } from "@cloudbase/mcp-server";
+ * import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+ *
+ * const server = createCloudBaseMcpServer({ cloudBaseOptions: {
+ *  envId,    // 环境ID
+ *  secretId,  // 腾讯云密钥ID
+ *  secretKey, // 腾讯云密钥
+ *  region, // 地域，默认是 ap-shanghai
+ *  token // 临时密钥，有有效期限制，生成密钥时可控制
+ * } });
+ *
+ * const transport = new StdioServerTransport();
+ * await server.connect(transport);
+ */
+export async function createCloudBaseMcpServer(options?: {
+  name?: string;
+  version?: string;
+  enableTelemetry?: boolean;
+  cloudBaseOptions?: CloudBaseOptions;
+  authOptions?: AuthOptions;
+  cloudMode?: boolean;
+  ide?: string;
+  client?: string;
+  logger?: Logger;
+  pluginsEnabled?: string[];
+  pluginsDisabled?: string[];
+  pluginOptions?: PluginOptions;
+  /**
+   * 实例输出语言（zh/en）。解析链：本参数 > TCB_LANG 环境变量
+   * > `.cloudbase/project.json` 的 lang > 默认 zh。
+   * 影响：工具 description / title 里的词典 key 按本语言解析 + 工具输出文案默认语言。
+   */
+  lang?: Lang | string;
+}): Promise<ExtendedMcpServer> {
+  const {
+    name = "cloudbase-mcp",
+    version = "1.0.0",
+    enableTelemetry = true,
+    cloudBaseOptions,
+    authOptions,
+    cloudMode = false,
+    ide,
+    client,
+    logger,
+    pluginsEnabled,
+    pluginsDisabled,
+    pluginOptions,
+    lang,
+  } = options ?? {};
+
+  // Enable cloud mode if specified
+  if (cloudMode) {
+    enableCloudMode();
+  }
+
+  // Create server instance
+  const server = new McpServer(
+    {
+      name,
+      version,
+    },
+    {
+      capabilities: {
+        tools: {},
+        ...(ide === "CodeBuddy" ? { logging: {} } : {}),
+      },
+    },
+  ) as ExtendedMcpServer;
+
+  // 初始化 toolDefs，用于外部提取工具列表（如微信 IDE）
+  server.toolDefs = [];
+
+  // 实例语言解析（须在工具注册前完成：registerTool 包装层按 lang 解析词典 key 形式的 description）
+  server.lang = resolveInstanceLang(lang);
+  // 同步到 i18n 模块级 instanceLang：否则 t() 无 langOverride 时会退化成
+  // TCB_LANG/project.json/zh，导致 options.lang 只影响工具 description、不影响工具输出文案。
+  setInstanceLang(server.lang);
+
+  const originalRegisterTool = server.registerTool.bind(server);
+  server.registerTool = ((name: string, meta: any, handler: (args: any) => Promise<any>) => {
+    const toolMeta = applyCategoryAnnotationMeta(meta ?? {});
+    // 国际化描述支持：description/title 写成词典 key 字符串（如 "storage.queryDescription"）时
+    // 按实例 lang 解析为实际文案；普通字符串（存量动态 description）原样透传，工具侧零改动。
+    if (typeof toolMeta?.description === "string") {
+      toolMeta.description = resolveToolText(toolMeta.description, server.lang);
+    }
+    if (typeof toolMeta?.title === "string") {
+      toolMeta.title = resolveToolText(toolMeta.title, server.lang);
+    }
+    if (toolMeta?.inputSchema && typeof toolMeta.inputSchema === "object") {
+      toolMeta.inputSchema = localizeZodSchemaShape(toolMeta.inputSchema, server.lang);
+    }
+    if (toolMeta?.outputSchema && typeof toolMeta.outputSchema === "object") {
+      toolMeta.outputSchema = localizeZodSchemaShape(toolMeta.outputSchema, server.lang);
+    }
+    // 同步记录到 toolDefs
+    server.toolDefs.push({
+      name,
+      description: toolMeta?.description ?? toolMeta?.title ?? '',
+      inputSchema: toolMeta?.inputSchema ?? {},
+      handler,
+    });
+    return originalRegisterTool(name, toolMeta, async (args: any) => {
+      try {
+        return await handler(args);
+      } catch (error) {
+        if (isToolPayloadError(error)) {
+          // 在结构化错误返回中注入 MCP 版本号
+          const payload = { ...error.payload, mcpVersion: version };
+          return buildJsonToolResult(payload);
+        }
+        throw error;
+      }
+    });
+  }) as typeof server.registerTool;
+
+  // Only set logging handler if logging capability is declared
+  if (ide === "CodeBuddy") {
+    server.server.setRequestHandler(SetLevelRequestSchema, (request, extra) => {
+      info(`--- Logging level: ${request.params.level}`);
+      return {};
+    });
+  }
+
+  // Store cloudBaseOptions in server instance for tools to access
+  if (cloudBaseOptions) {
+    server.cloudBaseOptions = cloudBaseOptions;
+  }
+
+  if (authOptions) {
+    server.authOptions = authOptions;
+  }
+
+  // Store pluginOptions in server instance for plugins to access
+  if (pluginOptions) {
+    server.pluginOptions = pluginOptions;
+  }
+
+  // Store ide in server instance for telemetry
+  if (ide) {
+    server.ide = ide;
+  }
+
+  // Store client in server instance for telemetry (normalized, invalid values dropped)
+  const normalizedClient = normalizeClientName(client);
+  if (normalizedClient) {
+    server.client = normalizedClient;
+  }
+
+  // Store logger in server instance for tools to access
+  if (logger) {
+    server.logger = logger;
+  }
+
+  server.setLogger = (logger: Logger) => {
+    server.logger = logger;
+  }
+
+  // Enable telemetry if requested
+  if (enableTelemetry) {
+    wrapServerWithTelemetry(server);
+  }
+
+  // Register plugins based on configuration
+  const enabledPlugins = parseEnabledPlugins(pluginsEnabled, pluginsDisabled);
+  server.enabledPlugins = enabledPlugins;
+
+  for (const pluginName of enabledPlugins) {
+    const plugin = AVAILABLE_PLUGINS[pluginName];
+    if (plugin) {
+      await plugin.register(server);
+    }
+  }
+
+  return server;
+}
+
+/**
+ * Get the default configured CloudBase MCP Server
+ */
+export function getDefaultServer(): Promise<ExtendedMcpServer> {
+  return createCloudBaseMcpServer();
+}
+
+// Re-export types and utilities that might be useful
+export type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+export { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+export { error, info, warn } from "./utils/logger.js";
+export {
+  reportToolCall,
+  reportToolkitLifecycle,
+  telemetryReporter,
+  normalizeClientName
+} from "./utils/telemetry.js";

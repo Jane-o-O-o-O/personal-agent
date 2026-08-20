@@ -1,0 +1,1318 @@
+import fs from 'fs';
+import path from 'path';
+import { z } from 'zod';
+import { getCloudBaseManager, getEnvId, logCloudBaseResult } from '../cloudbase-manager.js';
+import { ExtendedMcpServer } from '../server.js';
+import { t } from '../i18n/index.js';
+import { isCloudMode } from '../utils/cloud-mode.js';
+import {
+  flattenHttpServiceRoutes,
+  isDomainPathReachableViaGateway,
+  preferGatewayOrFallback,
+  resolveAllGatewayRoutes,
+  resolveGatewayAccessUrls,
+  type GatewayRouteUrlCandidate,
+} from '../utils/gateway-access-urls.js';
+import { sendDeployNotification } from '../utils/notification.js';
+import { getConsoleDevUrl } from '../utils/site-map.js';
+import { buildJsonToolResult, toolPayloadErrorToResult } from '../utils/tool-result.js';
+
+interface ExtendedEnvInfo {
+  EnvInfo: {
+    StaticStorages?: Array<{
+      StaticDomain?: string;
+      Bucket?: string;
+      ExternalStorage?: { Enabled?: boolean; BucketName?: string; [key: string]: unknown };
+      [key: string]: unknown;
+    }>;
+    [key: string]: unknown;
+  };
+  [key: string]: unknown;
+}
+
+const HOSTING_CDN_SWITCH_VALUES = ['on', 'off'] as const;
+const HOSTING_REFERER_TYPES = ['blacklist', 'whitelist'] as const;
+const HOSTING_CACHE_RULE_TYPES = ['fileType', 'path'] as const;
+const HOSTING_IP_FILTER_TYPES = ['blacklist', 'whitelist'] as const;
+
+const routingRuleSchema = z.object({
+  keyPrefixEquals: z.string().optional().describe('hosting.schema.routingRule.keyPrefixEquals'),
+  httpErrorCodeReturnedEquals: z.string().optional().describe('hosting.schema.routingRule.httpErrorCodeReturnedEquals'),
+  replaceKeyWith: z.string().optional().describe('hosting.schema.routingRule.replaceKeyWith'),
+  replaceKeyPrefixWith: z.string().optional().describe('hosting.schema.routingRule.replaceKeyPrefixWith'),
+});
+
+const domainConfigSchema = z.object({
+  Refer: z.object({
+    Switch: z.enum(HOSTING_CDN_SWITCH_VALUES).describe('hosting.schema.domainConfig.refer.switch'),
+    RefererRules: z.array(z.object({
+      RefererType: z.enum(HOSTING_REFERER_TYPES).describe('hosting.schema.domainConfig.refer.rules.type'),
+      Referers: z.array(z.string()).describe('hosting.schema.domainConfig.refer.rules.referers'),
+      AllowEmpty: z.boolean().describe('hosting.schema.domainConfig.refer.rules.allowEmpty'),
+    })).optional().describe('hosting.schema.domainConfig.refer.rules'),
+  }).optional().describe('hosting.schema.domainConfig.refer'),
+  Cache: z.array(z.object({
+    RuleType: z.enum(HOSTING_CACHE_RULE_TYPES).describe('hosting.schema.domainConfig.cache.ruleType'),
+    RuleValue: z.string().describe('hosting.schema.domainConfig.cache.ruleValue'),
+    CacheTtl: z.number().describe('hosting.schema.domainConfig.cache.cacheTtl'),
+  })).optional().describe('hosting.schema.domainConfig.cache'),
+  IpFilter: z.object({
+    Switch: z.enum(HOSTING_CDN_SWITCH_VALUES).describe('hosting.schema.domainConfig.ipFilter.switch'),
+    FilterType: z.enum(HOSTING_IP_FILTER_TYPES).optional().describe('hosting.schema.domainConfig.ipFilter.filterType'),
+    Filters: z.array(z.string()).optional().describe('hosting.schema.domainConfig.ipFilter.filters'),
+  }).optional().describe('hosting.schema.domainConfig.ipFilter'),
+  IpFreqLimit: z.object({
+    Switch: z.enum(HOSTING_CDN_SWITCH_VALUES).describe('hosting.schema.domainConfig.ipFreqLimit.switch'),
+    Qps: z.number().optional().describe('hosting.schema.domainConfig.ipFreqLimit.qps'),
+  }).optional().describe('hosting.schema.domainConfig.ipFreqLimit'),
+});
+
+const queryHostingInputSchema = {
+  action: z.enum(['websiteConfig', 'status', 'findFiles', 'listFiles', 'domainStatus']).describe('hosting.schema.query.action'),
+  prefix: z.string().optional().describe('hosting.schema.query.prefix'),
+  marker: z.string().optional().describe('hosting.schema.query.marker'),
+  maxKeys: z.number().int().positive().optional().describe('hosting.schema.query.maxKeys'),
+  domains: z.array(z.string()).optional().describe('hosting.schema.query.domains'),
+};
+
+const manageHostingInputSchema = {
+  action: z.enum(['upload', 'delete', 'setWebsiteDocument', 'enableService', 'bindDomain', 'unbindDomain', 'updateDomain', 'downloadFile', 'downloadDirectory']).describe('hosting.schema.manage.action'),
+  localPath: z.string().optional().describe('hosting.schema.manage.localPath'),
+  cloudPath: z.string().optional().describe('hosting.schema.manage.cloudPath'),
+  files: z.array(z.object({
+    localPath: z.string().describe('hosting.schema.manage.files.localPath'),
+    cloudPath: z.string().describe('hosting.schema.manage.files.cloudPath'),
+  })).default([]).describe('hosting.schema.manage.files'),
+  ignore: z.union([z.string(), z.array(z.string())]).optional().describe('hosting.schema.manage.ignore'),
+  isDir: z.boolean().optional().default(false).describe('hosting.schema.manage.isDir'),
+  confirm: z.boolean().optional().default(false).describe('hosting.schema.manage.confirm'),
+  indexDocument: z.string().optional().describe('hosting.schema.manage.indexDocument'),
+  errorDocument: z.string().optional().describe('hosting.schema.manage.errorDocument'),
+  routingRules: z.array(routingRuleSchema).optional().describe('hosting.schema.manage.routingRules'),
+  domain: z.string().optional().describe('hosting.schema.manage.domain'),
+  certId: z.string().optional().describe('hosting.schema.manage.certId'),
+  domainId: z.number().optional().describe('hosting.schema.manage.domainId'),
+  domainConfig: domainConfigSchema.optional().describe('hosting.schema.manage.domainConfig'),
+};
+
+type QueryHostingInput = {
+  action: 'websiteConfig' | 'status' | 'findFiles' | 'listFiles' | 'domainStatus';
+  prefix?: string;
+  marker?: string;
+  maxKeys?: number;
+  domains?: string[];
+};
+
+type ManageHostingInput = {
+  action: 'upload' | 'delete' | 'setWebsiteDocument' | 'enableService' | 'bindDomain' | 'unbindDomain' | 'updateDomain' | 'downloadFile' | 'downloadDirectory';
+  localPath?: string;
+  cloudPath?: string;
+  files?: Array<{ localPath: string; cloudPath: string }>;
+  ignore?: string | string[];
+  isDir?: boolean;
+  confirm?: boolean;
+  indexDocument?: string;
+  errorDocument?: string;
+  routingRules?: Array<{
+    keyPrefixEquals?: string;
+    httpErrorCodeReturnedEquals?: string;
+    replaceKeyWith?: string;
+    replaceKeyPrefixWith?: string;
+  }>;
+  domain?: string;
+  certId?: string;
+  domainId?: number;
+  domainConfig?: Record<string, unknown>;
+};
+
+function isDirectoryUploadTarget(localPath?: string, cloudPath?: string): boolean {
+  if (localPath) {
+    try {
+      if (fs.statSync(localPath).isDirectory()) {
+        return true;
+      }
+    } catch {
+      // Fall back to cloudPath heuristics when local path can't be inspected.
+    }
+  }
+
+  const normalizedCloudPath = (cloudPath ?? '').trim();
+  if (!normalizedCloudPath) return true;
+  if (normalizedCloudPath.endsWith('/')) return true;
+
+  return path.posix.extname(normalizedCloudPath) === '';
+}
+
+function hostingAccessPathname(cloudPath?: string, localPath?: string): string {
+  const normalizedCloudPath = (cloudPath ?? '').trim().replace(/^\/+|\/+$/g, '');
+  const isDirectory = isDirectoryUploadTarget(localPath, cloudPath);
+
+  if (!normalizedCloudPath) {
+    return '/';
+  }
+
+  const pathname = isDirectory ? `${normalizedCloudPath}/` : normalizedCloudPath;
+  return `/${pathname}`;
+}
+
+function buildHostingAccessUrl(staticDomain?: string, cloudPath?: string, localPath?: string): string {
+  if (!staticDomain) return '';
+  return `https://${staticDomain}${hostingAccessPathname(cloudPath, localPath)}`;
+}
+
+/**
+ * Manager SDK 的 HostingService 在每次读写前调用 checkStatus()，托管未开通或资源仍在初始化时
+ * 抛出固定中文文案。这类错误与上传内容无关，套上「检查目录 / 权限 / 构建产物」的建议会误导排查方向。
+ * MCP 不做阻塞轮询（开通是异步任务，通常几分钟），改为告诉调用方下一步该查什么。
+ */
+const HOSTING_NOT_READY_RE = /静态网站服务【(初始化中|处理中)】/;
+const HOSTING_NOT_ENABLED_RE = /您还没有开启静态网站服务/;
+
+function enrichHostingStatusMessage(message: string): string {
+  if (HOSTING_NOT_READY_RE.test(message)) {
+    return t('hosting.notReadyGuidance', { message });
+  }
+  if (HOSTING_NOT_ENABLED_RE.test(message)) {
+    return t('hosting.notEnabledGuidance', { message });
+  }
+  return message;
+}
+
+function buildUploadErrorMessage(error: unknown, localPath?: string): string {
+  const baseMessage = error instanceof Error ? error.message : String(error);
+
+  // 状态类错误直接透传，由 buildFailureResult 统一补充引导
+  if (HOSTING_NOT_READY_RE.test(baseMessage) || HOSTING_NOT_ENABLED_RE.test(baseMessage)) {
+    return baseMessage;
+  }
+
+  const suggestions: string[] = [];
+
+  if (/路径不存在|无读写权限/i.test(baseMessage)) {
+    if (localPath) {
+      suggestions.push(t('hosting.uploadErrorPathSuggestion', { localPath }));
+    }
+    suggestions.push(t('hosting.uploadErrorAssetSuggestion'));
+    suggestions.push(t('hosting.uploadErrorPublicPathSuggestion'));
+  }
+
+  if (suggestions.length === 0) {
+    suggestions.push(t('hosting.uploadErrorDefaultSuggestion'));
+  }
+
+  return t('hosting.uploadErrorWrapper', {
+    message: baseMessage,
+    suggestions: suggestions.join(' '),
+  });
+}
+
+/**
+ * TCB 管控面 DescribeStaticStore 接口 QPS 限流（20 次/秒）。
+ * Manager SDK 的 hosting.deleteFiles / uploadFiles / findFiles 等每次调用
+ * 都会先 checkStatus() → getInfo() → DescribeStaticStore（无缓存），
+ * AI 连续快速删除多个文件或失败后立即重试时极易触发该限流。
+ */
+const DESCRIBE_STATIC_STORE_RATE_LIMIT_RE =
+  /\[DescribeStaticStore\][\s\S]*exceeds the frequency limit `20` for a second/i;
+
+function buildDeleteErrorMessage(error: unknown): string {
+  const baseMessage = error instanceof Error ? error.message : String(error);
+
+  if (DESCRIBE_STATIC_STORE_RATE_LIMIT_RE.test(baseMessage)) {
+    return t('hosting.deleteRateLimitGuidance', { message: baseMessage });
+  }
+
+  return t('hosting.deleteErrorWrapper', { message: baseMessage });
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+// 共享桶托管：Bucket 为空但 ExternalStorage.Enabled=true 时仍是有效托管配置。
+function hasEnabledExternalStorage(store: Record<string, unknown>): boolean {
+  const external = store.ExternalStorage;
+  return isRecord(external) && external.Enabled === true;
+}
+
+/**
+ * Manager SDK hosting.deleteFiles 对 COS 删除失败不抛异常，返回
+ * { Deleted: [], Error: [e] }；此处提取 Error 数组为可读字符串列表，
+ * 供 delete 路径做失败判定与引导。
+ */
+function extractDeleteErrors(result: unknown): string[] {
+  if (!isRecord(result)) {
+    return [];
+  }
+
+  const rawErrors = result.Error ?? result.error;
+  if (!Array.isArray(rawErrors)) {
+    return [];
+  }
+
+  return rawErrors
+    .map((item) => {
+      if (typeof item === 'string' && item.trim()) {
+        return item.trim();
+      }
+      if (isRecord(item) && typeof item.message === 'string') {
+        return item.message;
+      }
+      return JSON.stringify(item);
+    })
+    .filter(Boolean);
+}
+
+function getRecordString(record: Record<string, unknown>, keys: string[]): string | undefined {
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === 'string' && value.trim()) {
+      return value;
+    }
+  }
+
+  return undefined;
+}
+
+function collectDomainRecords(
+  value: unknown,
+  seen = new Set<unknown>(),
+  depth = 0,
+): Array<Record<string, unknown>> {
+  if (depth > 5 || !value || typeof value !== 'object' || seen.has(value)) {
+    return [];
+  }
+
+  seen.add(value);
+
+  if (Array.isArray(value)) {
+    return value.flatMap((item) => collectDomainRecords(item, seen, depth + 1));
+  }
+
+  const record = value as Record<string, unknown>;
+  const current = getRecordString(record, ['Domain', 'domain'])
+    ? [record]
+    : [];
+
+  return current.concat(
+    Object.values(record).flatMap((item) => collectDomainRecords(item, seen, depth + 1)),
+  );
+}
+
+function summarizeHostingDomainCheck(domains: string[], result: unknown) {
+  const targetSet = new Set(domains);
+  const matchedRecords = collectDomainRecords(result).filter((record) => {
+    const domain = getRecordString(record, ['Domain', 'domain']);
+    return domain ? targetSet.has(domain) : false;
+  });
+  const matchedDomains = Array.from(
+    new Set(
+      matchedRecords
+        .map((record) => getRecordString(record, ['Domain', 'domain']))
+        .filter((domain): domain is string => Boolean(domain)),
+    ),
+  );
+
+  return {
+    matchedDomains,
+    missingDomains: domains.filter((domain) => !matchedDomains.includes(domain)),
+    domainDetails: matchedRecords,
+  };
+}
+
+function extractTaskStatus(result: unknown): string | undefined {
+  const candidates: unknown[] = [result];
+
+  if (isRecord(result)) {
+    candidates.push(result.Data, result.Task, result.Result);
+  }
+
+  for (const candidate of candidates) {
+    if (!isRecord(candidate)) {
+      continue;
+    }
+
+    const value = getRecordString(candidate, ['Status', 'status', 'TaskStatus', 'State']);
+    if (value) {
+      return value;
+    }
+  }
+
+  return undefined;
+}
+
+function buildDomainStatusNextStep(domains: string[]) {
+  return {
+    tool: 'queryHosting',
+    action: 'domainStatus',
+    suggested_args: {
+      action: 'domainStatus',
+      domains,
+    },
+  };
+}
+
+function buildStatusNextStep() {
+  return {
+    tool: 'queryHosting',
+    action: 'status',
+    suggested_args: {
+      action: 'status',
+    },
+  };
+}
+
+function buildWebsiteConfigNextStep() {
+  return {
+    tool: 'queryHosting',
+    action: 'websiteConfig',
+    suggested_args: {
+      action: 'websiteConfig',
+    },
+  };
+}
+
+/**
+ * 静态托管的对象 key 一律不带前导斜杠（`dir/f.txt` 而非 `/dir/f.txt`），但 agent
+ * 从 URL 形态（`/index.html`）推路径时很自然带上斜杠。底层 SDK 的 `getCloudKey`
+ * 只补尾部 `/`、不剥离前导 `/`，随后 `getBucket({ Prefix })` 做的是严格字节前缀
+ * 匹配 ⇒ `/dir/` 匹配不到 `dir/f.txt`。因此所有对外传入的路径/前缀都先在此归一化。
+ */
+function stripLeadingSlashes(value: string): string {
+  return value.replace(/^\/+/, '');
+}
+
+function buildFindFilesNextStep(prefix: string) {
+  return {
+    tool: 'queryHosting',
+    action: 'findFiles',
+    suggested_args: {
+      action: 'findFiles',
+      prefix,
+    },
+  };
+}
+
+async function callTcbHostingAction(
+  cloudbase: any,
+  action: string,
+  param: Record<string, unknown>,
+  logger?: ExtendedMcpServer['logger'],
+) {
+  const service = cloudbase.commonService?.('tcb', '2018-06-08');
+
+  if (!service?.call) {
+    throw new Error(t('hosting.commonServiceUnsupported', { action }));
+  }
+
+  const result = await service.call({
+    Action: action,
+    Param: param,
+  });
+  logCloudBaseResult(logger, result);
+  return result;
+}
+
+function extractStaticStores(value: unknown): Array<Record<string, unknown>> {
+  if (!value || typeof value !== 'object') {
+    return [];
+  }
+
+  const payload = value as Record<string, unknown>;
+  const stores = payload.Data;
+  return Array.isArray(stores) ? stores.filter(isRecord) : [];
+}
+
+async function describeHostingDomainTask(
+  cloudbase: any,
+  cloudBaseOptions?: { envId?: string },
+  logger?: ExtendedMcpServer['logger'],
+) {
+  try {
+    const envId = await getEnvId(cloudBaseOptions);
+    const result = await callTcbHostingAction(
+      cloudbase,
+      'DescribeHostingDomainTask',
+      { EnvId: envId },
+      logger,
+    );
+
+    return {
+      rawStatus: extractTaskStatus(result),
+      raw: result,
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+function buildDomainMutationResult(params: {
+  action: 'bindDomain' | 'unbindDomain' | 'updateDomain';
+  domain: string;
+  certId?: string;
+  domainId?: number;
+  domainConfig?: unknown;
+  result: unknown;
+  taskStatus?: {
+    rawStatus?: string;
+    raw: unknown;
+  };
+}) {
+  const { action, domain, certId, domainId, domainConfig, result, taskStatus } = params;
+  const actionLabel =
+    action === 'bindDomain'
+      ? t('hosting.domainActionBind')
+      : action === 'unbindDomain'
+        ? t('hosting.domainActionUnbind')
+        : t('hosting.domainActionUpdate');
+  const successIndicator =
+    action === 'bindDomain'
+      ? t('hosting.domainSuccessIndicatorBind', { domain })
+      : action === 'unbindDomain'
+        ? t('hosting.domainSuccessIndicatorUnbind', { domain })
+        : t('hosting.domainSuccessIndicatorUpdate', { domain });
+
+  return {
+    success: true,
+    data: {
+      action,
+      targetDomains: [domain],
+      ...(certId ? { certId } : {}),
+      ...(domainId !== undefined ? { domainId } : {}),
+      ...(domainConfig ? { domainConfig } : {}),
+      asyncState: 'PENDING',
+      ...(taskStatus ? { taskStatus } : {}),
+      propagation: {
+        requiresPolling: true,
+        pollTool: 'queryHosting',
+        pollAction: 'domainStatus',
+        pollIntervalSuggestionSeconds: 30,
+        timeoutSuggestionSeconds: 600,
+        successIndicator,
+      },
+      nextActions: [buildDomainStatusNextStep([domain])],
+      result,
+    },
+    message: t('hosting.domainMutationSubmitted', { actionLabel }),
+  };
+}
+
+async function getHostingWebsiteConfig(
+  cloudbase: any,
+  logger?: ExtendedMcpServer['logger'],
+  cloudBaseOptions?: { envId?: string },
+) {
+  const websiteConfig = await cloudbase.hosting.getWebsiteConfig();
+  logCloudBaseResult(logger, websiteConfig);
+  const hostingResult: Record<string, unknown> = {
+    ...(websiteConfig as Record<string, unknown>),
+    CdnDomain: (websiteConfig as Record<string, unknown>).CdnDomain ?? null,
+    Bucket: (websiteConfig as Record<string, unknown>).Bucket ?? null,
+  };
+
+  try {
+    const envInfo = await cloudbase.env.getEnvInfo() as ExtendedEnvInfo;
+    logCloudBaseResult(logger, envInfo);
+    hostingResult.CdnDomain = envInfo.EnvInfo?.StaticStorages?.[0]?.StaticDomain ?? hostingResult.CdnDomain;
+    const staticStorage = envInfo.EnvInfo?.StaticStorages?.[0];
+    hostingResult.Bucket = staticStorage?.Bucket ?? hostingResult.Bucket;
+    // 共享桶托管环境 Bucket 为空，展示实际使用的共享桶名（与 CLI tcb hosting detail 一致）
+    const sharedBucketName = staticStorage?.ExternalStorage?.Enabled === true
+      ? staticStorage.ExternalStorage.BucketName
+      : undefined;
+    if (!hostingResult.Bucket && sharedBucketName) {
+      hostingResult.Bucket = sharedBucketName;
+    }
+  } catch {
+    // Ignore enrichment failures and return the website config as-is.
+  }
+
+  try {
+    const cdnDomain =
+      typeof hostingResult.CdnDomain === 'string' ? hostingResult.CdnDomain : '';
+    if (cdnDomain && typeof cloudbase.env?.describeHttpServiceRoute === 'function') {
+      const envId = await getEnvId(cloudBaseOptions);
+      const routeResult = await cloudbase.env.describeHttpServiceRoute({
+        EnvId: envId,
+        Limit: 1000,
+      });
+      const routes = flattenHttpServiceRoutes(routeResult);
+      const reachable = isDomainPathReachableViaGateway(routes, cdnDomain, '/');
+      hostingResult.staticDomainRouteEnabled = reachable;
+      hostingResult.accessUrlReachable = reachable !== false;
+      if (reachable === false) {
+        hostingResult.routeDisabled = true;
+        hostingResult.disabledAccessUrls = [`https://${cdnDomain}/`];
+      }
+    }
+  } catch {
+    // Gateway route lookup is best-effort enrichment only.
+  }
+
+  return hostingResult;
+}
+
+async function resolveHostingStaticDomain(cloudbase: any, logger?: ExtendedMcpServer['logger']) {
+  try {
+    const envInfo = await cloudbase.env.getEnvInfo() as ExtendedEnvInfo;
+    logCloudBaseResult(logger, envInfo);
+    return envInfo.EnvInfo?.StaticStorages?.[0]?.StaticDomain;
+  } catch {
+    return undefined;
+  }
+}
+
+// Returns the first hosting store record from DescribeStaticStore, which is
+// the authoritative source for Mini Program-sourced environments (those envs
+// do not populate StaticStorages in DescribeEnvs / getEnvInfo).
+// Throws when no valid store is found so upload can fail fast with a clear msg.
+async function getHostingStoreOrThrow(
+  cloudbase: any,
+  cloudBaseOptions?: { envId?: string },
+  logger?: ExtendedMcpServer['logger'],
+): Promise<Record<string, unknown>> {
+  const envId = await getEnvId(cloudBaseOptions);
+  const result = await callTcbHostingAction(cloudbase, 'DescribeStaticStore', { EnvId: envId }, logger);
+  const hostingInfo = extractStaticStores(result);
+
+  // 共享桶托管环境的 Bucket 为空，真实桶名在 ExternalStorage.Enabled=true 的结构里；
+  // store 只用于取 CdnDomain / StaticDomain 拼访问地址，不读桶名，视为有效配置即可。
+  const store = hostingInfo[0];
+  if (store && (store.Bucket || hasEnabledExternalStorage(store))) {
+    return store;
+  }
+
+  throw new Error(t('hosting.hostingStoreMissing', { envId }));
+}
+
+function enrichRateLimitMessage(message: string): string {
+  // delete 路径已由 buildDeleteErrorMessage 提供完整引导，避免重复追加。
+  // 中英文引导文本特征均参与判断（zh: "QPS 限制"/"等待 1-2 秒后重试"；en: "QPS limit"/"wait 1-2 seconds"）
+  if (
+    message.includes('QPS 限制') ||
+    message.includes('等待 1-2 秒后重试') ||
+    message.includes('QPS limit') ||
+    message.includes('wait 1-2 seconds')
+  ) {
+    return message;
+  }
+  if (DESCRIBE_STATIC_STORE_RATE_LIMIT_RE.test(message)) {
+    return t('hosting.queryRateLimitGuidance', { message });
+  }
+  return message;
+}
+
+function buildFailureResult(action: string, error: unknown) {
+  return buildJsonToolResult({
+    success: false,
+    errorCode: `HOSTING_${action.toUpperCase()}_FAILED`,
+    message: enrichHostingStatusMessage(
+      enrichRateLimitMessage(error instanceof Error ? error.message : String(error)),
+    ),
+  });
+}
+
+function extractFileList(files: unknown): unknown[] {
+  // hosting.listFiles 直接返回文件数组
+  if (Array.isArray(files)) return files;
+
+  // hosting.findFiles 返回 COS 风格对象，文件列表在 Contents 里
+  if (typeof files === 'object' && files !== null) {
+    const record = files as Record<string, unknown>;
+    if (Array.isArray(record.Contents)) return record.Contents;
+    if (Array.isArray(record.contents)) return record.contents;
+  }
+
+  return [];
+}
+
+function extractFilePagination(result: unknown): { isTruncated?: boolean; nextMarker?: string } {
+  if (typeof result !== 'object' || result === null) return {};
+
+  const record = result as Record<string, unknown>;
+  const isTruncated = record.IsTruncated ?? record.isTruncated;
+  const nextMarker = record.NextMarker ?? record.nextMarker;
+
+  return {
+    isTruncated: typeof isTruncated === 'boolean' ? isTruncated : undefined,
+    nextMarker: typeof nextMarker === 'string' && nextMarker.length > 0 ? nextMarker : undefined,
+  };
+}
+
+function normalizeFileFields(files: unknown): Array<Record<string, unknown>> {
+  return extractFileList(files).map((file): Record<string, unknown> => {
+    if (typeof file !== 'object' || file === null) return file as Record<string, unknown>;
+
+    const record = file as Record<string, unknown>;
+    return {
+      key: record.Key ?? record.key ?? '',
+      size: record.Size ?? record.size ?? 0,
+      lastModified: record.LastModified ?? record.lastModified ?? '',
+      ...record,
+    };
+  });
+}
+
+function normalizeHostingStatus(current: Record<string, unknown> | null): Record<string, unknown> | null {
+  if (!current) return null;
+
+  return {
+    ...current,
+    status: current.Status ?? current.status ?? 'unknown',
+    staticDomain: current.StaticDomain ?? current.staticDomain ?? null,
+    bucket: current.Bucket ?? current.bucket ?? null,
+  };
+}
+
+function ensureManageHostingActionAllowedInCloudMode(input: ManageHostingInput) {
+  if (!isCloudMode()) {
+    return;
+  }
+
+  if (input.action === 'upload' || input.action === 'downloadFile' || input.action === 'downloadDirectory') {
+    throw new Error(t('hosting.cloudModeLocalActionUnavailable', { action: input.action }));
+  }
+}
+
+export function registerHostingTools(server: ExtendedMcpServer) {
+  const cloudBaseOptions = server.cloudBaseOptions;
+  const getManager = () => getCloudBaseManager({ cloudBaseOptions });
+
+  server.registerTool(
+    'queryHosting',
+    {
+      title: 'hosting.queryTitle',
+      description: 'hosting.queryDescription',
+      inputSchema: queryHostingInputSchema,
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        openWorldHint: false,
+        category: 'hosting',
+      },
+    },
+    async (args: QueryHostingInput) => {
+      try {
+        const input = args;
+        const cloudbase = await getManager();
+
+        switch (input.action) {
+          case 'websiteConfig': {
+            const websiteConfig = await getHostingWebsiteConfig(
+              cloudbase,
+              server.logger,
+              cloudBaseOptions,
+            );
+            return buildJsonToolResult({
+              success: true,
+              data: {
+                action: 'websiteConfig',
+                websiteConfig,
+              },
+              message: t('hosting.websiteConfigSuccess'),
+            });
+          }
+
+          case 'status': {
+            const envId = await getEnvId(cloudBaseOptions);
+            const result = await callTcbHostingAction(
+              cloudbase,
+              'DescribeStaticStore',
+              { EnvId: envId },
+              server.logger,
+            );
+            const hostingInfo = extractStaticStores(result);
+            const current = normalizeHostingStatus(hostingInfo[0] ?? null);
+            const normalizedHostingInfo = hostingInfo.map(item => normalizeHostingStatus(item));
+            return buildJsonToolResult({
+              success: true,
+              data: {
+                action: 'status',
+                enabled: hostingInfo.length > 0,
+                current,
+                hostingInfo: normalizedHostingInfo,
+                result,
+              },
+              message: hostingInfo.length > 0
+                ? t('hosting.statusEnabled')
+                : t('hosting.statusNotEnabled'),
+            });
+          }
+
+          case 'findFiles': {
+            if (!input.prefix) {
+              throw new Error(t('hosting.findFilesPrefixRequired'));
+            }
+            // 读侧与 delete 侧同源：prefix 原样透传时，agent 按 URL 形态传的
+            // `/assets/` 在 COS 侧严格前缀匹配命中 0 条，会被误读成「目录是空的」。
+            const normalizedPrefix = stripLeadingSlashes(input.prefix);
+            const result = await cloudbase.hosting.findFiles({
+              prefix: normalizedPrefix,
+              marker: input.marker,
+              maxKeys: input.maxKeys,
+            });
+            logCloudBaseResult(server.logger, result);
+            const normalizedFiles = normalizeFileFields(result);
+            // findFiles 的 marker 是 COS 游标字符串，与 listFiles 的数字 offset 语义不同，此处只透传不做解析
+            const { isTruncated, nextMarker } = extractFilePagination(result);
+            return buildJsonToolResult({
+              success: true,
+              data: {
+                action: 'findFiles',
+                prefix: normalizedPrefix,
+                marker: input.marker,
+                maxKeys: input.maxKeys,
+                files: normalizedFiles,
+                nextMarker,
+                isTruncated,
+                result,
+              },
+              message: t('hosting.findFilesSuccess', {
+                prefix: normalizedPrefix,
+                count: normalizedFiles.length,
+                more: nextMarker ? t('hosting.findFilesMore') : '',
+              }),
+            });
+          }
+
+          case 'listFiles': {
+            const result = await cloudbase.hosting.listFiles();
+            logCloudBaseResult(server.logger, result);
+            const normalizedFiles = normalizeFileFields(result);
+            const maxKeys = input.maxKeys ?? 100;
+            const start = input.marker ? parseInt(input.marker, 10) : 0;
+            const paginatedFiles = normalizedFiles.slice(start, start + maxKeys);
+            const nextMarker = start + maxKeys < normalizedFiles.length ? String(start + maxKeys) : undefined;
+
+            return buildJsonToolResult({
+              success: true,
+              data: {
+                action: 'listFiles',
+                files: paginatedFiles,
+                totalCount: normalizedFiles.length,
+                marker: input.marker,
+                maxKeys,
+                nextMarker,
+                isTruncated: nextMarker !== undefined,
+              },
+              message: t('hosting.listFilesSuccess', {
+                start: start + 1,
+                end: start + paginatedFiles.length,
+                count: normalizedFiles.length,
+                more: nextMarker ? t('hosting.findFilesMore') : '',
+              }),
+            });
+          }
+
+          case 'domainStatus': {
+            if (!input.domains || input.domains.length === 0) {
+              throw new Error(t('hosting.domainStatusDomainsRequired'));
+            }
+            const result = await cloudbase.hosting.tcbCheckResource({
+              domains: input.domains,
+            });
+            logCloudBaseResult(server.logger, result);
+            const summary = summarizeHostingDomainCheck(input.domains, result);
+            const allMatched = summary.missingDomains.length === 0;
+            return buildJsonToolResult({
+              success: true,
+              data: {
+                action: 'domainStatus',
+                queriedDomains: input.domains,
+                matchedDomains: summary.matchedDomains,
+                missingDomains: summary.missingDomains,
+                domainDetails: summary.domainDetails,
+                ...(allMatched
+                  ? {}
+                  : {
+                      propagation: {
+                        requiresPolling: true,
+                        pollTool: 'queryHosting',
+                        pollAction: 'domainStatus',
+                        pollIntervalSuggestionSeconds: 30,
+                        timeoutSuggestionSeconds: 600,
+                        successIndicator: t('hosting.domainStatusSuccessIndicator'),
+                      },
+                      nextActions: [buildDomainStatusNextStep(summary.missingDomains)],
+                    }),
+                result,
+              },
+              message: allMatched
+                ? t('hosting.domainStatusAllMatched')
+                : t('hosting.domainStatusPending'),
+            });
+          }
+        }
+      } catch (error) {
+        const toolPayloadResult = toolPayloadErrorToResult(error);
+        if (toolPayloadResult) {
+          return toolPayloadResult;
+        }
+        return buildFailureResult(args.action, error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'manageHosting',
+    {
+      title: 'hosting.manageTitle',
+      // cloud mode 下注册期即切换描述：upload/download 系 action 不可用、部署引导走
+      // manageApps 云端链路（getUploadUrl → PUT zip → deployApp(cosTimestamp)），
+      // 让 agent 在 tools/list 阶段就避开必败调用，而不是等报错后浪费一轮。
+      description: isCloudMode()
+        ? 'hosting.manageDescriptionCloud'
+        : 'hosting.manageDescription',
+      inputSchema: manageHostingInputSchema,
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: false,
+        openWorldHint: false,
+        category: 'hosting',
+      },
+    },
+    async (args: ManageHostingInput) => {
+      try {
+        const input = args;
+        ensureManageHostingActionAllowedInCloudMode(input);
+        const cloudbase = await getManager();
+
+        switch (input.action) {
+          case 'upload': {
+            if ((!input.localPath || !input.cloudPath) && (!input.files || input.files.length === 0)) {
+              throw new Error(t('hosting.uploadArgsRequired'));
+            }
+
+            let result: unknown;
+            let store: Record<string, unknown>;
+            try {
+              store = await getHostingStoreOrThrow(cloudbase, cloudBaseOptions, server.logger);
+              result = await cloudbase.hosting.uploadFiles({
+                localPath: input.localPath,
+                cloudPath: input.cloudPath,
+                files: input.files ?? [],
+                ignore: input.ignore,
+              });
+            } catch (error) {
+              throw new Error(buildUploadErrorMessage(error, input.localPath));
+            }
+
+            logCloudBaseResult(server.logger, result);
+            // Prefer CdnDomain from the DescribeStaticStore result we already
+            // fetched; fall back to getEnvInfo for environments that populate
+            // StaticDomain there but not in DescribeStaticStore.
+            const cdnFromStore = (store.CdnDomain ?? store.StaticDomain) as string | undefined;
+            const staticDomain = cdnFromStore || await resolveHostingStaticDomain(cloudbase, server.logger);
+            const fallbackAccessUrl = buildHostingAccessUrl(staticDomain, input.cloudPath, input.localPath);
+            const accessPathname = hostingAccessPathname(input.cloudPath, input.localPath);
+            const envId = await getEnvId(cloudBaseOptions);
+            const getGatewayManager = async () => {
+              const manager = await getManager();
+              if (!manager) {
+                throw new Error(t('hosting.managerUnavailable'));
+              }
+              return manager as any;
+            };
+            const allGatewayRoutes: GatewayRouteUrlCandidate[] =
+              await resolveAllGatewayRoutes({
+                envId,
+                getManager: getGatewayManager,
+              });
+            const staticDomainRouteEnabled =
+              staticDomain
+                ? isDomainPathReachableViaGateway(
+                    allGatewayRoutes,
+                    staticDomain,
+                    accessPathname,
+                  )
+                : null;
+            // null = no matching gateway route info → keep legacy fallback.
+            const fallbackReachable = staticDomainRouteEnabled !== false;
+            const gatewayCandidates = Array.from(
+              new Set(
+                [
+                  store.StaticStoreName,
+                  store.Name,
+                  store.StoreName,
+                  store.Bucket,
+                  "staticstore",
+                ]
+                  .map((item) => (typeof item === "string" ? item.trim() : ""))
+                  .filter(Boolean),
+              ),
+            );
+            let accessUrl = fallbackReachable ? fallbackAccessUrl : "";
+            let accessUrls = accessUrl ? [accessUrl] : [];
+            let accessUrlSource: string | undefined = accessUrl
+              ? "hosting.staticDomain"
+              : undefined;
+            let accessUrlReachable = Boolean(accessUrl);
+            let disabledAccessUrls: string[] = [];
+            if (fallbackAccessUrl && !fallbackReachable) {
+              disabledAccessUrls.push(fallbackAccessUrl);
+            }
+
+            // 先找出与该静态托管 store 关联的网关路由；候选名依次尝试，命中即止
+            let gatewayResult: Awaited<ReturnType<typeof resolveGatewayAccessUrls>> = {
+              accessUrls: [],
+              routes: [],
+              disabledAccessUrls: [],
+            };
+            for (const upstreamName of gatewayCandidates) {
+              const gateway = await resolveGatewayAccessUrls({
+                envId,
+                upstreamResourceName: upstreamName,
+                upstreamResourceTypes: ["STATIC_STORE"],
+                getManager: getGatewayManager,
+              });
+              if (gateway.routes.length > 0 || gateway.disabledAccessUrls.length > 0) {
+                gatewayResult = gateway;
+                break;
+              }
+            }
+
+            const preferred = preferGatewayOrFallback({
+              gateway: gatewayResult,
+              fallbackUrl: fallbackAccessUrl || undefined,
+              fallbackSource: "hosting.staticDomain",
+              fallbackReachable,
+            });
+
+            // 静态托管域名本身可达时，它才是本次上传对应的地址。
+            // 网关里其他指向同一 STATIC_STORE 的域名（典型是 tcb app deploy 部署的
+            // CloudApp 各自的 webapps 子域名，且 IsDefault 为 true 会被排到前面）
+            // 服务的是各自的目录，拿它们拼上本次 cloudPath 会指向别的站点。
+            const preferStaticDomain = fallbackReachable && Boolean(fallbackAccessUrl);
+            if (preferred.accessUrl || preferred.disabledAccessUrls.length > 0) {
+              accessUrl = preferStaticDomain ? fallbackAccessUrl : preferred.accessUrl ?? "";
+              // 选中的地址排在首位，其余候选域名仍然保留供调用方参考
+              accessUrls = [
+                ...(accessUrl ? [accessUrl] : []),
+                ...preferred.accessUrls.filter((item) => item !== accessUrl),
+              ];
+              accessUrlSource = preferStaticDomain
+                ? "hosting.staticDomain"
+                : preferred.accessUrlSource;
+              accessUrlReachable = preferStaticDomain ? true : preferred.accessUrlReachable;
+              disabledAccessUrls = preferred.disabledAccessUrls;
+            }
+
+            try {
+              let projectName = 'unknown';
+              if (input.localPath) {
+                try {
+                  const stats = fs.statSync(input.localPath);
+                  projectName = stats.isFile()
+                    ? path.basename(path.dirname(input.localPath))
+                    : path.basename(input.localPath);
+                } catch {
+                  projectName = path.basename(input.localPath);
+                }
+              }
+
+              // sendDeployNotification requires a concrete url; skip when no reachable accessUrl
+              if (accessUrl) {
+                await sendDeployNotification(server, {
+                  deployType: 'hosting',
+                  url: accessUrl,
+                  projectId: envId,
+                  projectName,
+                  consoleUrl: getConsoleDevUrl(envId, 'static-hosting'),
+                });
+              }
+            } catch {
+              // Notification failure should not block uploads.
+            }
+
+            const uploadPrefix = input.cloudPath ?? input.files?.[0]?.cloudPath ?? '';
+            const routeDisabled = staticDomainRouteEnabled === false;
+            let message = t('hosting.uploadSuccess');
+            if (routeDisabled && accessUrlReachable) {
+              message = t('hosting.uploadRouteDisabledWithFallback');
+            } else if (routeDisabled && !accessUrlReachable) {
+              message = t('hosting.uploadRouteDisabledNoAccess');
+            }
+
+            return buildJsonToolResult({
+              success: true,
+              data: {
+                action: 'upload',
+                localPath: input.localPath,
+                cloudPath: input.cloudPath,
+                files: input.files ?? [],
+                ignore: input.ignore,
+                staticDomain,
+                staticDomainRouteEnabled,
+                accessUrl: accessUrl || undefined,
+                accessUrls,
+                accessUrlSource,
+                accessUrlReachable,
+                ...(disabledAccessUrls.length > 0
+                  ? { disabledAccessUrls }
+                  : {}),
+                ...(routeDisabled ? { routeDisabled: true } : {}),
+                result,
+                nextActions: uploadPrefix ? [buildFindFilesNextStep(uploadPrefix.replace(/^\/+/, ''))] : undefined,
+              },
+              message,
+            });
+          }
+
+          case 'delete': {
+            if (!input.cloudPath) {
+              throw new Error(t('hosting.deleteCloudPathRequired'));
+            }
+            if (!input.confirm) {
+              throw new Error(t('hosting.deleteConfirmRequired'));
+            }
+            // 静态托管对象 key 不带前导斜杠。若不规范化，isDir=true 会走
+            // storage.deleteDirectoryCustom，其前缀由 getCloudKey(cloudPath)
+            // 生成且不做前导斜杠剥离，做严格字节前缀匹配时 `/dir/` 匹配不到
+            // `dir/f.txt`，导致目录删除静默 no-op（Deleted:0，文件全在）。
+            // 同时下面的回查 findFiles(prefix) 也是严格前缀匹配，带斜杠时
+            // 同样命中 0 条，会把「没删到」误判成「删干净了 verified:true」。
+            // 这里统一剥离前导斜杠，两种形态（/dir 与 dir）都按正确 key 处理。
+            const normalizedCloudPath = stripLeadingSlashes(input.cloudPath);
+            let result: unknown;
+            try {
+              result = await cloudbase.hosting.deleteFiles({
+                cloudPath: normalizedCloudPath,
+                isDir: input.isDir ?? false,
+              });
+            } catch (error) {
+              throw new Error(buildDeleteErrorMessage(error));
+            }
+            logCloudBaseResult(server.logger, result);
+
+            // Manager SDK 的 deleteFiles 对 COS 单文件删除失败不抛异常，
+            // 而是返回 { Deleted: [], Error: [e] }，需要显式检查 Error 数组。
+            const deleteErrors = extractDeleteErrors(result);
+
+            // Post-validation: verify deletion was successful
+            let deleteVerified = true;
+            let verificationError: string | undefined;
+            if (deleteErrors.length > 0) {
+              deleteVerified = false;
+              verificationError = t('hosting.deleteVerificationIncomplete', {
+                errors: deleteErrors.join('；'),
+              });
+            }
+            try {
+              const checkResult = await cloudbase.hosting.findFiles({
+                prefix: normalizedCloudPath,
+                maxKeys: 100,
+              });
+
+              // ⚠️ 回查有两个坑，都会让 verified 失真：
+              // 1) findFiles 返回 **COS 风格对象**（列表在 Contents 内），直接用
+              //    `Array.isArray(checkResult)` 判断会静默失效、恒判 verified=true。
+              //    统一走 extractFileList 归一化。
+              // 2) findFiles 是 **prefix** 语义：删单文件 /a/b.txt 时，若同前缀的
+              //    /a/b.txt.bak 还在也会命中 → 把「已删成功」误判成未验证。
+              //    单文件场景必须精确比对 Key（前缀场景见 normalizeFileFields 的 key 字段）。
+              const remaining = normalizeFileFields(checkResult);
+              const targetPath = normalizedCloudPath;
+              const stillExists = input.isDir
+                ? remaining.length > 0
+                : remaining.some((file) => {
+                    const key = typeof file.key === 'string' ? file.key : '';
+                    // 拿不到 Key 时保守按「仍存在」处理，避免误报已验证
+                    if (!key) return true;
+                    return stripLeadingSlashes(key) === targetPath;
+                  });
+
+              if (stillExists) {
+                deleteVerified = false;
+                verificationError = verificationError ?? t('hosting.deleteVerifyFailed');
+              }
+            } catch (error) {
+              // If query fails, assume deletion was successful
+              // (file might have been deleted, causing query to return empty)
+            }
+
+            return buildJsonToolResult({
+              success: deleteVerified,
+              data: {
+                action: 'delete',
+                cloudPath: input.cloudPath,
+                isDir: input.isDir ?? false,
+                result,
+                verified: deleteVerified,
+                ...(verificationError ? { error: verificationError } : {}),
+              },
+              message: deleteVerified
+                ? t('hosting.deleteSuccess', {
+                    type: input.isDir ? t('hosting.typeDirectory') : t('hosting.typeFile'),
+                    cloudPath: input.cloudPath,
+                  })
+                // 这里刻意插入规范化后的路径：该文案的 {cloudPath} 会被拼进
+                // `queryHosting(action="findFiles", prefix="{cloudPath}")` 自查命令里，
+                // 带前导斜杠的前缀在 COS 侧严格匹配不到任何对象，agent 照抄会得到
+                // 「0 命中 ⇒ 看起来删干净了」的错误结论。
+                : t('hosting.deleteUnverified', { cloudPath: normalizedCloudPath }),
+            });
+          }
+
+          case 'setWebsiteDocument': {
+            if (!input.indexDocument) {
+              throw new Error(t('hosting.setWebsiteDocumentIndexRequired'));
+            }
+            const result = await cloudbase.hosting.setWebsiteDocument({
+              indexDocument: input.indexDocument,
+              errorDocument: input.errorDocument,
+              routingRules: input.routingRules,
+            });
+            logCloudBaseResult(server.logger, result);
+            return buildJsonToolResult({
+              success: true,
+              data: {
+                action: 'setWebsiteDocument',
+                indexDocument: input.indexDocument,
+                errorDocument: input.errorDocument,
+                routingRules: input.routingRules,
+                result,
+                nextActions: [buildWebsiteConfigNextStep()],
+              },
+              message: t('hosting.setWebsiteDocumentSuccess'),
+            });
+          }
+
+          case 'enableService': {
+            const envId = await getEnvId(cloudBaseOptions);
+            const result = await callTcbHostingAction(
+              cloudbase,
+              'CreateStaticStore',
+              { EnvId: envId },
+              server.logger,
+            );
+            return buildJsonToolResult({
+              success: true,
+              data: {
+                action: 'enableService',
+                asyncState: 'PENDING',
+                result,
+                nextActions: [buildStatusNextStep()],
+              },
+              message: t('hosting.enableServiceSuccess'),
+            });
+          }
+
+          case 'bindDomain': {
+            if (!input.domain || !input.certId) {
+              throw new Error(t('hosting.bindDomainArgsRequired'));
+            }
+            const result = await cloudbase.hosting.CreateHostingDomain({
+              domain: input.domain,
+              certId: input.certId,
+            });
+            logCloudBaseResult(server.logger, result);
+            const taskStatus = await describeHostingDomainTask(cloudbase, cloudBaseOptions, server.logger);
+            return buildJsonToolResult(buildDomainMutationResult({
+              action: 'bindDomain',
+              domain: input.domain,
+              certId: input.certId,
+              result,
+              taskStatus,
+            }));
+          }
+
+          case 'unbindDomain': {
+            if (!input.domain) {
+              throw new Error(t('hosting.unbindDomainArgsRequired'));
+            }
+            if (!input.confirm) {
+              throw new Error(t('hosting.unbindDomainConfirmRequired'));
+            }
+            const result = await cloudbase.hosting.deleteHostingDomain({
+              domain: input.domain,
+            });
+            logCloudBaseResult(server.logger, result);
+            const taskStatus = await describeHostingDomainTask(cloudbase, cloudBaseOptions, server.logger);
+            return buildJsonToolResult(buildDomainMutationResult({
+              action: 'unbindDomain',
+              domain: input.domain,
+              result,
+              taskStatus,
+            }));
+          }
+
+          case 'updateDomain': {
+            if (!input.domain || input.domainId === undefined || !input.domainConfig) {
+              throw new Error(t('hosting.updateDomainArgsRequired'));
+            }
+            const result = await cloudbase.hosting.tcbModifyAttribute({
+              domain: input.domain,
+              domainId: input.domainId,
+              domainConfig: input.domainConfig,
+            });
+            logCloudBaseResult(server.logger, result);
+            const taskStatus = await describeHostingDomainTask(cloudbase, cloudBaseOptions, server.logger);
+            return buildJsonToolResult(buildDomainMutationResult({
+              action: 'updateDomain',
+              domain: input.domain,
+              domainId: input.domainId,
+              domainConfig: input.domainConfig,
+              result,
+              taskStatus,
+            }));
+          }
+
+          case 'downloadFile': {
+            if (!input.cloudPath || !input.localPath) {
+              throw new Error(t('hosting.downloadFileArgsRequired'));
+            }
+            const result = await cloudbase.hosting.downloadFile({
+              cloudPath: input.cloudPath,
+              localPath: input.localPath,
+            });
+            logCloudBaseResult(server.logger, result);
+            return buildJsonToolResult({
+              success: true,
+              data: {
+                action: 'downloadFile',
+                cloudPath: input.cloudPath,
+                localPath: input.localPath,
+                result,
+              },
+              message: t('hosting.downloadFileSuccess', {
+                cloudPath: input.cloudPath,
+                localPath: input.localPath,
+              }),
+            });
+          }
+
+          case 'downloadDirectory': {
+            if (!input.cloudPath || !input.localPath) {
+              throw new Error(t('hosting.downloadDirectoryArgsRequired'));
+            }
+            const result = await cloudbase.hosting.downloadDirectory({
+              cloudPath: input.cloudPath,
+              localPath: input.localPath,
+            });
+            logCloudBaseResult(server.logger, result);
+            return buildJsonToolResult({
+              success: true,
+              data: {
+                action: 'downloadDirectory',
+                cloudPath: input.cloudPath,
+                localPath: input.localPath,
+                result,
+              },
+              message: t('hosting.downloadDirectorySuccess', {
+                cloudPath: input.cloudPath,
+                localPath: input.localPath,
+              }),
+            });
+          }
+        }
+      } catch (error) {
+        const toolPayloadResult = toolPayloadErrorToResult(error);
+        if (toolPayloadResult) {
+          return toolPayloadResult;
+        }
+        return buildFailureResult(args.action, error);
+      }
+    },
+  );
+}

@@ -1,0 +1,2902 @@
+import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
+import * as fs from "fs";
+import * as os from "os";
+import * as path from "path";
+import type { ExtendedMcpServer } from "../server.js";
+import { t } from "../i18n/index.js";
+import { databasePG as databasePGDict } from "../i18n/locales/modules/databasePG.js";
+import {
+  __resetPgProvisionCache,
+  __resetPgReadyCache,
+} from "./databasePG.js";
+import { registerPGDatabaseTools } from "./databasePG.js";
+
+const {
+  mockGetCloudBaseManager,
+  mockCommonServiceCall,
+  mockQueryEnvRuntimeBackends,
+} = vi.hoisted(() => ({
+  mockGetCloudBaseManager: vi.fn(),
+  mockCommonServiceCall: vi.fn(),
+  mockQueryEnvRuntimeBackends: vi.fn(),
+}));
+
+vi.mock("../cloudbase-manager.js", () => ({
+  getCloudBaseManager: mockGetCloudBaseManager,
+  getEnvId: vi.fn(async () => "env-test"),
+}));
+
+vi.mock("./env.js", () => ({
+  queryEnvRuntimeBackends: mockQueryEnvRuntimeBackends,
+}));
+
+function provisionedSnapshot(envId = "env-test") {
+  return {
+    envId,
+    runtimeMode: "postgresql" as const,
+    runtimeBackends: { postgresql: true, nosql: false, mysql: false },
+  };
+}
+
+function unprovisionedSnapshot(envId = "env-test") {
+  return {
+    envId,
+    runtimeMode: "nosql" as const,
+    runtimeBackends: { postgresql: false, nosql: true, mysql: false },
+  };
+}
+
+function buildToolPayload(result: any) {
+  return JSON.parse(result.content[0].text);
+}
+
+function createMockServer() {
+  const tools: Record<
+    string,
+    {
+      meta: any;
+      handler: (args: any) => Promise<any>;
+    }
+  > = {};
+
+  const server: ExtendedMcpServer = {
+    cloudBaseOptions: {
+      envId: "env-test",
+      region: "ap-guangzhou",
+    },
+    logger: vi.fn(),
+    registerTool: vi.fn(
+      (name: string, meta: any, handler: (args: any) => Promise<any>) => {
+        tools[name] = { meta, handler };
+      },
+    ),
+  } as unknown as ExtendedMcpServer;
+
+  return { server, tools };
+}
+
+function createFakeClient(
+  queryImpl: (sql: string, values?: unknown[]) => Promise<any>,
+) {
+  return {
+    connect: vi.fn(async () => undefined),
+    query: vi.fn(queryImpl),
+    end: vi.fn(async () => undefined),
+  };
+}
+
+describe("PG database tools", () => {
+  beforeEach(() => {
+    __resetPgReadyCache();
+    __resetPgProvisionCache();
+    mockGetCloudBaseManager.mockReset();
+    mockCommonServiceCall.mockReset();
+    mockQueryEnvRuntimeBackends.mockReset();
+    mockQueryEnvRuntimeBackends.mockResolvedValue(provisionedSnapshot());
+  });
+
+  it("registers PG tool names", () => {
+    const { server, tools } = createMockServer();
+    registerPGDatabaseTools(server);
+
+    expect(typeof tools.queryPgDatabase?.handler).toBe("function");
+    expect(typeof tools.managePgDatabase?.handler).toBe("function");
+    expect(tools.getPgSchema).toBeUndefined();
+  });
+
+  it("managePgDatabase(action=init) is no longer supported", async () => {
+    const { server, tools } = createMockServer();
+    registerPGDatabaseTools(server, {
+      createClient: vi.fn(),
+    });
+
+    const result = await tools.managePgDatabase.handler({
+      action: "init",
+    });
+    const payload = buildToolPayload(result);
+
+    expect(payload).toMatchObject({
+      success: false,
+      errorCode: "UNSUPPORTED_ACTION",
+    });
+  });
+
+  it("queryPgDatabase(context) returns auto-derived context without init", async () => {
+    const { server, tools } = createMockServer();
+    registerPGDatabaseTools(server, {
+      createClient: vi.fn(),
+    });
+
+    const result = await tools.queryPgDatabase.handler({
+      action: "context",
+    });
+    const payload = buildToolPayload(result);
+
+    expect(payload).toMatchObject({
+      success: true,
+      data: {
+        context: {
+          envId: "env-test",
+          instanceId: "cloudbase-pg",
+          defaultSchema: "public",
+          runtimeMode: "cloudbase-manager",
+          bootstrapMode: "cloud",
+          role: "cloudbase_postgres",
+        },
+      },
+    });
+    expect(mockQueryEnvRuntimeBackends).toHaveBeenCalledWith(
+      server.cloudBaseOptions,
+      "env-test",
+    );
+  });
+
+  describe("PG provisioning gate", () => {
+    it("blocks queryPgDatabase(context) with PG_NOT_PROVISIONED when the env has no PG backend", async () => {
+      const { server, tools } = createMockServer();
+      const createClient = vi.fn();
+      mockQueryEnvRuntimeBackends.mockResolvedValue(unprovisionedSnapshot());
+      registerPGDatabaseTools(server, { createClient });
+
+      const payload = buildToolPayload(
+        await tools.queryPgDatabase.handler({ action: "context" }),
+      );
+
+      expect(payload).toMatchObject({
+        success: false,
+        errorCode: "PG_NOT_PROVISIONED",
+        data: {
+          envId: "env-test",
+          runtimeMode: "nosql",
+          RuntimeBackends: { postgresql: false, nosql: true, mysql: false },
+        },
+      });
+      expect(payload.message).toBe(
+        t("databasePG.runtime.notProvisioned", { envId: "env-test" }),
+      );
+      expect(payload.nextActions).toEqual([
+        expect.objectContaining({
+          tool: "queryEnv",
+          action: "info",
+          suggested_args: { action: "info", envId: "env-test" },
+        }),
+      ]);
+      // Never suggest PG-only follow-ups, and never open a connection to probe.
+      expect(
+        payload.nextActions.some((step: { action: string }) =>
+          ["objects", "sql"].includes(step.action),
+        ),
+      ).toBe(false);
+      expect(createClient).not.toHaveBeenCalled();
+    });
+
+    it("blocks managePgDatabase actions before the ready probe when PG is not provisioned", async () => {
+      const { server, tools } = createMockServer();
+      const createClient = vi.fn();
+      mockQueryEnvRuntimeBackends.mockResolvedValue(unprovisionedSnapshot());
+      registerPGDatabaseTools(server, {
+        createClient,
+        readyCheckOptions: { maxAttempts: 2, retryDelayMs: 1 },
+      });
+
+      const payload = buildToolPayload(
+        await tools.managePgDatabase.handler({
+          action: "execute",
+          sql: "INSERT INTO public.users(id) VALUES (1)",
+          confirm: true,
+        }),
+      );
+
+      expect(payload).toMatchObject({
+        success: false,
+        errorCode: "PG_NOT_PROVISIONED",
+        data: { envId: "env-test", runtimeMode: "nosql" },
+      });
+      expect(createClient).not.toHaveBeenCalled();
+    });
+
+    it("caches the backend snapshot per env across calls", async () => {
+      const { server, tools } = createMockServer();
+      mockQueryEnvRuntimeBackends.mockResolvedValue(unprovisionedSnapshot());
+      registerPGDatabaseTools(server, { createClient: vi.fn() });
+
+      await tools.queryPgDatabase.handler({ action: "context" });
+      await tools.managePgDatabase.handler({ action: "dryRun", sql: "SELECT 1" });
+
+      expect(mockQueryEnvRuntimeBackends).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not block when environment info lookup fails", async () => {
+      const { server, tools } = createMockServer();
+      mockQueryEnvRuntimeBackends.mockRejectedValue(
+        new Error("DescribeEnvInfo failed"),
+      );
+      registerPGDatabaseTools(server, {
+        createClient: vi.fn(() =>
+          createFakeClient(async () => {
+            throw new Error("database is not available");
+          }),
+        ),
+        readyCheckOptions: { maxAttempts: 2, retryDelayMs: 1 },
+      });
+
+      // context still returns the derived context instead of a false block
+      const contextPayload = buildToolPayload(
+        await tools.queryPgDatabase.handler({ action: "context" }),
+      );
+      expect(contextPayload).toMatchObject({
+        success: true,
+        data: { context: { envId: "env-test" } },
+      });
+
+      // other actions keep falling through to the readiness probe
+      const objectsPayload = buildToolPayload(
+        await tools.queryPgDatabase.handler({ action: "objects", limit: 5 }),
+      );
+      expect(objectsPayload).toMatchObject({
+        success: false,
+        errorCode: "PG_NOT_READY",
+      });
+    });
+  });
+
+  it("queryPgDatabase(sql) rejects mutating SQL without init", async () => {
+    const { server, tools } = createMockServer();
+    const fakeClient = createFakeClient(async (sql: string) => {
+      if (sql === "SELECT 1") {
+        return { rows: [{ "?column?": 1 }], rowCount: 1 };
+      }
+      throw new Error(`Unexpected SQL: ${sql}`);
+    });
+
+    registerPGDatabaseTools(server, {
+      createClient: vi.fn(() => fakeClient),
+    });
+
+    const result = await tools.queryPgDatabase.handler({
+      action: "sql",
+      sql: "DELETE FROM public.users",
+    });
+    const payload = buildToolPayload(result);
+
+    expect(payload).toMatchObject({
+      success: false,
+      errorCode: "READ_ONLY_SQL_REQUIRED",
+    });
+  });
+
+  it("queryPgDatabase(sql) echoes the user's original SQL in sqlPreview when execution fails", async () => {
+    const { server, tools } = createMockServer();
+    const userSql = "SELECT id FROM public.users WHERE id = 1";
+    const executedSql: string[] = [];
+    const fakeClient = createFakeClient(async (sql: string) => {
+      if (sql === "SELECT 1") {
+        return { rows: [{ "?column?": 1 }], rowCount: 1 };
+      }
+      executedSql.push(sql);
+      throw new Error('ERROR: column "id" does not exist (SQLSTATE 42703)');
+    });
+
+    registerPGDatabaseTools(server, {
+      createClient: vi.fn(() => fakeClient),
+    });
+
+    const payload = buildToolPayload(
+      await tools.queryPgDatabase.handler({
+        action: "sql",
+        sql: userSql,
+      }),
+    );
+
+    expect(payload).toMatchObject({
+      success: false,
+      errorCode: "PG_SQL_EXEC_FAILED",
+    });
+    // 服务端执行的确实是带 limit 包装的只读 SQL
+    expect(
+      executedSql.some((sql) => sql.includes("cloudbase_mcp_readonly_limit")),
+    ).toBe(true);
+    // 但回显给调用方的必须是用户原始 SQL，而不是内部包装 SQL
+    expect(payload.data.sqlPreview).toBe(userSql);
+    expect(payload.data.sqlPreview).not.toContain("cloudbase_mcp_readonly_limit");
+  });
+
+  it("queryPgDatabase(sql) truncates sqlPreview to 500 chars on failure", async () => {
+    const { server, tools } = createMockServer();
+    const userSql = `SELECT ${"x".repeat(800)}`;
+    const fakeClient = createFakeClient(async (sql: string) => {
+      if (sql === "SELECT 1") {
+        return { rows: [{ "?column?": 1 }], rowCount: 1 };
+      }
+      throw new Error("ERROR: unexpected failure (SQLSTATE 42601)");
+    });
+
+    registerPGDatabaseTools(server, {
+      createClient: vi.fn(() => fakeClient),
+    });
+
+    const payload = buildToolPayload(
+      await tools.queryPgDatabase.handler({
+        action: "sql",
+        sql: userSql,
+      }),
+    );
+
+    expect(payload.errorCode).toBe("PG_SQL_EXEC_FAILED");
+    expect(payload.data.sqlPreview).toHaveLength(500);
+    expect(userSql.startsWith(payload.data.sqlPreview)).toBe(true);
+  });
+
+  it("queryPgDatabase(objects) returns schema-qualified summaries without init", async () => {
+    const { server, tools } = createMockServer();
+    const fakeClient = createFakeClient(async (sql: string) => {
+      if (sql === "SELECT 1") {
+        return { rows: [{ "?column?": 1 }], rowCount: 1 };
+      }
+      if (sql.includes("FROM pg_class c") && sql.includes("LIMIT $2")) {
+        return {
+          rows: [
+            {
+              schema: "public",
+              name: "users",
+              kind: "table",
+              estimated_rows: 42,
+            },
+          ],
+          rowCount: 1,
+        };
+      }
+      throw new Error(`Unexpected SQL: ${sql}`);
+    });
+
+    registerPGDatabaseTools(server, {
+      createClient: vi.fn(() => fakeClient),
+    });
+
+    const result = await tools.queryPgDatabase.handler({
+      action: "objects",
+      limit: 10,
+    });
+    const payload = buildToolPayload(result);
+
+    expect(payload).toMatchObject({
+      success: true,
+      data: {
+        objects: [
+          {
+            schemaTable: "public.users",
+            kind: "table",
+          },
+        ],
+      },
+    });
+  });
+
+  it("queryPgDatabase(metadata) returns row-count summaries without row samples", async () => {
+    const { server, tools } = createMockServer();
+    const fakeClient = createFakeClient(async (sql: string) => {
+      if (sql === "SELECT 1") {
+        return { rows: [{ "?column?": 1 }], rowCount: 1 };
+      }
+      if (sql.includes("COALESCE(col_counts.column_count")) {
+        return {
+          rows: [
+            {
+              schema: "public",
+              name: "users",
+              kind: "table",
+              estimated_rows: 12,
+              rls_enabled: true,
+              column_count: 4,
+            },
+          ],
+          rowCount: 1,
+        };
+      }
+      if (
+        sql.includes(
+          'SELECT COUNT(*)::bigint AS row_count FROM "public"."users"',
+        )
+      ) {
+        return {
+          rows: [{ row_count: 9 }],
+          rowCount: 1,
+        };
+      }
+      throw new Error(`Unexpected SQL: ${sql}`);
+    });
+
+    registerPGDatabaseTools(server, {
+      createClient: vi.fn(() => fakeClient),
+    });
+
+    const result = await tools.queryPgDatabase.handler({
+      action: "metadata",
+      limit: 10,
+    });
+    const payload = buildToolPayload(result);
+
+    expect(payload).toMatchObject({
+      success: true,
+      data: {
+        tables: [
+          {
+            schemaTable: "public.users",
+            rowCount: 12,
+            rowCountSource: "estimated",
+            rlsEnabled: true,
+          },
+        ],
+      },
+    });
+    expect(payload.data.tables[0].rows).toBeUndefined();
+  });
+
+  it("queryPgDatabase(schema) rejects non schema-qualified object names", async () => {
+    const { server, tools } = createMockServer();
+    const fakeClient = createFakeClient(async (sql: string) => {
+      if (sql === "SELECT 1") {
+        return { rows: [{ "?column?": 1 }], rowCount: 1 };
+      }
+      throw new Error(`Unexpected SQL: ${sql}`);
+    });
+
+    registerPGDatabaseTools(server, {
+      createClient: vi.fn(() => fakeClient),
+    });
+
+    const result = await tools.queryPgDatabase.handler({
+      action: "schema",
+      objectName: "users",
+    });
+    const payload = buildToolPayload(result);
+
+    expect(payload).toMatchObject({
+      success: false,
+      errorCode: "SCHEMA_QUALIFIED_NAME_REQUIRED",
+    });
+  });
+
+  it("queryPgDatabase(schema) returns columns, keys, indexes, and security summary", async () => {
+    const { server, tools } = createMockServer();
+    const fakeClient = createFakeClient(async (sql: string) => {
+      if (sql === "SELECT 1") {
+        return { rows: [{ "?column?": 1 }], rowCount: 1 };
+      }
+      if (
+        sql.includes("FROM pg_class c") &&
+        sql.includes("row_security_enabled")
+      ) {
+        return {
+          rows: [
+            {
+              kind: "table",
+              row_security_enabled: true,
+              force_row_security: false,
+            },
+          ],
+          rowCount: 1,
+        };
+      }
+      if (sql.includes("FROM information_schema.columns")) {
+        return {
+          rows: [
+            {
+              column_name: "id",
+              data_type: "integer",
+              udt_name: "int4",
+              is_nullable: "NO",
+              column_default: "generated",
+              character_maximum_length: null,
+              numeric_precision: 32,
+              numeric_scale: 0,
+            },
+          ],
+          rowCount: 1,
+        };
+      }
+      if (sql.includes("constraint_type = 'PRIMARY KEY'")) {
+        return {
+          rows: [{ column_name: "id" }],
+          rowCount: 1,
+        };
+      }
+      if (sql.includes("constraint_type = 'FOREIGN KEY'")) {
+        return {
+          rows: [
+            {
+              constraint_name: "users_org_id_fkey",
+              column_name: "org_id",
+              foreign_table_schema: "public",
+              foreign_table_name: "orgs",
+              foreign_column_name: "id",
+            },
+          ],
+          rowCount: 1,
+        };
+      }
+      if (sql.includes("FROM pg_indexes")) {
+        return {
+          rows: [
+            {
+              indexname: "users_pkey",
+              indexdef:
+                "CREATE UNIQUE INDEX users_pkey ON public.users USING btree (id)",
+            },
+          ],
+          rowCount: 1,
+        };
+      }
+      if (sql.includes("FROM pg_policies")) {
+        return {
+          rows: [
+            {
+              policyname: "users_select",
+              permissive: "PERMISSIVE",
+              roles: ["authenticated"],
+              cmd: "SELECT",
+              qual: "(auth.uid() = id)",
+              with_check: null,
+            },
+          ],
+          rowCount: 1,
+        };
+      }
+      if (
+        sql.includes(
+          'SELECT COUNT(*)::bigint AS row_count FROM "public"."users"',
+        )
+      ) {
+        return {
+          rows: [{ row_count: 7 }],
+          rowCount: 1,
+        };
+      }
+      throw new Error(`Unexpected SQL: ${sql}`);
+    });
+
+    registerPGDatabaseTools(server, {
+      createClient: vi.fn(() => fakeClient),
+    });
+
+    const result = await tools.queryPgDatabase.handler({
+      action: "schema",
+      objectName: "public.users",
+    });
+    const payload = buildToolPayload(result);
+
+    expect(payload).toMatchObject({
+      success: true,
+      data: {
+        schemaTable: "public.users",
+        primaryKey: ["id"],
+        rowCount: 7,
+        security: {
+          rowLevelSecurityEnabled: true,
+          policies: [
+            {
+              name: "users_select",
+            },
+          ],
+        },
+      },
+    });
+    expect(payload.data.columns[0]).toMatchObject({
+      name: "id",
+      dataType: "integer",
+    });
+    expect(payload.data.foreignKeys[0]).toMatchObject({
+      references: "public.orgs",
+    });
+  });
+
+  it("managePgDatabase(execute) soft-blocks schema DDL and guides applyMigration", async () => {
+    const { server, tools } = createMockServer();
+    registerPGDatabaseTools(server, {
+      createClient: vi.fn(),
+    });
+
+    const result = await tools.managePgDatabase.handler({
+      action: "execute",
+      sql: "CREATE TABLE public.users(id int)",
+      confirm: true,
+    });
+    const payload = buildToolPayload(result);
+
+    expect(payload).toMatchObject({
+      success: false,
+      errorCode: "DDL_USE_APPLY_MIGRATION",
+      data: {
+        classification: {
+          risk: "schema_change",
+        },
+      },
+      nextActions: [
+        {
+          tool: "managePgDatabase",
+          action: "planMigration",
+        },
+        {
+          tool: "managePgDatabase",
+          action: "applyMigration",
+          suggested_args: {
+            action: "applyMigration",
+            sql: "CREATE TABLE public.users(id int)",
+            confirm: true,
+          },
+        },
+      ],
+    });
+  });
+
+  it("managePgDatabase(execute) rejects invented postgres_pgdb_* role before API call", async () => {
+    const createClient = vi.fn();
+    const { server, tools } = createMockServer();
+    registerPGDatabaseTools(server, { createClient });
+
+    const result = await tools.managePgDatabase.handler({
+      action: "execute",
+      sql: "SELECT 1",
+      role: "postgres_pgdb_efk2jh5f",
+      confirm: true,
+    });
+    const payload = buildToolPayload(result);
+
+    expect(payload).toMatchObject({
+      success: false,
+      errorCode: "PG_ROLE_NOT_AVAILABLE",
+      data: {
+        attemptedRole: "postgres_pgdb_efk2jh5f",
+        defaultRole: "cloudbase_postgres",
+        listRolesSql: "SELECT rolname FROM pg_roles ORDER BY rolname;",
+      },
+    });
+    expect(payload.message).toContain("cloudbase_postgres");
+    expect(payload.message).toContain("SELECT rolname FROM pg_roles");
+    expect(createClient).not.toHaveBeenCalled();
+  });
+
+  it("managePgDatabase(execute) rejects platform-reserved cloudbase_admin role", async () => {
+    const createClient = vi.fn();
+    const { server, tools } = createMockServer();
+    registerPGDatabaseTools(server, { createClient });
+
+    const payload = buildToolPayload(
+      await tools.managePgDatabase.handler({
+        action: "execute",
+        sql: "SELECT 1",
+        role: "cloudbase_admin",
+        confirm: true,
+      }),
+    );
+
+    expect(payload).toMatchObject({
+      success: false,
+      errorCode: "PG_ROLE_NOT_AVAILABLE",
+      data: {
+        attemptedRole: "cloudbase_admin",
+        defaultRole: "cloudbase_postgres",
+      },
+    });
+    expect(payload.message).toContain("平台保留角色（cloudbase_admin）");
+    expect(createClient).not.toHaveBeenCalled();
+  });
+
+  it("managePgDatabase(execute) rejects role=postgres before API call", async () => {
+    const createClient = vi.fn();
+    const { server, tools } = createMockServer();
+    registerPGDatabaseTools(server, { createClient });
+
+    const payload = buildToolPayload(
+      await tools.managePgDatabase.handler({
+        action: "execute",
+        sql: "SELECT 1",
+        role: "postgres",
+        confirm: true,
+      }),
+    );
+
+    expect(payload).toMatchObject({
+      success: false,
+      errorCode: "PG_ROLE_NOT_AVAILABLE",
+      data: { attemptedRole: "postgres" },
+    });
+    expect(createClient).not.toHaveBeenCalled();
+  });
+
+  it("managePgDatabase(execute) maps set-role-does-not-exist API errors to guidance", async () => {
+    const { server, tools } = createMockServer();
+    const fakeClient = createFakeClient(async (sql: string) => {
+      if (sql === "SELECT 1") {
+        return { rows: [{ "?column?": 1 }], rowCount: 1 };
+      }
+      throw new Error(
+        '[ExecutePGSql] set role custom_missing_role: ERROR: role "custom_missing_role" does not exist (SQLSTATE 22023)',
+      );
+    });
+
+    registerPGDatabaseTools(server, {
+      createClient: vi.fn(() => fakeClient),
+      readyCheckOptions: { maxAttempts: 1, retryDelayMs: 1 },
+    });
+
+    const payload = buildToolPayload(
+      await tools.managePgDatabase.handler({
+        action: "execute",
+        sql: "INSERT INTO public.t(id) VALUES (1)",
+        role: "custom_missing_role",
+        confirm: true,
+      }),
+    );
+
+    expect(payload).toMatchObject({
+      success: false,
+      errorCode: "PG_ROLE_NOT_AVAILABLE",
+      data: {
+        attemptedRole: "custom_missing_role",
+        defaultRole: "cloudbase_postgres",
+      },
+    });
+    expect(payload.message).toContain("SELECT rolname FROM pg_roles");
+    expect(payload.nextActions?.[0]).toMatchObject({
+      tool: "managePgDatabase",
+      action: "execute",
+      suggested_args: {
+        role: "cloudbase_postgres",
+      },
+    });
+  });
+
+  it("exposes schema descriptions as databasePG message keys in both languages", () => {
+    const { server, tools } = createMockServer();
+    registerPGDatabaseTools(server, { createClient: vi.fn() });
+
+    const zhDict = databasePGDict.zh as Record<string, string>;
+    const enDict = databasePGDict.en as Record<string, string>;
+
+    for (const toolName of ["queryPgDatabase", "managePgDatabase"]) {
+      const shape = tools[toolName].meta.inputSchema as Record<string, any>;
+      for (const [field, schema] of Object.entries(shape)) {
+        const description = String(schema.description);
+        expect(
+          description,
+          `${toolName}.${field} must carry a message key`,
+        ).toMatch(/^databasePG\.schema\./);
+        const key = description.slice("databasePG.".length);
+        expect(typeof zhDict[key]).toBe("string");
+        expect(typeof enDict[key]).toBe("string");
+      }
+    }
+  });
+
+  it("managePgDatabase role schema description does not recommend postgres", () => {
+    const { server, tools } = createMockServer();
+    registerPGDatabaseTools(server, { createClient: vi.fn() });
+
+    const roleSchema = tools.managePgDatabase.meta.inputSchema.role;
+    // Schema descriptions carry message keys; the server localizes them on register.
+    expect(roleSchema?.description).toBe("databasePG.schema.manageRole");
+
+    const description = databasePGDict.zh["schema.manageRole"];
+
+    expect(description).toContain("cloudbase_postgres");
+    expect(description).toContain("平台保留角色（cloudbase_admin");
+    expect(description).toContain("postgres_pgdb_*");
+    expect(description).not.toMatch(/可传 postgres[^_]/);
+    expect(databasePGDict.en["schema.manageRole"]).toContain(
+      "cloudbase_postgres",
+    );
+  });
+
+  it("managePgDatabase(execute) allows schema DDL only with allowDdlViaExecute=true", async () => {
+    const { server, tools } = createMockServer();
+    const fakeClient = createFakeClient(async (sql: string) => {
+      if (sql === "SELECT 1") {
+        return { rows: [{ "?column?": 1 }], rowCount: 1 };
+      }
+      if (sql === "CREATE TABLE public.users(id int)") {
+        return {
+          rows: [],
+          rowCount: null,
+          command: "CREATE",
+        };
+      }
+      throw new Error(`Unexpected SQL: ${sql}`);
+    });
+
+    registerPGDatabaseTools(server, {
+      createClient: vi.fn(() => fakeClient),
+    });
+
+    const unconfirmed = buildToolPayload(
+      await tools.managePgDatabase.handler({
+        action: "execute",
+        sql: "CREATE TABLE public.users(id int)",
+        allowDdlViaExecute: true,
+      }),
+    );
+    expect(unconfirmed).toMatchObject({
+      success: false,
+      errorCode: "CONFIRM_REQUIRED",
+    });
+
+    const confirmedResult = await tools.managePgDatabase.handler({
+      action: "execute",
+      sql: "CREATE TABLE public.users(id int)",
+      confirm: true,
+      allowDdlViaExecute: true,
+    });
+    const confirmedPayload = buildToolPayload(confirmedResult);
+
+    expect(confirmedPayload).toMatchObject({
+      success: true,
+      data: {
+        command: "CREATE",
+        targetTable: "public.users",
+        classification: {
+          risk: "schema_change",
+        },
+      },
+      nextActions: [
+        {
+          tool: "queryPgDatabase",
+          action: "schema",
+          suggested_args: {
+            action: "schema",
+            objectName: "public.users",
+          },
+        },
+      ],
+    });
+  });
+
+  it("managePgDatabase(execute) reports the real table for CREATE TABLE IF NOT EXISTS with allowDdlViaExecute", async () => {
+    const { server, tools } = createMockServer();
+    const fakeClient = createFakeClient(async (sql: string) => {
+      if (sql === "SELECT 1") {
+        return { rows: [{ "?column?": 1 }], rowCount: 1 };
+      }
+      if (sql === "CREATE TABLE IF NOT EXISTS public.articles(id int)") {
+        return {
+          rows: [],
+          rowCount: null,
+          command: "CREATE",
+        };
+      }
+      throw new Error(`Unexpected SQL: ${sql}`);
+    });
+
+    registerPGDatabaseTools(server, {
+      createClient: vi.fn(() => fakeClient),
+    });
+
+    const result = await tools.managePgDatabase.handler({
+      action: "execute",
+      sql: "CREATE TABLE IF NOT EXISTS public.articles(id int)",
+      confirm: true,
+      allowDdlViaExecute: true,
+    });
+    const payload = buildToolPayload(result);
+
+    expect(payload).toMatchObject({
+      success: true,
+      data: {
+        command: "CREATE",
+        targetTable: "public.articles",
+      },
+    });
+    expect(JSON.stringify(payload)).not.toContain("public.IF");
+  });
+
+  it("queryPgDatabase(schema) warns when RLS is enabled without policies", async () => {
+    const { server, tools } = createMockServer();
+    const fakeClient = createFakeClient(async (sql: string) => {
+      if (sql === "SELECT 1") {
+        return { rows: [{ "?column?": 1 }], rowCount: 1 };
+      }
+      if (
+        sql.includes("FROM pg_class c") &&
+        sql.includes("row_security_enabled")
+      ) {
+        return {
+          rows: [
+            {
+              kind: "table",
+              row_security_enabled: true,
+              force_row_security: true,
+            },
+          ],
+          rowCount: 1,
+        };
+      }
+      if (sql.includes("FROM information_schema.columns")) {
+        return {
+          rows: [
+            {
+              column_name: "id",
+              data_type: "text",
+              is_nullable: "NO",
+              column_default: null,
+            },
+          ],
+          rowCount: 1,
+        };
+      }
+      if (sql.includes("constraint_type = 'PRIMARY KEY'")) {
+        return { rows: [{ column_name: "id" }], rowCount: 1 };
+      }
+      if (
+        sql.includes("constraint_type = 'FOREIGN KEY'") ||
+        sql.includes("FROM pg_indexes") ||
+        sql.includes("FROM pg_policies")
+      ) {
+        return { rows: [], rowCount: 0 };
+      }
+      if (
+        sql.includes(
+          'SELECT COUNT(*)::bigint AS row_count FROM "public"."articles"',
+        )
+      ) {
+        return { rows: [{ row_count: 0 }], rowCount: 1 };
+      }
+      throw new Error(`Unexpected SQL: ${sql}`);
+    });
+
+    registerPGDatabaseTools(server, {
+      createClient: vi.fn(() => fakeClient),
+    });
+
+    const result = await tools.queryPgDatabase.handler({
+      action: "schema",
+      objectName: "public.articles",
+    });
+    const payload = buildToolPayload(result);
+
+    expect(payload.message).toContain("RLS 已启用但未找到任何 policy");
+    expect(payload.nextActions[0]).toMatchObject({
+      tool: "managePgDatabase",
+      action: "execute",
+    });
+  });
+
+  it("managePgDatabase(execute) requires confirm for destructive SQL", async () => {
+    const { server, tools } = createMockServer();
+    const fakeClient = createFakeClient(async (sql: string) => {
+      if (sql === "SELECT 1") {
+        return { rows: [{ "?column?": 1 }], rowCount: 1 };
+      }
+      throw new Error(`Unexpected SQL: ${sql}`);
+    });
+
+    registerPGDatabaseTools(server, {
+      createClient: vi.fn(() => fakeClient),
+    });
+
+    const result = await tools.managePgDatabase.handler({
+      action: "execute",
+      sql: "DELETE FROM public.users",
+    });
+    const payload = buildToolPayload(result);
+
+    expect(payload).toMatchObject({
+      success: false,
+      errorCode: "CONFIRM_REQUIRED",
+    });
+  });
+
+  it("ensurePgReadyOnce caches readiness across calls", async () => {
+    const { server, tools } = createMockServer();
+    let probeCount = 0;
+    const fakeClient = createFakeClient(async (sql: string) => {
+      if (sql === "SELECT 1") {
+        probeCount += 1;
+        return { rows: [{ "?column?": 1 }], rowCount: 1 };
+      }
+      if (sql.includes("FROM pg_class c")) {
+        return { rows: [], rowCount: 0 };
+      }
+      throw new Error(`Unexpected SQL: ${sql}`);
+    });
+
+    registerPGDatabaseTools(server, {
+      createClient: vi.fn(() => fakeClient),
+    });
+
+    // First call triggers readiness probe
+    await tools.queryPgDatabase.handler({ action: "objects", limit: 5 });
+    const probesAfterFirst = probeCount;
+
+    // Second call should reuse cached readiness (no additional SELECT 1)
+    await tools.queryPgDatabase.handler({ action: "objects", limit: 5 });
+
+    // Only 1 SELECT 1 probe expected across both calls
+    expect(probeCount).toBe(probesAfterFirst);
+  });
+
+  it("ensurePgReadyOnce retries readiness checks until PostgreSQL accepts connections", async () => {
+    const { server, tools } = createMockServer();
+    let readyAttempts = 0;
+
+    registerPGDatabaseTools(server, {
+      createClient: vi.fn(() =>
+        createFakeClient(async (sql: string) => {
+          if (sql === "SELECT 1") {
+            readyAttempts += 1;
+            if (readyAttempts < 3) {
+              throw new Error("database is still starting");
+            }
+            return { rows: [{ "?column?": 1 }], rowCount: 1 };
+          }
+          if (sql.includes("FROM pg_class c")) {
+            return { rows: [], rowCount: 0 };
+          }
+          throw new Error(`Unexpected SQL: ${sql}`);
+        }),
+      ),
+      readyCheckOptions: {
+        maxAttempts: 3,
+        retryDelayMs: 1,
+      },
+    });
+
+    const payload = buildToolPayload(
+      await tools.queryPgDatabase.handler({
+        action: "objects",
+        limit: 5,
+      }),
+    );
+
+    expect(payload.success).toBe(true);
+    expect(readyAttempts).toBe(3);
+  });
+
+  it("returns PG_NOT_READY when PostgreSQL is not available", async () => {
+    const { server, tools } = createMockServer();
+
+    registerPGDatabaseTools(server, {
+      createClient: vi.fn(() =>
+        createFakeClient(async () => {
+          throw new Error("database is not available");
+        }),
+      ),
+      readyCheckOptions: {
+        maxAttempts: 2,
+        retryDelayMs: 1,
+      },
+    });
+
+    const payload = buildToolPayload(
+      await tools.queryPgDatabase.handler({
+        action: "objects",
+        limit: 5,
+      }),
+    );
+
+    expect(payload).toMatchObject({
+      success: false,
+      errorCode: "PG_NOT_READY",
+    });
+  });
+
+  it("managePgDatabase(dryRun) works without readiness probe", async () => {
+    const { server, tools } = createMockServer();
+
+    // createClient 不会被调用，因为 dryRun 不触发就绪探测
+    registerPGDatabaseTools(server, {
+      createClient: vi.fn(() =>
+        createFakeClient(async () => {
+          throw new Error("should not be called");
+        }),
+      ),
+    });
+
+    const payload = buildToolPayload(
+      await tools.managePgDatabase.handler({
+        action: "dryRun",
+        sql: "SELECT 1",
+      }),
+    );
+
+    expect(payload).toMatchObject({
+      success: true,
+      data: {
+        wouldExecute: false,
+      },
+    });
+  });
+
+  describe("migration actions", () => {
+    let migrationWorkspace: string;
+    let previousWorkspaceFolderPaths: string | undefined;
+
+    beforeEach(() => {
+      migrationWorkspace = fs.mkdtempSync(path.join(os.tmpdir(), "pg-mcp-mig-"));
+      previousWorkspaceFolderPaths = process.env.WORKSPACE_FOLDER_PATHS;
+      process.env.WORKSPACE_FOLDER_PATHS = migrationWorkspace;
+    });
+
+    afterEach(() => {
+      if (previousWorkspaceFolderPaths === undefined) {
+        delete process.env.WORKSPACE_FOLDER_PATHS;
+      } else {
+        process.env.WORKSPACE_FOLDER_PATHS = previousWorkspaceFolderPaths;
+      }
+      fs.rmSync(migrationWorkspace, { recursive: true, force: true });
+    });
+
+    function setupMigrationMock() {
+      mockGetCloudBaseManager.mockResolvedValue({
+        commonService: vi.fn(() => ({
+          call: mockCommonServiceCall,
+        })),
+      });
+    }
+
+    /**
+     * Default applyMigration cloud-API sequence after hydrate + task poll:
+     * List (hydrate) → optional Describe → Preview → Push → DescribeTaskResult → List (verify).
+     */
+    function mockApplyMigrationCloudApis(options?: {
+      remoteMigrations?: Array<{ Version: string; Name: string; Query?: string }>;
+      pendingVersion?: string;
+      pendingName?: string;
+      previewExecutable?: boolean;
+      previewConflicts?: unknown[];
+      taskStatus?: string;
+      taskReason?: string;
+      omitPendingFromVerifyList?: boolean;
+      listThrowsAfterPush?: boolean;
+    }) {
+      const remote = options?.remoteMigrations ?? [];
+      const pendingVersion = options?.pendingVersion ?? "20260720160000";
+      const pendingName = options?.pendingName ?? "create_test_table";
+      const previewExecutable = options?.previewExecutable ?? true;
+      const taskStatus = options?.taskStatus ?? "Succeed";
+      let pushed = false;
+
+      mockCommonServiceCall.mockImplementation(async ({ Action, Param }: { Action: string; Param?: Record<string, unknown> }) => {
+        if (Action === "ListPGUserMigrations") {
+          if (options?.listThrowsAfterPush && pushed) {
+            throw new Error("ListPGUserMigrations unavailable");
+          }
+          if (pushed && !options?.omitPendingFromVerifyList) {
+            return {
+              RequestId: "req-list-verify",
+              Migrations: [
+                ...remote.map(({ Version, Name }) => ({ Version, Name })),
+                { Version: pendingVersion, Name: pendingName },
+              ],
+              Total: remote.length + 1,
+              LatestVersion: pendingVersion,
+            };
+          }
+          return {
+            RequestId: "req-list-hydrate",
+            Migrations: remote.map(({ Version, Name }) => ({ Version, Name })),
+            Total: remote.length,
+            LatestVersion: remote[remote.length - 1]?.Version ?? "",
+          };
+        }
+        if (Action === "DescribePGUserMigration") {
+          const version = String(Param?.MigrationVersion ?? "");
+          const hit = remote.find((item) => item.Version === version);
+          return {
+            RequestId: "req-describe",
+            Version: version,
+            Name: hit?.Name ?? "unknown",
+            Query: hit?.Query ?? `SELECT '${version}'`,
+          };
+        }
+        if (Action === "PreviewPGUserMigrations") {
+          return {
+            RequestId: "req-preview",
+            Executable: previewExecutable,
+            Pending: previewExecutable
+              ? [{ Version: pendingVersion, Name: pendingName, Status: "pending" }]
+              : null,
+            Applied: null,
+            Conflicts: options?.previewConflicts ?? (previewExecutable ? [] : [
+              {
+                Version: pendingVersion,
+                Name: pendingName,
+                Reason: "remote_history_not_found_locally",
+                Message: "not executable",
+              },
+            ]),
+          };
+        }
+        if (Action === "PushPGUserMigrations") {
+          pushed = true;
+          return { RequestId: "req-apply", TaskId: "task-1" };
+        }
+        if (Action === "DescribeTaskResult") {
+          return {
+            RequestId: "req-task",
+            TaskId: String(Param?.TaskId ?? "task-1"),
+            TaskType: "PGUserMigration",
+            Status: taskStatus,
+            Phase: "RunMigrations",
+            Reason: options?.taskReason ?? "",
+          };
+        }
+        throw new Error(`Unexpected Action ${Action}`);
+      });
+    }
+
+    it("listMigrations returns migration list", async () => {
+      const { server, tools } = createMockServer();
+      registerPGDatabaseTools(server, { createClient: vi.fn() });
+      setupMigrationMock();
+      mockCommonServiceCall.mockResolvedValue({
+        RequestId: "req-list",
+        Migrations: [],
+        Total: 0,
+        LatestVersion: "",
+      });
+
+      const payload = buildToolPayload(
+        await tools.managePgDatabase.handler({ action: "listMigrations" }),
+      );
+
+      expect(payload).toMatchObject({
+        success: true,
+        data: { Total: 0 },
+      });
+      expect(mockCommonServiceCall).toHaveBeenCalledWith(
+        expect.objectContaining({ Action: "ListPGUserMigrations" }),
+      );
+    });
+
+    it("listMigrations passes limit and offset", async () => {
+      const { server, tools } = createMockServer();
+      registerPGDatabaseTools(server, { createClient: vi.fn() });
+      setupMigrationMock();
+      mockCommonServiceCall.mockResolvedValue({
+        RequestId: "req-list-2",
+        Migrations: [],
+        Total: 0,
+        LatestVersion: "",
+      });
+
+      await tools.managePgDatabase.handler({
+        action: "listMigrations",
+        limit: 10,
+        offset: 20,
+      });
+
+      expect(mockCommonServiceCall).toHaveBeenCalledWith(
+        expect.objectContaining({
+          Action: "ListPGUserMigrations",
+          Param: expect.objectContaining({ Limit: 10, Offset: 20 }),
+        }),
+      );
+    });
+
+    it("planMigration requires migrationName", async () => {
+      const { server, tools } = createMockServer();
+      registerPGDatabaseTools(server, { createClient: vi.fn() });
+
+      const payload = buildToolPayload(
+        await tools.managePgDatabase.handler({
+          action: "planMigration",
+          sql: "CREATE TABLE public.test(id int)",
+        }),
+      );
+
+      expect(payload).toMatchObject({
+        success: false,
+        errorCode: "MIGRATION_NAME_REQUIRED",
+      });
+    });
+
+    it("planMigration requires migrationVersion", async () => {
+      const { server, tools } = createMockServer();
+      registerPGDatabaseTools(server, { createClient: vi.fn() });
+
+      const payload = buildToolPayload(
+        await tools.managePgDatabase.handler({
+          action: "planMigration",
+          migrationName: "create_test_table",
+          sql: "CREATE TABLE public.test(id int)",
+        }),
+      );
+
+      expect(payload).toMatchObject({
+        success: false,
+        errorCode: "MIGRATION_VERSION_REQUIRED",
+      });
+    });
+
+    it("planMigration sends Migrations array and nextAction reuses migrationVersion", async () => {
+      const { server, tools } = createMockServer();
+      registerPGDatabaseTools(server, { createClient: vi.fn() });
+      setupMigrationMock();
+      mockCommonServiceCall.mockImplementation(async ({ Action }: { Action: string }) => {
+        if (Action === "ListPGUserMigrations") {
+          return {
+            RequestId: "req-list",
+            Migrations: [],
+            Total: 0,
+            LatestVersion: "",
+          };
+        }
+        if (Action === "PreviewPGUserMigrations") {
+          return {
+            RequestId: "req-plan",
+            Pending: [],
+            Applied: [],
+            Conflicts: [],
+            Executable: true,
+          };
+        }
+        throw new Error(`Unexpected Action ${Action}`);
+      });
+
+      const payload = buildToolPayload(
+        await tools.managePgDatabase.handler({
+          action: "planMigration",
+          migrationName: "create_test_table",
+          migrationVersion: "20260720160000",
+          sql: "CREATE TABLE public.test(id int)",
+          rollbackSql: "DROP TABLE public.test",
+        }),
+      );
+
+      expect(payload).toMatchObject({
+        success: true,
+        data: {
+          migrationVersion: "20260720160000",
+          migrationName: "create_test_table",
+          localFileHint: "cloudbase/migrations/20260720160000_create_test_table.sql",
+          hydratedRemoteCount: 0,
+          executable: true,
+        },
+        nextActions: [
+          {
+            tool: "managePgDatabase",
+            action: "applyMigration",
+            suggested_args: {
+              action: "applyMigration",
+              migrationName: "create_test_table",
+              migrationVersion: "20260720160000",
+              sql: "CREATE TABLE public.test(id int)",
+              confirm: true,
+              rollbackSql: "DROP TABLE public.test",
+            },
+          },
+        ],
+      });
+      expect(mockCommonServiceCall).toHaveBeenCalledWith(
+        expect.objectContaining({
+          Action: "PreviewPGUserMigrations",
+          Param: expect.objectContaining({
+            IncludeAll: false,
+            Migrations: [
+              expect.objectContaining({
+                Name: "create_test_table",
+                Query: "CREATE TABLE public.test(id int)",
+                Rollback: "DROP TABLE public.test",
+                Version: "20260720160000",
+              }),
+            ],
+          }),
+        }),
+      );
+    });
+
+    it("planMigration passes includeAll=true to Preview (CLI --include-all parity)", async () => {
+      const { server, tools } = createMockServer();
+      registerPGDatabaseTools(server, { createClient: vi.fn() });
+      setupMigrationMock();
+      mockCommonServiceCall.mockImplementation(async ({ Action }: { Action: string }) => {
+        if (Action === "ListPGUserMigrations") {
+          return {
+            RequestId: "req-list",
+            Migrations: [{ Version: "20260730120000", Name: "later" }],
+            Total: 1,
+            LatestVersion: "20260730120000",
+          };
+        }
+        if (Action === "DescribePGUserMigration") {
+          return {
+            RequestId: "req-desc",
+            Version: "20260730120000",
+            Name: "later",
+            Query: "SELECT 1",
+          };
+        }
+        if (Action === "PreviewPGUserMigrations") {
+          return {
+            RequestId: "req-plan",
+            Pending: [],
+            Applied: [],
+            Conflicts: [],
+            Executable: true,
+          };
+        }
+        throw new Error(`Unexpected Action ${Action}`);
+      });
+
+      const payload = buildToolPayload(
+        await tools.managePgDatabase.handler({
+          action: "planMigration",
+          migrationName: "backfill_old",
+          migrationVersion: "20260720160000",
+          sql: "CREATE TABLE public.old(id int)",
+          includeAll: true,
+        }),
+      );
+
+      expect(payload).toMatchObject({
+        success: true,
+        data: {
+          includeAll: true,
+          executable: true,
+        },
+        nextActions: [
+          {
+            tool: "managePgDatabase",
+            action: "applyMigration",
+            suggested_args: expect.objectContaining({
+              includeAll: true,
+              confirm: true,
+            }),
+          },
+        ],
+      });
+      expect(mockCommonServiceCall).toHaveBeenCalledWith(
+        expect.objectContaining({
+          Action: "PreviewPGUserMigrations",
+          Param: expect.objectContaining({ IncludeAll: true }),
+        }),
+      );
+    });
+
+    it("applyMigration requires confirm=true", async () => {
+      const { server, tools } = createMockServer();
+      registerPGDatabaseTools(server, { createClient: vi.fn() });
+
+      const payload = buildToolPayload(
+        await tools.managePgDatabase.handler({
+          action: "applyMigration",
+          migrationName: "create_test_table",
+          migrationVersion: "20260720160000",
+          sql: "CREATE TABLE public.test(id int)",
+        }),
+      );
+
+      expect(payload).toMatchObject({
+        success: false,
+        errorCode: "CONFIRM_REQUIRED",
+      });
+    });
+
+    it("applyMigration requires migrationVersion", async () => {
+      const { server, tools } = createMockServer();
+      registerPGDatabaseTools(server, { createClient: vi.fn() });
+
+      const payload = buildToolPayload(
+        await tools.managePgDatabase.handler({
+          action: "applyMigration",
+          migrationName: "create_test_table",
+          sql: "CREATE TABLE public.test(id int)",
+          confirm: true,
+        }),
+      );
+
+      expect(payload).toMatchObject({
+        success: false,
+        errorCode: "MIGRATION_VERSION_REQUIRED",
+      });
+    });
+
+    it("applyMigration rejects migrationName containing digits before calling cloud APIs", async () => {
+      const { server, tools } = createMockServer();
+      registerPGDatabaseTools(server, { createClient: vi.fn() });
+      setupMigrationMock();
+
+      const payload = buildToolPayload(
+        await tools.managePgDatabase.handler({
+          action: "applyMigration",
+          migrationName: "create_test_table_2",
+          migrationVersion: "20260720160000",
+          sql: "CREATE TABLE public.test(id int)",
+          confirm: true,
+        }),
+      );
+
+      expect(payload).toMatchObject({
+        success: false,
+        errorCode: "MIGRATION_NAME_INVALID",
+        data: { requiredPattern: "^[a-z][a-z_]*$" },
+      });
+      expect(payload.message).toContain("小写字母和下划线");
+      expect(mockCommonServiceCall).not.toHaveBeenCalled();
+    });
+
+    it("planMigration rejects camelCase migrationName before calling cloud APIs", async () => {
+      const { server, tools } = createMockServer();
+      registerPGDatabaseTools(server, { createClient: vi.fn() });
+      setupMigrationMock();
+
+      const payload = buildToolPayload(
+        await tools.managePgDatabase.handler({
+          action: "planMigration",
+          migrationName: "CreateTestTable",
+          migrationVersion: "20260720160000",
+          sql: "CREATE TABLE public.test(id int)",
+        }),
+      );
+
+      expect(payload).toMatchObject({
+        success: false,
+        errorCode: "MIGRATION_NAME_INVALID",
+      });
+      expect(mockCommonServiceCall).not.toHaveBeenCalled();
+    });
+
+    it("applyMigration sends Migrations array and returns localFileHint", async () => {
+      const { server, tools } = createMockServer();
+      registerPGDatabaseTools(server, { createClient: vi.fn() });
+      setupMigrationMock();
+      mockApplyMigrationCloudApis();
+
+      const payload = buildToolPayload(
+        await tools.managePgDatabase.handler({
+          action: "applyMigration",
+          migrationName: "create_test_table",
+          migrationVersion: "20260720160000",
+          sql: "CREATE TABLE public.test(id int)",
+          confirm: true,
+        }),
+      );
+
+      expect(payload).toMatchObject({
+        success: true,
+        data: {
+          migrationVersion: "20260720160000",
+          migrationName: "create_test_table",
+          localFileHint: "cloudbase/migrations/20260720160000_create_test_table.sql",
+          localFilePath: "cloudbase/migrations/20260720160000_create_test_table.sql",
+          localFileAction: "created",
+          hydratedRemoteCount: 0,
+          apiResult: { TaskId: "task-1" },
+          taskResult: expect.objectContaining({ Status: "Succeed" }),
+          verified: true,
+        },
+      });
+      const written = fs.readFileSync(
+        path.join(migrationWorkspace, "cloudbase/migrations/20260720160000_create_test_table.sql"),
+        "utf8",
+      );
+      expect(written).toBe("CREATE TABLE public.test(id int)\n");
+      expect(mockCommonServiceCall).toHaveBeenCalledWith(
+        expect.objectContaining({
+          Action: "PushPGUserMigrations",
+          Param: expect.objectContaining({
+            Migrations: [
+              expect.objectContaining({
+                Name: "create_test_table",
+                Query: "CREATE TABLE public.test(id int)",
+                Version: "20260720160000",
+              }),
+            ],
+          }),
+        }),
+      );
+      expect(mockCommonServiceCall).toHaveBeenCalledWith(
+        expect.objectContaining({
+          Action: "DescribeTaskResult",
+          Param: expect.objectContaining({ TaskId: "task-1" }),
+        }),
+      );
+    });
+
+    it("applyMigration matches existing local file without rewriting", async () => {
+      const relative = "cloudbase/migrations/20260720160000_create_test_table.sql";
+      const absolute = path.join(migrationWorkspace, relative);
+      fs.mkdirSync(path.dirname(absolute), { recursive: true });
+      fs.writeFileSync(absolute, "CREATE TABLE public.test(id int)\n", "utf8");
+      const beforeMtime = fs.statSync(absolute).mtimeMs;
+
+      const { server, tools } = createMockServer();
+      registerPGDatabaseTools(server, { createClient: vi.fn() });
+      setupMigrationMock();
+      mockApplyMigrationCloudApis();
+
+      const payload = buildToolPayload(
+        await tools.managePgDatabase.handler({
+          action: "applyMigration",
+          migrationName: "create_test_table",
+          migrationVersion: "20260720160000",
+          sql: "CREATE TABLE public.test(id int)",
+          confirm: true,
+        }),
+      );
+
+      expect(payload).toMatchObject({
+        success: true,
+        data: {
+          localFileAction: "matched",
+          localFilePath: relative,
+        },
+      });
+      expect(fs.statSync(absolute).mtimeMs).toBe(beforeMtime);
+    });
+
+    it("applyMigration fails closed when local file content mismatches", async () => {
+      const relative = "cloudbase/migrations/20260720160000_create_test_table.sql";
+      const absolute = path.join(migrationWorkspace, relative);
+      fs.mkdirSync(path.dirname(absolute), { recursive: true });
+      fs.writeFileSync(absolute, "CREATE TABLE public.other(id int);\n", "utf8");
+
+      const { server, tools } = createMockServer();
+      registerPGDatabaseTools(server, { createClient: vi.fn() });
+      setupMigrationMock();
+      mockApplyMigrationCloudApis();
+
+      const payload = buildToolPayload(
+        await tools.managePgDatabase.handler({
+          action: "applyMigration",
+          migrationName: "create_test_table",
+          migrationVersion: "20260720160000",
+          sql: "CREATE TABLE public.test(id int)",
+          confirm: true,
+        }),
+      );
+
+      expect(payload).toMatchObject({
+        success: false,
+        errorCode: "LOCAL_MIGRATION_FILE_MISMATCH",
+        data: {
+          localFilePath: relative,
+          verified: false,
+        },
+      });
+      expect(mockCommonServiceCall).not.toHaveBeenCalled();
+      expect(fs.readFileSync(absolute, "utf8")).toBe("CREATE TABLE public.other(id int);\n");
+    });
+
+    it("applyMigration accepts matching legacy migrations/ path without duplicating", async () => {
+      const legacyRelative = "migrations/20260720160000_create_test_table.sql";
+      const legacyAbsolute = path.join(migrationWorkspace, legacyRelative);
+      fs.mkdirSync(path.dirname(legacyAbsolute), { recursive: true });
+      fs.writeFileSync(legacyAbsolute, "CREATE TABLE public.test(id int)\n", "utf8");
+
+      const { server, tools } = createMockServer();
+      registerPGDatabaseTools(server, { createClient: vi.fn() });
+      setupMigrationMock();
+      mockApplyMigrationCloudApis();
+
+      const payload = buildToolPayload(
+        await tools.managePgDatabase.handler({
+          action: "applyMigration",
+          migrationName: "create_test_table",
+          migrationVersion: "20260720160000",
+          sql: "CREATE TABLE public.test(id int)",
+          confirm: true,
+        }),
+      );
+
+      expect(payload).toMatchObject({
+        success: true,
+        data: {
+          localFileAction: "matched",
+          localFilePath: legacyRelative,
+        },
+      });
+      expect(
+        fs.existsSync(
+          path.join(migrationWorkspace, "cloudbase/migrations/20260720160000_create_test_table.sql"),
+        ),
+      ).toBe(false);
+    });
+
+    it("applyMigration hydrates remote history into Push payload", async () => {
+      const { server, tools } = createMockServer();
+      registerPGDatabaseTools(server, { createClient: vi.fn() });
+      setupMigrationMock();
+      mockApplyMigrationCloudApis({
+        remoteMigrations: [
+          {
+            Version: "20260701000000",
+            Name: "init_schema",
+            Query: "CREATE TABLE public.init(id int)",
+          },
+        ],
+        pendingVersion: "20260720160000",
+        pendingName: "create_test_table",
+      });
+
+      const payload = buildToolPayload(
+        await tools.managePgDatabase.handler({
+          action: "applyMigration",
+          migrationName: "create_test_table",
+          migrationVersion: "20260720160000",
+          sql: "CREATE TABLE public.test(id int)",
+          confirm: true,
+        }),
+      );
+
+      expect(payload).toMatchObject({
+        success: true,
+        data: { hydratedRemoteCount: 1, payloadSource: "hydrate", verified: true },
+      });
+      expect(mockCommonServiceCall).toHaveBeenCalledWith(
+        expect.objectContaining({
+          Action: "DescribePGUserMigration",
+          Param: expect.objectContaining({ MigrationVersion: "20260701000000" }),
+        }),
+      );
+      expect(mockCommonServiceCall).toHaveBeenCalledWith(
+        expect.objectContaining({
+          Action: "PushPGUserMigrations",
+          Param: expect.objectContaining({
+            Migrations: [
+              expect.objectContaining({
+                Version: "20260701000000",
+                Name: "init_schema",
+                Query: "CREATE TABLE public.init(id int)",
+              }),
+              expect.objectContaining({
+                Version: "20260720160000",
+                Name: "create_test_table",
+                Query: "CREATE TABLE public.test(id int)",
+              }),
+            ],
+          }),
+        }),
+      );
+    });
+
+    it("applyMigration uses local tree when it covers remote history (skips Describe hydrate)", async () => {
+      const { server, tools } = createMockServer();
+      registerPGDatabaseTools(server, { createClient: vi.fn() });
+      setupMigrationMock();
+      const remoteSql = "CREATE TABLE public.init(id int);\n";
+      fs.mkdirSync(path.join(migrationWorkspace, "cloudbase/migrations"), { recursive: true });
+      fs.writeFileSync(
+        path.join(migrationWorkspace, "cloudbase/migrations/20260701000000_init_schema.sql"),
+        remoteSql,
+        "utf8",
+      );
+      mockApplyMigrationCloudApis({
+        remoteMigrations: [
+          {
+            Version: "20260701000000",
+            Name: "init_schema",
+            Query: "CREATE TABLE public.init(id int)",
+          },
+        ],
+        pendingVersion: "20260720160000",
+        pendingName: "create_test_table",
+      });
+
+      const payload = buildToolPayload(
+        await tools.managePgDatabase.handler({
+          action: "applyMigration",
+          migrationName: "create_test_table",
+          migrationVersion: "20260720160000",
+          sql: "CREATE TABLE public.test(id int)",
+          confirm: true,
+        }),
+      );
+
+      expect(payload).toMatchObject({
+        success: true,
+        data: { hydratedRemoteCount: 1, payloadSource: "local", verified: true },
+      });
+      expect(mockCommonServiceCall).not.toHaveBeenCalledWith(
+        expect.objectContaining({ Action: "DescribePGUserMigration" }),
+      );
+      expect(mockCommonServiceCall).toHaveBeenCalledWith(
+        expect.objectContaining({
+          Action: "PushPGUserMigrations",
+          Param: expect.objectContaining({
+            Migrations: [
+              expect.objectContaining({
+                Version: "20260701000000",
+                Name: "init_schema",
+                Query: remoteSql,
+              }),
+              expect.objectContaining({
+                Version: "20260720160000",
+                Name: "create_test_table",
+                Query: "CREATE TABLE public.test(id int)",
+              }),
+            ],
+          }),
+        }),
+      );
+    });
+
+    it("applyMigration fails closed when Preview reports not executable", async () => {
+      const { server, tools } = createMockServer();
+      registerPGDatabaseTools(server, { createClient: vi.fn() });
+      setupMigrationMock();
+      mockApplyMigrationCloudApis({
+        previewExecutable: false,
+        pendingVersion: "20260802200900",
+        pendingName: "mcptest_tmp",
+      });
+
+      const payload = buildToolPayload(
+        await tools.managePgDatabase.handler({
+          action: "applyMigration",
+          migrationName: "mcptest_tmp",
+          migrationVersion: "20260802200900",
+          sql: "CREATE TABLE mcptest0802 (id serial primary key, name text)",
+          confirm: true,
+        }),
+      );
+
+      expect(payload).toMatchObject({
+        success: false,
+        errorCode: "MIGRATION_NOT_EXECUTABLE",
+        data: { verified: false },
+      });
+      expect(mockCommonServiceCall).not.toHaveBeenCalledWith(
+        expect.objectContaining({ Action: "PushPGUserMigrations" }),
+      );
+    });
+
+    it("applyMigration surfaces DescribeTaskResult failure reason", async () => {
+      const { server, tools } = createMockServer();
+      registerPGDatabaseTools(server, { createClient: vi.fn() });
+      setupMigrationMock();
+      mockApplyMigrationCloudApis({
+        taskStatus: "Failed",
+        taskReason: "migration plan is not executable",
+        pendingVersion: "20260802200900",
+        pendingName: "mcptest_tmp",
+      });
+
+      const payload = buildToolPayload(
+        await tools.managePgDatabase.handler({
+          action: "applyMigration",
+          migrationName: "mcptest_tmp",
+          migrationVersion: "20260802200900",
+          sql: "CREATE TABLE mcptest0802 (id serial primary key, name text)",
+          confirm: true,
+        }),
+      );
+
+      expect(payload).toMatchObject({
+        success: false,
+        errorCode: "MIGRATION_TASK_FAILED",
+        data: {
+          taskResult: expect.objectContaining({
+            Status: "Failed",
+            Reason: "migration plan is not executable",
+          }),
+        },
+      });
+      expect(payload.message).toContain("migration plan is not executable");
+    });
+
+    it("applyMigration times out with describeMigrationTask-first guidance when task stays running", async () => {
+      vi.useFakeTimers();
+      try {
+        const { server, tools } = createMockServer();
+        registerPGDatabaseTools(server, { createClient: vi.fn() });
+        setupMigrationMock();
+        mockApplyMigrationCloudApis({ taskStatus: "Running" });
+
+        const pending = tools.managePgDatabase.handler({
+          action: "applyMigration",
+          migrationName: "create_test_table",
+          migrationVersion: "20260720160000",
+          sql: "CREATE TABLE public.test(id int)",
+          confirm: true,
+          taskPollTimeoutMs: 5000,
+        });
+
+        const payloadPromise = pending.then(buildToolPayload);
+        await vi.advanceTimersByTimeAsync(7000);
+        const payload = await payloadPromise;
+
+        expect(payload).toMatchObject({
+          success: false,
+          errorCode: "MIGRATION_TASK_TIMEOUT",
+          data: {
+            taskPollTimeoutMs: 5000,
+            verified: null,
+            taskResult: { TaskId: "task-1" },
+          },
+        });
+        expect(String(payload.message)).toContain("describeMigrationTask");
+        expect(String(payload.message)).toContain("禁止重推");
+        expect(payload.nextActions?.[0]).toMatchObject({
+          tool: "managePgDatabase",
+          action: "describeMigrationTask",
+          suggested_args: expect.objectContaining({
+            action: "describeMigrationTask",
+            taskId: "task-1",
+          }),
+        });
+        expect(payload.nextActions?.[1]).toMatchObject({
+          tool: "managePgDatabase",
+          action: "listMigrations",
+        });
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("applyMigration waitForTask=false returns pending without polling DescribeTaskResult", async () => {
+      const { server, tools } = createMockServer();
+      registerPGDatabaseTools(server, { createClient: vi.fn() });
+      setupMigrationMock();
+      mockApplyMigrationCloudApis();
+
+      const payload = buildToolPayload(
+        await tools.managePgDatabase.handler({
+          action: "applyMigration",
+          migrationName: "create_test_table",
+          migrationVersion: "20260720160000",
+          sql: "CREATE TABLE public.test(id int)",
+          confirm: true,
+          waitForTask: false,
+        }),
+      );
+
+      expect(payload).toMatchObject({
+        success: false,
+        errorCode: "MIGRATION_TASK_PENDING",
+        data: {
+          waitForTask: false,
+          verified: null,
+          taskResult: { TaskId: "task-1" },
+        },
+      });
+      expect(String(payload.message)).toContain("describeMigrationTask");
+      expect(mockCommonServiceCall).not.toHaveBeenCalledWith(
+        expect.objectContaining({ Action: "DescribeTaskResult" }),
+      );
+      expect(payload.nextActions?.[0]).toMatchObject({
+        tool: "managePgDatabase",
+        action: "describeMigrationTask",
+        suggested_args: expect.objectContaining({
+          action: "describeMigrationTask",
+          taskId: "task-1",
+        }),
+      });
+      expect(payload.nextActions?.[1]).toMatchObject({
+        tool: "managePgDatabase",
+        action: "listMigrations",
+      });
+    });
+
+    it("applyMigration fails when the version is missing from remote migration history", async () => {
+      const { server, tools } = createMockServer();
+      registerPGDatabaseTools(server, { createClient: vi.fn() });
+      setupMigrationMock();
+      mockApplyMigrationCloudApis({
+        pendingVersion: "20260802200900",
+        pendingName: "mcptest_tmp",
+        omitPendingFromVerifyList: true,
+        remoteMigrations: [{ Version: "20260801200000", Name: "older_migration", Query: "SELECT 1" }],
+      });
+
+      const payload = buildToolPayload(
+        await tools.managePgDatabase.handler({
+          action: "applyMigration",
+          migrationName: "mcptest_tmp",
+          migrationVersion: "20260802200900",
+          sql: "CREATE TABLE mcptest0802 (id serial primary key, name text)",
+          confirm: true,
+        }),
+      );
+
+      expect(payload).toMatchObject({
+        success: false,
+        errorCode: "MIGRATION_NOT_APPLIED",
+        data: { migrationVersion: "20260802200900", verified: false },
+      });
+      expect(mockCommonServiceCall).toHaveBeenCalledWith(
+        expect.objectContaining({ Action: "ListPGUserMigrations" }),
+      );
+    });
+
+    it("applyMigration reports verification failure when history cannot be read", async () => {
+      const { server, tools } = createMockServer();
+      registerPGDatabaseTools(server, { createClient: vi.fn() });
+      setupMigrationMock();
+      mockApplyMigrationCloudApis({
+        listThrowsAfterPush: true,
+      });
+
+      const payload = buildToolPayload(
+        await tools.managePgDatabase.handler({
+          action: "applyMigration",
+          migrationName: "create_test_table",
+          migrationVersion: "20260720160000",
+          sql: "CREATE TABLE public.test(id int)",
+          confirm: true,
+        }),
+      );
+
+      expect(payload).toMatchObject({
+        success: false,
+        errorCode: "MIGRATION_VERIFICATION_FAILED",
+        data: { verified: null },
+      });
+    });
+
+    it("applyMigration passes lockTimeoutMs and statementTimeoutMs", async () => {
+      const { server, tools } = createMockServer();
+      registerPGDatabaseTools(server, { createClient: vi.fn() });
+      setupMigrationMock();
+      mockApplyMigrationCloudApis();
+
+      await tools.managePgDatabase.handler({
+        action: "applyMigration",
+        migrationName: "create_test_table",
+        migrationVersion: "20260720160000",
+        sql: "CREATE TABLE public.test(id int)",
+        confirm: true,
+        lockTimeoutMs: 10000,
+        statementTimeoutMs: 600000,
+      });
+
+      expect(mockCommonServiceCall).toHaveBeenCalledWith(
+        expect.objectContaining({
+          Action: "PushPGUserMigrations",
+          Param: expect.objectContaining({
+            LockTimeoutMs: 10000,
+            StatementTimeoutMs: 600000,
+          }),
+        }),
+      );
+    });
+
+    it("applyMigration passes includeAll to Preview and Push (CLI --include-all parity)", async () => {
+      const { server, tools } = createMockServer();
+      registerPGDatabaseTools(server, { createClient: vi.fn() });
+      setupMigrationMock();
+      mockApplyMigrationCloudApis();
+
+      const payload = buildToolPayload(
+        await tools.managePgDatabase.handler({
+          action: "applyMigration",
+          migrationName: "create_test_table",
+          migrationVersion: "20260720160000",
+          sql: "CREATE TABLE public.test(id int)",
+          confirm: true,
+          includeAll: true,
+        }),
+      );
+
+      expect(payload).toMatchObject({
+        success: true,
+        data: { includeAll: true, verified: true },
+      });
+      expect(mockCommonServiceCall).toHaveBeenCalledWith(
+        expect.objectContaining({
+          Action: "PreviewPGUserMigrations",
+          Param: expect.objectContaining({ IncludeAll: true }),
+        }),
+      );
+      expect(mockCommonServiceCall).toHaveBeenCalledWith(
+        expect.objectContaining({
+          Action: "PushPGUserMigrations",
+          Param: expect.objectContaining({ IncludeAll: true }),
+        }),
+      );
+    });
+
+    it("applyMigration defaults IncludeAll=false when includeAll omitted", async () => {
+      const { server, tools } = createMockServer();
+      registerPGDatabaseTools(server, { createClient: vi.fn() });
+      setupMigrationMock();
+      mockApplyMigrationCloudApis();
+
+      await tools.managePgDatabase.handler({
+        action: "applyMigration",
+        migrationName: "create_test_table",
+        migrationVersion: "20260720160000",
+        sql: "CREATE TABLE public.test(id int)",
+        confirm: true,
+      });
+
+      expect(mockCommonServiceCall).toHaveBeenCalledWith(
+        expect.objectContaining({
+          Action: "PreviewPGUserMigrations",
+          Param: expect.objectContaining({ IncludeAll: false }),
+        }),
+      );
+      expect(mockCommonServiceCall).toHaveBeenCalledWith(
+        expect.objectContaining({
+          Action: "PushPGUserMigrations",
+          Param: expect.objectContaining({ IncludeAll: false }),
+        }),
+      );
+    });
+
+    it("migrationDetail requires migrationVersion", async () => {
+      const { server, tools } = createMockServer();
+      registerPGDatabaseTools(server, { createClient: vi.fn() });
+
+      const payload = buildToolPayload(
+        await tools.managePgDatabase.handler({ action: "migrationDetail" }),
+      );
+
+      expect(payload).toMatchObject({
+        success: false,
+        errorCode: "MIGRATION_VERSION_REQUIRED",
+      });
+    });
+
+    it("migrationDetail sends MigrationVersion", async () => {
+      const { server, tools } = createMockServer();
+      registerPGDatabaseTools(server, { createClient: vi.fn() });
+      setupMigrationMock();
+      mockCommonServiceCall.mockResolvedValue({
+        RequestId: "req-detail",
+        Version: "20260526000000",
+        Name: "create_test_table",
+        Query: "CREATE TABLE public.test(id int)",
+      });
+
+      const payload = buildToolPayload(
+        await tools.managePgDatabase.handler({
+          action: "migrationDetail",
+          migrationVersion: "20260526000000",
+        }),
+      );
+
+      expect(payload).toMatchObject({ success: true });
+      expect(mockCommonServiceCall).toHaveBeenCalledWith(
+        expect.objectContaining({
+          Action: "DescribePGUserMigration",
+          Param: expect.objectContaining({
+            MigrationVersion: "20260526000000",
+          }),
+        }),
+      );
+    });
+
+    it("describeMigrationTask requires taskId", async () => {
+      const { server, tools } = createMockServer();
+      registerPGDatabaseTools(server, { createClient: vi.fn() });
+
+      const payload = buildToolPayload(
+        await tools.managePgDatabase.handler({ action: "describeMigrationTask" }),
+      );
+
+      expect(payload).toMatchObject({
+        success: false,
+        errorCode: "TASK_ID_REQUIRED",
+      });
+    });
+
+    it("describeMigrationTask returns Failed Status/Reason and guides listMigrations", async () => {
+      const { server, tools } = createMockServer();
+      registerPGDatabaseTools(server, { createClient: vi.fn() });
+      setupMigrationMock();
+      mockCommonServiceCall.mockResolvedValue({
+        RequestId: "req-task",
+        TaskId: "task-89d4b5e7",
+        TaskType: "PGUserMigration",
+        Status: "Failed",
+        Phase: "RunMigrations",
+        Reason: "migration plan is not executable",
+      });
+
+      const payload = buildToolPayload(
+        await tools.managePgDatabase.handler({
+          action: "describeMigrationTask",
+          taskId: "task-89d4b5e7",
+          migrationVersion: "20260803203429",
+        }),
+      );
+
+      expect(payload).toMatchObject({
+        success: true,
+        data: {
+          taskId: "task-89d4b5e7",
+          terminal: true,
+          migrationVersion: "20260803203429",
+          taskResult: {
+            Status: "Failed",
+            Reason: "migration plan is not executable",
+          },
+        },
+      });
+      expect(String(payload.message)).toContain("Status=Failed");
+      expect(String(payload.message)).toContain("migration plan is not executable");
+      expect(mockCommonServiceCall).toHaveBeenCalledWith(
+        expect.objectContaining({
+          Action: "DescribeTaskResult",
+          Param: expect.objectContaining({ TaskId: "task-89d4b5e7" }),
+        }),
+      );
+      expect(payload.nextActions?.[0]).toMatchObject({
+        tool: "managePgDatabase",
+        action: "listMigrations",
+      });
+    });
+
+    it("describeMigrationTask guides re-poll while Status is non-terminal", async () => {
+      const { server, tools } = createMockServer();
+      registerPGDatabaseTools(server, { createClient: vi.fn() });
+      setupMigrationMock();
+      mockCommonServiceCall.mockResolvedValue({
+        RequestId: "req-task",
+        TaskId: "task-running",
+        Status: "Running",
+        Phase: "RunMigrations",
+      });
+
+      const payload = buildToolPayload(
+        await tools.managePgDatabase.handler({
+          action: "describeMigrationTask",
+          taskId: "task-running",
+        }),
+      );
+
+      expect(payload).toMatchObject({
+        success: true,
+        data: { terminal: false, taskResult: { Status: "Running" } },
+      });
+      expect(payload.nextActions?.[0]).toMatchObject({
+        tool: "managePgDatabase",
+        action: "describeMigrationTask",
+        suggested_args: expect.objectContaining({
+          action: "describeMigrationTask",
+          taskId: "task-running",
+        }),
+      });
+    });
+
+    function mockFetchMigrationCloudApis(
+      remote: Array<{ Version: string; Name: string; Query: string }>,
+    ) {
+      mockCommonServiceCall.mockImplementation(async ({ Action, Param }: { Action: string; Param?: Record<string, unknown> }) => {
+        if (Action === "ListPGUserMigrations") {
+          return {
+            RequestId: "req-list-fetch",
+            Migrations: remote.map(({ Version, Name }) => ({ Version, Name })),
+            Total: remote.length,
+            LatestVersion: remote[remote.length - 1]?.Version ?? "",
+          };
+        }
+        if (Action === "DescribePGUserMigration") {
+          const version = String(Param?.MigrationVersion ?? "");
+          const hit = remote.find((item) => item.Version === version);
+          if (!hit) {
+            throw new Error(`Migration ${version} not found`);
+          }
+          return {
+            RequestId: "req-describe-fetch",
+            Version: hit.Version,
+            Name: hit.Name,
+            Query: hit.Query,
+          };
+        }
+        throw new Error(`Unexpected Action ${Action}`);
+      });
+    }
+
+    it("fetchMigration writes all remote history into cloudbase/migrations/", async () => {
+      const remote = [
+        {
+          Version: "20260701000000",
+          Name: "init_schema",
+          Query: "CREATE TABLE public.a(id int);",
+        },
+        {
+          Version: "20260702000000",
+          Name: "add_b",
+          Query: "CREATE TABLE public.b(id int);",
+        },
+      ];
+      const { server, tools } = createMockServer();
+      registerPGDatabaseTools(server, { createClient: vi.fn() });
+      setupMigrationMock();
+      mockFetchMigrationCloudApis(remote);
+
+      const payload = buildToolPayload(
+        await tools.managePgDatabase.handler({ action: "fetchMigration" }),
+      );
+
+      expect(payload).toMatchObject({
+        success: true,
+        data: {
+          migrationsDir: "cloudbase/migrations",
+          force: false,
+          total: 2,
+          writtenCount: 2,
+          skippedCount: 0,
+          written: [
+            "cloudbase/migrations/20260701000000_init_schema.sql",
+            "cloudbase/migrations/20260702000000_add_b.sql",
+          ],
+        },
+      });
+      expect(
+        fs.readFileSync(
+          path.join(migrationWorkspace, "cloudbase/migrations/20260701000000_init_schema.sql"),
+          "utf8",
+        ),
+      ).toBe("CREATE TABLE public.a(id int);\n");
+      expect(
+        fs.readFileSync(
+          path.join(migrationWorkspace, "cloudbase/migrations/20260702000000_add_b.sql"),
+          "utf8",
+        ),
+      ).toBe("CREATE TABLE public.b(id int);\n");
+    });
+
+    it("fetchMigration with migrationVersion fetches a single record", async () => {
+      const remote = [
+        {
+          Version: "20260701000000",
+          Name: "init_schema",
+          Query: "CREATE TABLE public.a(id int);",
+        },
+        {
+          Version: "20260702000000",
+          Name: "add_b",
+          Query: "CREATE TABLE public.b(id int);",
+        },
+      ];
+      const { server, tools } = createMockServer();
+      registerPGDatabaseTools(server, { createClient: vi.fn() });
+      setupMigrationMock();
+      mockFetchMigrationCloudApis(remote);
+
+      const payload = buildToolPayload(
+        await tools.managePgDatabase.handler({
+          action: "fetchMigration",
+          migrationVersion: "20260702000000",
+        }),
+      );
+
+      expect(payload).toMatchObject({
+        success: true,
+        data: {
+          total: 1,
+          writtenCount: 1,
+          written: ["cloudbase/migrations/20260702000000_add_b.sql"],
+        },
+      });
+      expect(
+        fs.existsSync(
+          path.join(migrationWorkspace, "cloudbase/migrations/20260701000000_init_schema.sql"),
+        ),
+      ).toBe(false);
+      expect(mockCommonServiceCall).not.toHaveBeenCalledWith(
+        expect.objectContaining({ Action: "ListPGUserMigrations" }),
+      );
+    });
+
+    it("fetchMigration skips existing files without force", async () => {
+      const relative = "cloudbase/migrations/20260701000000_init_schema.sql";
+      const absolute = path.join(migrationWorkspace, relative);
+      fs.mkdirSync(path.dirname(absolute), { recursive: true });
+      fs.writeFileSync(absolute, "LOCAL ONLY;\n", "utf8");
+
+      const { server, tools } = createMockServer();
+      registerPGDatabaseTools(server, { createClient: vi.fn() });
+      setupMigrationMock();
+      mockFetchMigrationCloudApis([
+        {
+          Version: "20260701000000",
+          Name: "init_schema",
+          Query: "CREATE TABLE public.a(id int);",
+        },
+      ]);
+
+      const payload = buildToolPayload(
+        await tools.managePgDatabase.handler({ action: "fetchMigration" }),
+      );
+
+      expect(payload).toMatchObject({
+        success: true,
+        data: {
+          writtenCount: 0,
+          skippedCount: 1,
+          skipped: [relative],
+        },
+      });
+      expect(fs.readFileSync(absolute, "utf8")).toBe("LOCAL ONLY;\n");
+      expect(payload.nextActions?.[0]).toMatchObject({
+        tool: "managePgDatabase",
+        action: "fetchMigration",
+        suggested_args: expect.objectContaining({ action: "fetchMigration", force: true }),
+      });
+    });
+
+    it("fetchMigration force=true overwrites existing local files", async () => {
+      const relative = "cloudbase/migrations/20260701000000_init_schema.sql";
+      const absolute = path.join(migrationWorkspace, relative);
+      fs.mkdirSync(path.dirname(absolute), { recursive: true });
+      fs.writeFileSync(absolute, "STALE LOCAL;\n", "utf8");
+
+      const { server, tools } = createMockServer();
+      registerPGDatabaseTools(server, { createClient: vi.fn() });
+      setupMigrationMock();
+      mockFetchMigrationCloudApis([
+        {
+          Version: "20260701000000",
+          Name: "init_schema",
+          Query: "CREATE TABLE public.a(id int);",
+        },
+      ]);
+
+      const payload = buildToolPayload(
+        await tools.managePgDatabase.handler({
+          action: "fetchMigration",
+          force: true,
+        }),
+      );
+
+      expect(payload).toMatchObject({
+        success: true,
+        data: {
+          force: true,
+          writtenCount: 1,
+          skippedCount: 0,
+        },
+      });
+      expect(fs.readFileSync(absolute, "utf8")).toBe("CREATE TABLE public.a(id int);\n");
+    });
+
+    it("fetchMigration fails closed on empty remote Query", async () => {
+      const { server, tools } = createMockServer();
+      registerPGDatabaseTools(server, { createClient: vi.fn() });
+      setupMigrationMock();
+      mockFetchMigrationCloudApis([
+        {
+          Version: "20260701000000",
+          Name: "init_schema",
+          Query: "   ",
+        },
+      ]);
+
+      const payload = buildToolPayload(
+        await tools.managePgDatabase.handler({ action: "fetchMigration" }),
+      );
+
+      expect(payload).toMatchObject({
+        success: false,
+        errorCode: "LOCAL_MIGRATION_FETCH_EMPTY_QUERY",
+      });
+      expect(
+        fs.existsSync(
+          path.join(migrationWorkspace, "cloudbase/migrations/20260701000000_init_schema.sql"),
+        ),
+      ).toBe(false);
+    });
+
+    it("fetchMigration fails closed on a remote Version that is not 14 digits", async () => {
+      const { server, tools } = createMockServer();
+      registerPGDatabaseTools(server, { createClient: vi.fn() });
+      setupMigrationMock();
+      mockFetchMigrationCloudApis([
+        {
+          Version: "../../../../tmp/evil",
+          Name: "init_schema",
+          Query: "CREATE TABLE public.a(id int);",
+        },
+      ]);
+
+      const payload = buildToolPayload(
+        await tools.managePgDatabase.handler({ action: "fetchMigration" }),
+      );
+
+      expect(payload).toMatchObject({
+        success: false,
+        errorCode: "LOCAL_MIGRATION_FETCH_INVALID_VERSION",
+      });
+      expect(
+        fs.existsSync(path.join(migrationWorkspace, "cloudbase/migrations")),
+      ).toBe(false);
+    });
+
+    it("fetchMigration returns empty success when remote history is empty", async () => {
+      const { server, tools } = createMockServer();
+      registerPGDatabaseTools(server, { createClient: vi.fn() });
+      setupMigrationMock();
+      mockFetchMigrationCloudApis([]);
+
+      const payload = buildToolPayload(
+        await tools.managePgDatabase.handler({ action: "fetchMigration" }),
+      );
+
+      expect(payload).toMatchObject({
+        success: true,
+        data: { total: 0, writtenCount: 0, skippedCount: 0 },
+      });
+    });
+
+    it("repairMigration requires migrationVersion", async () => {
+      const { server, tools } = createMockServer();
+      registerPGDatabaseTools(server, { createClient: vi.fn() });
+
+      const payload = buildToolPayload(
+        await tools.managePgDatabase.handler({
+          action: "repairMigration",
+          migrationName: "test_init",
+          repairStatus: "applied",
+          repairReason: "manual fix",
+        }),
+      );
+
+      expect(payload).toMatchObject({
+        success: false,
+        errorCode: "MIGRATION_VERSION_REQUIRED",
+      });
+    });
+
+    it("repairMigration requires repairStatus", async () => {
+      const { server, tools } = createMockServer();
+      registerPGDatabaseTools(server, { createClient: vi.fn() });
+
+      const payload = buildToolPayload(
+        await tools.managePgDatabase.handler({
+          action: "repairMigration",
+          migrationVersion: "20260526000000",
+          migrationName: "test_init",
+          repairReason: "manual fix",
+        }),
+      );
+
+      expect(payload).toMatchObject({
+        success: false,
+        errorCode: "REPAIR_STATUS_REQUIRED",
+      });
+    });
+
+    it("repairMigration with applied status requires sql", async () => {
+      const { server, tools } = createMockServer();
+      registerPGDatabaseTools(server, { createClient: vi.fn() });
+
+      const payload = buildToolPayload(
+        await tools.managePgDatabase.handler({
+          action: "repairMigration",
+          migrationVersion: "20260526000000",
+          migrationName: "test_init",
+          repairStatus: "applied",
+          repairReason: "manual fix",
+        }),
+      );
+
+      expect(payload).toMatchObject({
+        success: false,
+        errorCode: "SQL_REQUIRED",
+      });
+    });
+
+    it("repairMigration with applied status sends Query when sql provided", async () => {
+      const { server, tools } = createMockServer();
+      registerPGDatabaseTools(server, { createClient: vi.fn() });
+      setupMigrationMock();
+      mockCommonServiceCall.mockResolvedValue({ RequestId: "req-repair-1" });
+
+      const payload = buildToolPayload(
+        await tools.managePgDatabase.handler({
+          action: "repairMigration",
+          migrationVersion: "20260526000000",
+          migrationName: "test_init",
+          repairStatus: "applied",
+          repairReason: "manual fix",
+          sql: "CREATE TABLE public.test(id int)",
+        }),
+      );
+
+      expect(payload).toMatchObject({ success: true });
+      expect(mockCommonServiceCall).toHaveBeenCalledWith(
+        expect.objectContaining({
+          Action: "RepairPGUserMigrationHistory",
+          Param: expect.objectContaining({
+            MigrationVersion: "20260526000000",
+            Name: "test_init",
+            Status: "applied",
+            Reason: "manual fix",
+            Query: "CREATE TABLE public.test(id int)",
+          }),
+        }),
+      );
+    });
+
+    it("repairMigration with reverted status does not send Query", async () => {
+      const { server, tools } = createMockServer();
+      registerPGDatabaseTools(server, { createClient: vi.fn() });
+      setupMigrationMock();
+      mockCommonServiceCall.mockResolvedValue({ RequestId: "req-repair-2" });
+
+      const payload = buildToolPayload(
+        await tools.managePgDatabase.handler({
+          action: "repairMigration",
+          migrationVersion: "20260526000000",
+          migrationName: "test_init",
+          repairStatus: "reverted",
+          repairReason: "remove bad record",
+        }),
+      );
+
+      expect(payload).toMatchObject({ success: true });
+      const callArg = mockCommonServiceCall.mock.calls[0][0];
+      expect(callArg.Param).not.toHaveProperty("Query");
+      expect(callArg.Param).toMatchObject({
+        Status: "reverted",
+        Reason: "remove bad record",
+      });
+    });
+
+    describe("native manager-node PG migration API (>= 5.6.5)", () => {
+      /**
+       * Mock a manager whose `database` exposes the native migration methods.
+       * The commonService stub throws, proving the native path is preferred and
+       * the fallback is never reached for actions with a native wrapper.
+       */
+      function setupNativeMigrationMock() {
+        const nativeDb = {
+          previewPGUserMigrations: vi.fn(),
+          pushPGUserMigrations: vi.fn(),
+          repairPGUserMigrationHistory: vi.fn(),
+          listPGUserMigrations: vi.fn(),
+          listAllPGUserMigrations: vi.fn(),
+          describePGUserMigration: vi.fn(),
+          describeTaskResult: vi.fn(),
+        };
+        const commonServiceCall = vi.fn(async ({ Action }: { Action: string }) => {
+          throw new Error(`commonService fallback should not be used for ${Action}`);
+        });
+        mockGetCloudBaseManager.mockResolvedValue({
+          commonService: vi.fn(() => ({ call: commonServiceCall })),
+          database: nativeDb,
+        });
+        return { nativeDb, commonServiceCall };
+      }
+
+      it("listMigrations prefers native listPGUserMigrations over commonService", async () => {
+        const { server, tools } = createMockServer();
+        registerPGDatabaseTools(server, { createClient: vi.fn() });
+        const { nativeDb, commonServiceCall } = setupNativeMigrationMock();
+        nativeDb.listPGUserMigrations.mockResolvedValue({
+          RequestId: "req-list-native",
+          Migrations: [{ Version: "20260701000000", Name: "init" }],
+          Total: 1,
+          LatestVersion: "20260701000000",
+        });
+
+        const payload = buildToolPayload(
+          await tools.managePgDatabase.handler({
+            action: "listMigrations",
+            limit: 10,
+            offset: 0,
+          }),
+        );
+
+        expect(payload).toMatchObject({ success: true, data: { Total: 1 } });
+        expect(nativeDb.listPGUserMigrations).toHaveBeenCalledWith(
+          expect.objectContaining({ EnvId: "env-test", Limit: 10, Offset: 0 }),
+        );
+        expect(commonServiceCall).not.toHaveBeenCalled();
+      });
+
+      it("migrationDetail prefers native describePGUserMigration", async () => {
+        const { server, tools } = createMockServer();
+        registerPGDatabaseTools(server, { createClient: vi.fn() });
+        const { nativeDb, commonServiceCall } = setupNativeMigrationMock();
+        nativeDb.describePGUserMigration.mockResolvedValue({
+          RequestId: "req-detail-native",
+          Version: "20260701000000",
+          Name: "init",
+          Query: "SELECT 1",
+        });
+
+        const payload = buildToolPayload(
+          await tools.managePgDatabase.handler({
+            action: "migrationDetail",
+            migrationVersion: "20260701000000",
+          }),
+        );
+
+        expect(payload).toMatchObject({ success: true, data: { Name: "init" } });
+        expect(nativeDb.describePGUserMigration).toHaveBeenCalledWith(
+          expect.objectContaining({
+            EnvId: "env-test",
+            MigrationVersion: "20260701000000",
+          }),
+        );
+        expect(commonServiceCall).not.toHaveBeenCalled();
+      });
+
+      it("planMigration prefers native list + preview over commonService", async () => {
+        const { server, tools } = createMockServer();
+        registerPGDatabaseTools(server, { createClient: vi.fn() });
+        const { nativeDb, commonServiceCall } = setupNativeMigrationMock();
+        nativeDb.listPGUserMigrations.mockResolvedValue({
+          RequestId: "req-list-native",
+          Migrations: [],
+          Total: 0,
+          LatestVersion: "",
+        });
+        nativeDb.previewPGUserMigrations.mockResolvedValue({
+          RequestId: "req-preview-native",
+          Pending: [{ Version: "20260720160000", Name: "create_test_table", Status: "pending" }],
+          Applied: null,
+          Conflicts: [],
+          Executable: true,
+        });
+
+        const payload = buildToolPayload(
+          await tools.managePgDatabase.handler({
+            action: "planMigration",
+            migrationName: "create_test_table",
+            migrationVersion: "20260720160000",
+            sql: "CREATE TABLE public.test(id int)",
+          }),
+        );
+
+        expect(payload).toMatchObject({ success: true, data: { executable: true } });
+        expect(nativeDb.previewPGUserMigrations).toHaveBeenCalledWith(
+          expect.objectContaining({
+            EnvId: "env-test",
+            Migrations: expect.arrayContaining([
+              expect.objectContaining({ Version: "20260720160000" }),
+            ]),
+          }),
+        );
+        expect(commonServiceCall).not.toHaveBeenCalled();
+      });
+
+      it("applyMigration runs the full native chain (list→describe→preview→push→task→verify)", async () => {
+        const { server, tools } = createMockServer();
+        registerPGDatabaseTools(server, { createClient: vi.fn() });
+        const { nativeDb, commonServiceCall } = setupNativeMigrationMock();
+
+        nativeDb.listPGUserMigrations.mockImplementation(async (options: { Offset?: number }) => {
+          // Hydrate page: one remote migration; verify call after Push returns it plus pending.
+          const remote = [{ Version: "20260701000000", Name: "init" }];
+          const pushed = nativeDb.pushPGUserMigrations.mock.calls.length > 0;
+          return pushed
+            ? {
+                RequestId: "req-list-verify-native",
+                Migrations: [
+                  ...remote,
+                  { Version: "20260720160000", Name: "create_test_table" },
+                ],
+                Total: 2,
+                LatestVersion: "20260720160000",
+              }
+            : {
+                RequestId: "req-list-hydrate-native",
+                Migrations: remote,
+                Total: 1,
+                LatestVersion: "20260701000000",
+              };
+        });
+        nativeDb.describePGUserMigration.mockResolvedValue({
+          RequestId: "req-describe-native",
+          Version: "20260701000000",
+          Name: "init",
+          Query: "SELECT 1",
+        });
+        nativeDb.previewPGUserMigrations.mockResolvedValue({
+          RequestId: "req-preview-native",
+          Pending: [],
+          Applied: [],
+          Conflicts: [],
+          Executable: true,
+        });
+        nativeDb.pushPGUserMigrations.mockResolvedValue({
+          RequestId: "req-apply-native",
+          TaskId: "task-native-1",
+        });
+        nativeDb.describeTaskResult.mockResolvedValue({
+          RequestId: "req-task-native",
+          TaskId: "task-native-1",
+          TaskType: "PGUserMigration",
+          Status: "Succeed",
+          Phase: "RunMigrations",
+          Reason: "",
+        });
+
+        const payload = buildToolPayload(
+          await tools.managePgDatabase.handler({
+            action: "applyMigration",
+            migrationName: "create_test_table",
+            migrationVersion: "20260720160000",
+            sql: "CREATE TABLE public.test(id int)",
+            confirm: true,
+          }),
+        );
+
+        expect(payload).toMatchObject({ success: true, data: { verified: true } });
+        expect(nativeDb.pushPGUserMigrations).toHaveBeenCalledWith(
+          expect.objectContaining({
+            EnvId: "env-test",
+            Migrations: expect.arrayContaining([
+              expect.objectContaining({ Version: "20260701000000", Query: "SELECT 1" }),
+              expect.objectContaining({ Version: "20260720160000" }),
+            ]),
+          }),
+        );
+        expect(nativeDb.describeTaskResult).toHaveBeenCalledWith(
+          expect.objectContaining({ EnvId: "env-test", TaskId: "task-native-1" }),
+        );
+        expect(commonServiceCall).not.toHaveBeenCalled();
+      });
+
+      it("repairMigration prefers native repairPGUserMigrationHistory", async () => {
+        const { server, tools } = createMockServer();
+        registerPGDatabaseTools(server, { createClient: vi.fn() });
+        const { nativeDb, commonServiceCall } = setupNativeMigrationMock();
+        nativeDb.repairPGUserMigrationHistory.mockResolvedValue({
+          RequestId: "req-repair-native",
+        });
+
+        const payload = buildToolPayload(
+          await tools.managePgDatabase.handler({
+            action: "repairMigration",
+            migrationVersion: "20260526000000",
+            migrationName: "test_init",
+            repairStatus: "applied",
+            repairReason: "recover history",
+            sql: "SELECT 1",
+          }),
+        );
+
+        expect(payload).toMatchObject({ success: true });
+        expect(nativeDb.repairPGUserMigrationHistory).toHaveBeenCalledWith(
+          expect.objectContaining({
+            EnvId: "env-test",
+            MigrationVersion: "20260526000000",
+            Name: "test_init",
+            Status: "applied",
+            Reason: "recover history",
+            Query: "SELECT 1",
+          }),
+        );
+        expect(commonServiceCall).not.toHaveBeenCalled();
+      });
+
+      it("falls back to commonService when database lacks native methods", async () => {
+        const { server, tools } = createMockServer();
+        registerPGDatabaseTools(server, { createClient: vi.fn() });
+        setupMigrationMock();
+        mockCommonServiceCall.mockResolvedValue({
+          RequestId: "req-list-fallback",
+          Migrations: [],
+          Total: 0,
+          LatestVersion: "",
+        });
+
+        // manager has no `database` (older runtime shape) — commonService path is used.
+        const payload = buildToolPayload(
+          await tools.managePgDatabase.handler({ action: "listMigrations" }),
+        );
+
+        expect(payload).toMatchObject({ success: true, data: { Total: 0 } });
+        expect(mockCommonServiceCall).toHaveBeenCalledWith(
+          expect.objectContaining({ Action: "ListPGUserMigrations" }),
+        );
+      });
+    });
+  });
+});

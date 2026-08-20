@@ -1,0 +1,575 @@
+import * as fs from "fs/promises";
+import * as os from "os";
+import * as path from "path";
+import { z } from "zod";
+import { getCloudBaseManager, getEnvId } from '../cloudbase-manager.js';
+import { ExtendedMcpServer } from '../server.js';
+import { buildJsonToolResult } from '../utils/tool-result.js';
+import { t } from "../i18n/index.js";
+
+const MAX_INLINE_TEXT_BYTES = 256 * 1024;
+const STORAGE_READ_TEMP_PREFIX = 'cloudbase-mcp-storage-read-';
+
+// Input schema for queryStorage tool
+const queryStorageInputSchema = {
+  action: z.enum(['list', 'info', 'url', 'read']).describe('storage.schema.query.action'),
+  cloudPath: z.string().describe('storage.schema.query.cloudPath'),
+  maxAge: z.number().min(1).max(86400).optional().default(3600).describe('storage.schema.query.maxAge')
+};
+
+// Input schema for manageStorage tool
+const manageStorageInputSchema = {
+  action: z.enum(['upload', 'download', 'delete']).describe('storage.schema.manage.action'),
+  localPath: z.string().optional().describe('storage.schema.manage.localPath'),
+  cloudPath: z.string().describe('storage.schema.manage.cloudPath'),
+  force: z.boolean().optional().default(false).describe('storage.schema.manage.force'),
+  isDirectory: z.boolean().optional().default(false).describe('storage.schema.manage.isDirectory')
+};
+
+type QueryStorageInput = {
+  action: 'list' | 'info' | 'url' | 'read';
+  cloudPath: string;
+  maxAge?: number;
+};
+
+/**
+ * Last segment of a cloud path, reused as the temp file name for `action=read`.
+ *
+ * Splits on both separators rather than `path.posix.basename`: a Windows-style `..\..\x` stays a
+ * single (legal) segment under POSIX path rules, but escapes the temp directory once joined with
+ * `path.join` on a Windows host.
+ */
+function getStorageTempFileName(cloudPath: string) {
+  const baseName = cloudPath.split(/[\\/]/).pop()?.trim() ?? '';
+  if (!baseName || baseName === '.' || baseName === '..') {
+    return 'storage-file';
+  }
+  return baseName;
+}
+
+function decodeInlineTextContent(buffer: Buffer) {
+  const inlineBuffer = buffer.subarray(0, MAX_INLINE_TEXT_BYTES);
+  if (inlineBuffer.includes(0)) {
+    throw new Error(t("storage.readBinaryUnsupported"));
+  }
+
+  return {
+    content: inlineBuffer.toString('utf8'),
+    truncated: buffer.length > MAX_INLINE_TEXT_BYTES,
+    sizeBytes: buffer.length,
+    encoding: 'utf8' as const,
+  };
+}
+
+type ManageStorageInput = {
+  action: 'upload' | 'download' | 'delete';
+  localPath?: string;
+  cloudPath: string;
+  force?: boolean;
+  isDirectory?: boolean;
+};
+
+function getNonEmptyString(value: unknown): string | null {
+  if (typeof value !== 'string') {
+    return null;
+  }
+
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function buildStoragePublicUrl(cdnDomain: string | null, cloudPath: string): string | null {
+  if (!cdnDomain) {
+    return null;
+  }
+
+  const normalizedCloudPath = cloudPath.replace(/^\/+/, '');
+  if (!normalizedCloudPath) {
+    return `https://${cdnDomain}`;
+  }
+
+  return `https://${cdnDomain}/${normalizedCloudPath}`;
+}
+
+async function resolveStoragePublicAccess(params: {
+  cloudPath: string;
+  cloudBaseOptions: ExtendedMcpServer['cloudBaseOptions'];
+  manager: {
+    commonService: (service: string, version: string) => {
+      call: (args: { Action: string; Param: { EnvId: string } }) => Promise<unknown>;
+    };
+  };
+}): Promise<{ storageCdnDomain: string | null; publicUrl: string | null }> {
+  const { cloudPath, cloudBaseOptions, manager } = params;
+
+  try {
+    const envId = await getEnvId(cloudBaseOptions);
+    const describeEnvsResult = await manager.commonService('tcb', '2018-06-08').call({
+      Action: 'DescribeEnvs',
+      Param: {
+        EnvId: envId,
+      },
+    }) as {
+      EnvList?: Array<{
+        Storages?: Array<{
+          CdnDomain?: string | null;
+        }>;
+      }>;
+      EnvInfo?: {
+        Storages?: Array<{
+          CdnDomain?: string | null;
+        }>;
+      };
+    };
+
+    const storageList = describeEnvsResult?.EnvList?.[0]?.Storages ?? describeEnvsResult?.EnvInfo?.Storages ?? [];
+    const storageCdnDomain = getNonEmptyString(storageList[0]?.CdnDomain);
+
+    return {
+      storageCdnDomain,
+      publicUrl: buildStoragePublicUrl(storageCdnDomain, cloudPath),
+    };
+  } catch {
+    return {
+      storageCdnDomain: null,
+      publicUrl: null,
+    };
+  }
+}
+
+export function registerStorageTools(server: ExtendedMcpServer) {
+  // 获取 cloudBaseOptions，如果没有则为 undefined
+  const cloudBaseOptions = server.cloudBaseOptions;
+  const storageOverrides = server.pluginOptions?.storage;
+
+  // 创建闭包函数来获取 CloudBase Manager
+  const getManager = () => getCloudBaseManager({ cloudBaseOptions });
+
+  // Tool 1: queryStorage - 查询存储信息（只读操作）
+  server.registerTool(
+    "queryStorage",
+    {
+      title: "storage.queryTitle",
+      description: "storage.queryDescription",
+      inputSchema: queryStorageInputSchema,
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        openWorldHint: false,
+        category: "storage"
+      }
+    },
+    async (args: QueryStorageInput) => {
+      const input = args;
+      try {
+        const manager = await getManager();
+
+        if (!manager) {
+          throw new Error(t("storage.managerInitFailed"));
+        }
+
+        const storageService = manager.storage;
+
+      switch (input.action) {
+        case 'list': {
+          let files: any[];
+          if (storageOverrides?.listFiles) {
+            files = await storageOverrides.listFiles({ cloudPath: input.cloudPath });
+          } else {
+            const result = await storageService.listDirectoryFiles(input.cloudPath);
+            files = result || [];
+          }
+
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify({
+                  success: true,
+                  data: {
+                    action: 'list',
+                    cloudPath: input.cloudPath,
+                    files,
+                    totalCount: files.length
+                  },
+                  message: t("storage.listSuccess", {
+                    count: files.length,
+                    path: input.cloudPath,
+                  })
+                }, null, 2)
+              }
+            ]
+          };
+        }
+
+        case 'info': {
+          let fileInfo: any;
+          if (storageOverrides?.getFileInfo) {
+            fileInfo = await storageOverrides.getFileInfo({ cloudPath: input.cloudPath });
+          } else {
+            fileInfo = await storageService.getFileInfo(input.cloudPath);
+          }
+
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify({
+                  success: true,
+                  data: {
+                    action: 'info',
+                    cloudPath: input.cloudPath,
+                    fileInfo
+                  },
+                  message: t("storage.infoSuccess", { path: input.cloudPath })
+                }, null, 2)
+              }
+            ]
+          };
+        }
+
+        case 'url': {
+          let temporaryUrl = "";
+          let fileId = "";
+          if (storageOverrides?.getFileUrl) {
+            const urlResult = await storageOverrides.getFileUrl({
+              cloudPath: input.cloudPath,
+              maxAge: input.maxAge || 3600,
+            });
+            temporaryUrl = urlResult.url;
+            fileId = urlResult.fileId || "";
+          } else {
+            const result = await storageService.getTemporaryUrl([{
+              cloudPath: input.cloudPath,
+              maxAge: input.maxAge || 3600
+            }]);
+            temporaryUrl = result[0]?.url || "";
+            fileId = result[0]?.fileId || "";
+          }
+          const publicAccess = await resolveStoragePublicAccess({
+            cloudPath: input.cloudPath,
+            cloudBaseOptions,
+            manager,
+          });
+
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify({
+                  success: true,
+                  data: {
+                    action: 'url',
+                    cloudPath: input.cloudPath,
+                    temporaryUrl,
+                    expireTime: `${input.maxAge || 3600}${t("storage.seconds")}`,
+                    fileId,
+                    storageCdnDomain: publicAccess.storageCdnDomain,
+                    publicUrl: publicAccess.publicUrl,
+                    note: t("storage.urlNote")
+                  },
+                  message: t("storage.urlSuccess", { path: input.cloudPath })
+                }, null, 2)
+              }
+            ]
+          };
+        }
+
+        case 'read': {
+          const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), STORAGE_READ_TEMP_PREFIX));
+          const localPath = path.join(tempDir, getStorageTempFileName(input.cloudPath));
+
+          try {
+            if (storageOverrides?.downloadFile) {
+              await storageOverrides.downloadFile({ cloudPath: input.cloudPath, localPath });
+            } else {
+              await storageService.downloadFile({
+                cloudPath: input.cloudPath,
+                localPath
+              });
+            }
+
+            const buffer = await fs.readFile(localPath);
+            const decoded = decodeInlineTextContent(buffer);
+
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: JSON.stringify({
+                    success: true,
+                    data: {
+                      action: 'read',
+                      cloudPath: input.cloudPath,
+                      content: decoded.content,
+                      encoding: decoded.encoding,
+                      sizeBytes: decoded.sizeBytes,
+                      truncated: decoded.truncated
+                    },
+                    message: decoded.truncated
+                      ? t("storage.readSuccessTruncated", {
+                          path: input.cloudPath,
+                          bytes: MAX_INLINE_TEXT_BYTES,
+                        })
+                      : t("storage.readSuccess", { path: input.cloudPath })
+                  }, null, 2)
+                }
+              ]
+            };
+          } finally {
+            await fs.rm(tempDir, { recursive: true, force: true });
+          }
+        }
+
+        default:
+          throw new Error(t("storage.unsupportedAction", { action: input.action }));
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return buildJsonToolResult({
+        success: false,
+        message: t("storage.queryFailed", { message }),
+        action: input.action,
+        cloudPath: input.cloudPath,
+      });
+    }
+  }
+  );
+
+  // Tool 2: manageStorage - 管理存储文件（写操作）
+  server.registerTool(
+    "manageStorage",
+    {
+      title: "storage.manageTitle",
+      description: "storage.manageDescription",
+      inputSchema: manageStorageInputSchema,
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: false,
+        openWorldHint: false,
+        category: "storage"
+      }
+    },
+    async (args: ManageStorageInput) => {
+      const input = args;
+      try {
+        const manager = await getManager();
+
+        if (!manager) {
+          throw new Error(t("storage.managerInitFailed"));
+        }
+
+      const storageService = manager.storage;
+
+      switch (input.action) {
+        case 'upload': {
+          const localPath = input.localPath!;
+          const cloudPath = input.cloudPath!;
+          if (input.isDirectory) {
+            if (storageOverrides?.uploadDirectory) {
+              await storageOverrides.uploadDirectory({ localPath, cloudPath });
+            } else {
+              await storageService.uploadDirectory({
+                localPath,
+                cloudPath,
+                onProgress: (progressData: any) => {
+                  console.log("Upload directory progress:", progressData);
+                }
+              });
+            }
+          } else {
+            if (storageOverrides?.uploadFile) {
+              await storageOverrides.uploadFile({ localPath, cloudPath });
+            } else {
+              await storageService.uploadFile({
+                localPath,
+                cloudPath,
+                onProgress: (progressData: any) => {
+                  console.log("Upload file progress:", progressData);
+                }
+              });
+            }
+          }
+
+          // 上传成功后获取临时 URL 和公网访问信息
+          let temporaryUrl = "";
+          let fileId = "";
+          if (storageOverrides?.getFileUrl) {
+            const urlResult = await storageOverrides.getFileUrl({
+              cloudPath: input.cloudPath,
+              maxAge: 3600,
+            });
+            temporaryUrl = urlResult.url;
+            fileId = urlResult.fileId || "";
+          } else {
+            try {
+              const fileUrls = await storageService.getTemporaryUrl([{
+                cloudPath: input.cloudPath,
+                maxAge: 3600
+              }]);
+              temporaryUrl = fileUrls[0]?.url || "";
+              fileId = fileUrls[0]?.fileId || "";
+            } catch {
+              // StorageOverrides 下 getTemporaryUrl 可能不可用
+            }
+          }
+          let publicAccess: any = {};
+          try {
+            publicAccess = await resolveStoragePublicAccess({
+              cloudPath: input.cloudPath,
+              cloudBaseOptions,
+              manager,
+            });
+          } catch {
+            // DescribeEnvs 可能不支持（IDE 模式下会绕过）
+            publicAccess = {};
+          }
+
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify({
+                  success: true,
+                  data: {
+                    action: 'upload',
+                    localPath: input.localPath,
+                    cloudPath: input.cloudPath,
+                    isDirectory: input.isDirectory,
+                    temporaryUrl,
+                    expireTime: t("storage.oneHour"),
+                    storageCdnDomain: publicAccess.storageCdnDomain,
+                    publicUrl: publicAccess.publicUrl,
+                    note: t("storage.uploadNote")
+                  },
+                  message: t("storage.uploadSuccess", {
+                    type: input.isDirectory
+                      ? t("storage.itemDirectory")
+                      : t("storage.itemFile"),
+                    localPath,
+                    cloudPath: input.cloudPath,
+                  })
+                }, null, 2)
+              }
+            ]
+          };
+        }
+
+        case 'download': {
+          const dlCloudPath = input.cloudPath!;
+          const dlLocalPath = input.localPath!;
+          if (input.isDirectory) {
+            if (storageOverrides?.downloadDirectory) {
+              await storageOverrides.downloadDirectory({ cloudPath: dlCloudPath, localPath: dlLocalPath });
+            } else {
+              await storageService.downloadDirectory({
+                cloudPath: dlCloudPath,
+                localPath: dlLocalPath
+              });
+            }
+          } else {
+            if (storageOverrides?.downloadFile) {
+              await storageOverrides.downloadFile({ cloudPath: dlCloudPath, localPath: dlLocalPath });
+            } else {
+              await storageService.downloadFile({
+                cloudPath: dlCloudPath,
+                localPath: dlLocalPath
+              });
+            }
+          }
+
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify({
+                  success: true,
+                  data: {
+                    action: 'download',
+                    cloudPath: input.cloudPath,
+                    localPath: input.localPath,
+                    isDirectory: input.isDirectory
+                  },
+                  message: t("storage.downloadSuccess", {
+                    type: input.isDirectory
+                      ? t("storage.itemDirectory")
+                      : t("storage.itemFile"),
+                    cloudPath: input.cloudPath,
+                    localPath: dlLocalPath,
+                  })
+                }, null, 2)
+              }
+            ]
+          };
+        }
+
+        case 'delete': {
+          if (!input.force) {
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: JSON.stringify({
+                    success: false,
+                    error: t("storage.deleteRequiresConfirmation"),
+                    message: t("storage.deleteForceHint")
+                  }, null, 2)
+                }
+              ]
+            };
+          }
+
+          if (input.isDirectory) {
+            if (storageOverrides?.deleteDirectory) {
+              await storageOverrides.deleteDirectory({ cloudPath: input.cloudPath });
+            } else {
+              await storageService.deleteDirectory(input.cloudPath);
+            }
+          } else {
+            if (storageOverrides?.deleteFiles) {
+              await storageOverrides.deleteFiles({ cloudPaths: [input.cloudPath] });
+            } else {
+              await storageService.deleteFile([input.cloudPath]);
+            }
+          }
+
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify({
+                  success: true,
+                  data: {
+                    action: 'delete',
+                    cloudPath: input.cloudPath,
+                    isDirectory: input.isDirectory,
+                    deleted: true
+                  },
+                  message: t("storage.deleteSuccess", {
+                    type: input.isDirectory
+                      ? t("storage.itemDirectory")
+                      : t("storage.itemFile"),
+                    cloudPath: input.cloudPath,
+                  })
+                }, null, 2)
+              }
+            ]
+          };
+        }
+
+        default:
+          throw new Error(t("storage.unsupportedAction", { action: input.action }));
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return buildJsonToolResult({
+        success: false,
+        message: t("storage.manageFailed", { message }),
+        action: input.action,
+        cloudPath: input.cloudPath,
+      });
+    }
+  }
+  );
+}

@@ -1,0 +1,67 @@
+{
+  "name": "miniprogram-clouddev-expert",
+  "version": "1.0.29",
+  "description": "WeChat mini program full-stack development expert: builds and deploys mini programs with frontend, backend (cloud functions), cloud database, message push callbacks, and virtual payment integration, powered by Tencent CloudBase (WeChat Cloud Dev).",
+  "author": {
+    "name": "booker",
+    "email": "booker@cloudbase.net"
+  },
+  "agents": [
+    "./agents/miniprogram-clouddev-expert.md"
+  ],
+  "skills": [],
+  "expertType": "agent",
+  "agentName": "miniprogram-clouddev-expert",
+  "displayName": {
+    "en": "WeChat Cloud Development Engineer",
+    "zh": "微信云开发工程师"
+  },
+  "profession": {
+    "en": "WeChat Mini Program Full-Stack Expert",
+    "zh": "微信小程序全栈开发专家"
+  },
+  "displayDescription": {
+    "en": "Full-stack WeChat mini program development on WeChat Cloud Dev (CloudBase): frontend, backend, database, virtual payment, and AI/LLM integration — no server setup needed.",
+    "zh": "用微信云开发CloudBase开发上线小程序：前端、后端、数据库、虚拟支付、AI接入，不用买服务器。"
+  },
+  "avatar": "avatars/miniprogram-clouddev-expert.png",
+  "categoryId": "02-Engineering",
+  "defaultInitPrompt": {
+    "zh": "帮我做一个预约小程序：顾客选时段预约，约满自动关闭该时段，先做到能在微信开发者工具里预览，先不发布",
+    "en": "Build a booking mini program: customers pick a time slot, full slots close automatically — get it previewable in WeChat DevTools first, no release yet."
+  },
+  "dependencies": {
+    "connectors": [
+      "cloudbase"
+    ]
+  },
+  "plugin": "miniprogram-clouddev-expert",
+  "tags": [
+    {
+      "en": "WeChat Mini Program",
+      "zh": "微信小程序"
+    },
+    {
+      "en": "Backend",
+      "zh": "后端开发"
+    },
+    {
+      "en": "Virtual Payment",
+      "zh": "虚拟支付"
+    }
+  ],
+  "quickPrompts": [
+    {
+      "zh": "帮我做一个预约小程序：顾客选时段预约，约满自动关闭该时段，先做到能在微信开发者工具里预览，先不发布",
+      "en": "Build a booking mini program: customers pick a time slot, full slots close automatically — get it previewable in WeChat DevTools first, no release yet."
+    },
+    {
+      "zh": "帮我做一个编织图解小程序：能按针法查图解，图解存在云数据库里，我自己能加新的图解",
+      "en": "Build a knitting-pattern mini program: browse patterns by stitch type, stored in the cloud database, and I can add new patterns myself."
+    },
+    {
+      "zh": "我有一个微信小程序，已开通虚拟支付并配置好道具，请帮我接入完整支付链路",
+      "en": "I have a WeChat mini program with virtual payment enabled — help me integrate the full payment flow."
+    }
+  ]
+}

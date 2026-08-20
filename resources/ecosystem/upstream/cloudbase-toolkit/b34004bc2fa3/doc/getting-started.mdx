@@ -1,0 +1,96 @@
+import IDESelector from './components/IDESelector';
+import PromptScenarios from './components/PromptScenarios';
+
+# 连接 CloudBase MCP
+
+通过 Model Context Protocol (MCP) 连接后，你可以在 AI 对话中直接操作 CloudBase 服务，无需在 IDE 和控制台之间切换。
+
+支持**远端模式**（推荐：IDE 通过 HTTP 连接云端，本机无需 Node）和**本地模式**（本机 `npx` 运行，含本地文件能力）。两种方式都区分国内站与国际站，接入前请先确认环境开在哪个站。详见 [连接方式：远端模式与本地模式](/ai/cloudbase-ai-toolkit/connection-modes)。
+
+**最快上手：** 复制下面的 AI Prompt，粘贴到你的 AI IDE。
+
+```text
+帮我把 CloudBase 接好，按下面做：
+1. 打开 https://docs.cloudbase.net/skill.md，按说明完成接入。
+2. 接入完成后告诉我，并建议最相关的下一步。
+```
+
+## 前置条件
+
+在开始配置之前，请确保满足以下条件：
+
+<details>
+<summary><strong>已准备好云开发环境（本地模式还需 Node.js）</strong></summary>
+
+**云开发环境：** 请参考文档 [开通云开发环境](../../quick-start/create-env)。新用户可以免费开通体验。
+
+**Node.js 环境（仅本地模式需要）：** 远端模式不依赖本机 Node，可跳过这一项。本地模式需确保已安装 Node.js v18.15.0 或更高版本：
+
+```bash
+node --version
+```
+
+如果未安装，请从 [Node.js 官网](https://nodejs.org/en/download) 下载安装。
+
+</details>
+
+## 连接你的 AI 工具
+
+选择你的 AI 开发工具，然后按照安装说明操作：
+
+<IDESelector />
+
+## 手动确认工具调用
+
+大多数 MCP 客户端（如 Cursor）会在执行每个工具调用前要求你手动确认。我们建议你始终启用此设置，并在执行前仔细查看工具调用的详细信息。
+
+## 开始使用
+
+配置完成后，在 AI 对话中输入：
+
+```
+登录云开发
+```
+
+AI 会自动引导你完成登录和环境选择。然后你可以开始使用自然语言描述需求，让 AI 帮你开发应用。
+
+> 🌏 **站点别选错**：国内站与国际站是两套独立的账号体系，接入地址与登录态都不通用。接错站点的典型表现是**「登录成功但看不到自己的环境」**，而不是明确的报错。
+>
+> - **远端模式**：站点由域名决定 —— 国内站用 `https://tcb-api.cloud.tencent.com/mcp/v1`，国际站用 `https://tcb-api.tencentcloud.com/mcp/v1`。
+> - **本地模式**：没有域名可依据，需显式声明 `TCB_SITE=intl`，否则登录会走国内站链路、看不到国际站环境。配置方式（MCP `env`、启动参数 `--site`、对话中指定、CLI）见 [连接方式 - 国际站用户](./connection-modes#国际站用户)。
+>
+> 国内站在 `ap-singapore` 地域被误判为国际站的场景，见 [常见问题](./faq#国内站新加坡环境被当成国际站了怎么办)。
+
+## 使用示例
+
+**完整流程示例：**
+
+```
+用云开发做一个带手机号登录的待办应用，并部署上线
+```
+
+AI 会自动完成：生成前后端代码、配置认证与数据库、部署云函数和静态托管，并返回访问链接。
+
+**分步操作示例：**
+
+- "用云开发做一个微信小程序点餐系统" - AI 搭页面、建云数据库、写云函数并引导预览
+- "做一个预约管理系统，支持用户下单和后台改状态" - AI 用 CloudBase PostgreSQL 建模、配权限并接好前后端
+- "给 Web 应用加上手机号登录" - AI 启用认证方式并接入 CloudBase SDK
+
+**详细需求示例：**
+
+```
+用云开发做一个咖啡预约小程序，包含：
+- 菜单浏览与下单
+- 订单写入云数据库
+- 云函数处理订单状态
+- 用微信开发者工具预览
+```
+
+## AI Skill 场景
+
+<PromptScenarios />
+
+## 视频教程
+
+想通过视频学习如何使用 CloudBase MCP？查看我们的[视频教程和实战案例](/ai/cloudbase-ai-toolkit/tutorials)。

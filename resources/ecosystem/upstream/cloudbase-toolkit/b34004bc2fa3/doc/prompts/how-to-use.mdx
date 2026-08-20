@@ -1,0 +1,77 @@
+import PromptScenarios from '../components/PromptScenarios';
+
+# 如何使用 Skill
+
+CloudBase AI Skills 是一套「技能包」，把云开发的专业知识注入 AI。**搭配 MCP 使用时，MCP 提供连接与工具，Skills 提供规则与最佳实践**。
+
+**最快上手：** 复制下面的 AI Prompt，粘贴到你的 AI IDE。
+
+```text
+帮我把 CloudBase 接好，按下面做：
+1. 打开 https://docs.cloudbase.net/skill.md，按说明完成接入。
+2. 接入完成后告诉我，并建议最相关的下一步。
+```
+
+---
+
+## 安装 Skills
+
+通过 [Skills 开放规范](https://agentskills.io/) 安装，适用于 Claude Code、Cursor、VS Code、GitHub Copilot、OpenCode 等支持 Skills 的工具。
+
+在项目根目录执行：
+
+```bash
+npx skills add tencentcloudbase/cloudbase-skills
+```
+
+按提示选择 AI 工具即可。也可以让 AI 阅读 [Setup Skill](https://docs.cloudbase.net/skill.md) 自引导完成配置。
+
+只装单个 Skill：
+
+```bash
+npx skills add https://github.com/tencentcloudbase/skills --skill auth-tool
+```
+
+在线预览示例：[cloudbase-platform](https://skills.sh/tencentcloudbase/skills/cloudbase-platform)
+
+### GitHub 不可达时（CNB 镜像）
+
+短名 `owner/repo` 会走 GitHub。clone 失败时用完整 CNB URL：
+
+```bash
+npx skills add https://cnb.cool/tencent/cloud/cloudbase/cloudbase-skills.git -y
+```
+
+### 提升激活率
+
+单独安装 Skills 时，AI 是否自动选用取决于模型和工具，不一定稳定。若希望更稳定地生效，建议直接安装 [CloudBase AI 插件](/ai/cloudbase-ai-toolkit/ai-agent-plugins)：一次安装同时获得 MCP、Skills 与 Hooks。
+
+### 搭配 MCP
+
+建议同时配置 [CloudBase MCP](/ai/cloudbase-ai-toolkit/getting-started)：MCP 负责连环境和调工具，Skills 负责开发规范。两者一起用效果最好。
+
+---
+
+## 手动复制（可选）
+
+若无法使用 `npx skills add`，可将规则或提示词复制到项目中，再在对话里用 `@` / `#` 等方式引用，例如：
+
+- Cursor：`.cursor/rules/` 或 `@Files`
+- Claude Code：`CLAUDE.md` / `AGENT.md`
+- GitHub Copilot：`#prompts/xxx.md`
+
+完整列表见下方场景，或 [CloudBase AI Toolkit](https://github.com/TencentCloudBase/CloudBase-AI-ToolKit) 仓库。
+
+---
+
+## 可用的 Skill 场景
+
+<PromptScenarios />
+
+---
+
+## 相关文档
+
+- [CloudBase AI 插件](/ai/cloudbase-ai-toolkit/ai-agent-plugins) — 推荐安装方式
+- [快速开始](/ai/cloudbase-ai-toolkit/getting-started) — MCP 连接
+- [入门视频与文章](/ai/cloudbase-ai-toolkit/tutorials)

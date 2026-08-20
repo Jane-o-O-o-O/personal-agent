@@ -1,0 +1,67 @@
+{
+  "name": "cloudbase-webdev-expert",
+  "version": "1.0.16",
+  "description": "CloudBase Web application expert: builds and deploys full-stack web apps — frontend hosting, PostgreSQL, RLS row-level security, cloud functions, and AI/LLM integration — for non-developers building internal tools and teams shipping SaaS MVPs.",
+  "author": {
+    "name": "booker",
+    "email": "booker@cloudbase.net"
+  },
+  "agents": [
+    "./agents/cloudbase-webdev-expert.md"
+  ],
+  "skills": [],
+  "expertType": "agent",
+  "agentName": "cloudbase-webdev-expert",
+  "displayName": {
+    "en": "CloudBase Full-Stack Engineer",
+    "zh": "CloudBase 全栈工程师"
+  },
+  "profession": {
+    "en": "Tencent CloudBase Full-Stack Engineer",
+    "zh": "腾讯云 CloudBase 全栈工程师"
+  },
+  "displayDescription": {
+    "en": "Build websites and business systems on Tencent CloudBase: landing pages, CRM, inventory, approvals — with a real database, login, and built-in AI models, deployed and live fast.",
+    "zh": "用腾讯云开发CloudBase搭网站与业务系统：官网、CRM、进销存审批，带数据库登录和AI接入。"
+  },
+  "avatar": "avatars/cloudbase-webdev-expert.png",
+  "categoryId": "02-Engineering",
+  "defaultInitPrompt": {
+    "zh": "帮我搭一个客户管理（CRM）：记录客户、跟进和商机，销售只能看自己的客户，管理员能看全部",
+    "en": "Build a CRM: track customers, follow-ups, and deals; sales reps see only their own customers, admins see everything."
+  },
+  "dependencies": {
+    "connectors": [
+      "cloudbase"
+    ]
+  },
+  "plugin": "cloudbase-webdev-expert",
+  "tags": [
+    {
+      "en": "Database",
+      "zh": "数据库"
+    },
+    {
+      "en": "Business Systems",
+      "zh": "业务系统"
+    },
+    {
+      "en": "SaaS",
+      "zh": "SaaS"
+    }
+  ],
+  "quickPrompts": [
+    {
+      "zh": "帮我搭一个客户管理（CRM）：记录客户、跟进和商机，销售只能看自己的客户，管理员能看全部",
+      "en": "Build a CRM: track customers, follow-ups, and deals; sales reps see only their own customers, admins see everything."
+    },
+    {
+      "zh": "做一个产品官网：首页介绍、功能展示、常见问题，带一个咨询表单，客户提交后我在后台能看到",
+      "en": "Build a product website: hero section, features, FAQ, plus a consultation form — submissions show up in my backend."
+    },
+    {
+      "zh": "给我的系统加一个 AI 客服：它能回答我上传的产品文档里的问题，回答逐字输出",
+      "en": "Add an AI support chat to my app: it answers questions from the product docs I upload, streaming word by word."
+    }
+  ]
+}

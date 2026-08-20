@@ -1,0 +1,67 @@
+name: Open Plugin Spec Check
+
+on:
+  pull_request:
+    paths:
+      - 'plugin/cloudbase/**'
+      - 'plugin/cloudbase-sites/**'
+      - 'marketplace.json'
+      - '.agents/plugins/**'
+      - '.claude-plugin/**'
+      - '.cursor-plugin/**'
+      - 'scripts/build-open-plugin-spec.mjs'
+      - 'scripts/check-plugin-marketplaces.mjs'
+      - 'scripts/check-plugin-quality.mjs'
+      - 'scripts/pack-agent-plugins.mjs'
+      - 'scripts/pack-claude-plugin.mjs'
+      - '.github/workflows/open-plugin-spec-check.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'plugin/cloudbase/**'
+      - 'plugin/cloudbase-sites/**'
+      - 'marketplace.json'
+      - '.agents/plugins/**'
+      - '.claude-plugin/**'
+      - '.cursor-plugin/**'
+      - 'scripts/build-open-plugin-spec.mjs'
+      - 'scripts/check-plugin-marketplaces.mjs'
+      - 'scripts/check-plugin-quality.mjs'
+      - 'scripts/pack-agent-plugins.mjs'
+      - 'scripts/pack-claude-plugin.mjs'
+      - '.github/workflows/open-plugin-spec-check.yml'
+
+jobs:
+  spec-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.2.2
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '20'
+
+      - name: Check Open Plugin Spec + Cursor artifacts are up to date
+        run: |
+          node scripts/build-open-plugin-spec.mjs --check
+
+      - name: Check Claude Code + Codex marketplace manifests
+        run: |
+          node scripts/check-plugin-marketplaces.mjs
+
+      - name: Check marketplace submission quality (Claude/Cursor/Codex)
+        run: |
+          node scripts/check-plugin-quality.mjs
+
+      - name: Verify plugins CLI can discover the plugin
+        working-directory: plugin/cloudbase
+        run: |
+          npx -y plugins discover . --remote
+
+      - name: Verify release zip packers produce conformant output
+        run: |
+          node scripts/pack-claude-plugin.mjs --out-dir /tmp/release-zips
+          node scripts/pack-agent-plugins.mjs --out-dir /tmp/release-zips

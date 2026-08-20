@@ -1,0 +1,680 @@
+import {
+    ConfigParser,
+    loadConfig,
+    searchConfig,
+    validateCloudBaseConfigBySchema,
+} from "@cloudbase/toolbox";
+import fs from "node:fs";
+import path from "node:path";
+import { z } from "zod";
+import { getCloudBaseManager, getEnvId } from "../cloudbase-manager.js";
+import { t } from "../i18n/index.js";
+import type { ExtendedMcpServer } from "../server.js";
+import { jsonContent } from "../utils/json-content.js";
+import { requireProjectRoot } from "../utils/project-config.js";
+import { findDestructiveStatements } from "../utils/sql-risk.js";
+import {
+  HOSTING_BUILD_ERROR_CODES,
+  buildHostingItem,
+  neutralizeHostingForDeploy,
+  type HostingItem,
+} from "./hosting-build-utils.js";
+
+// 声明式部署可编排的资源类型，与 DeployOrchestrator 的部署顺序一致：
+// database → functions → app → hosting → gateway
+const RESOURCE_TYPES = ["database", "functions", "app", "hosting", "gateway"] as const;
+type ResourceType = (typeof RESOURCE_TYPES)[number];
+
+// 工具统一返回信封：success 标识成败，data 承载结构化结果，message 供人读，
+// errorCode 供 agent 程序化分支处理（成功时为 undefined / 省略）。
+type ToolEnvelope = {
+  success: boolean;
+  data: Record<string, unknown>;
+  message: string;
+  errorCode?: string;
+};
+
+/**
+ * 声明式部署工具的稳定错误码。供 agent 程序化分支处理，不随文案调整而变化。
+ * - CONFIG_NOT_FOUND：cwd 下未找到 cloudbaserc 配置文件
+ * - CONFIG_INVALID：配置未通过 cloudbaserc schema 校验
+ * - ENV_UNRESOLVED：无法确定目标环境 ID（配置/入参/登录态均缺失）
+ * - INVALID_CONCURRENCY：并发数入参非法
+ * - CONFIRM_REQUIRED：写操作未显式传 confirm=true
+ * - DESTRUCTIVE_CONFIRM_REQUIRED：待执行的数据库迁移含破坏性语句，需额外传 confirmDestructive=true
+ * - DEPLOY_FAILED：编排器执行失败或其它未分类错误（可能透传引擎 errorCode）
+ *
+ * hosting 构建/中立化错误码（BUILD_OUTPUT_NOT_FOUND / DEPENDENCY_NOT_INSTALLED /
+ * BUILD_FAILED）定义在 hosting-build-utils.ts，这里并入保持单一信封错误码真源。
+ */
+export const DEPLOY_ERROR_CODES = {
+  ...HOSTING_BUILD_ERROR_CODES,
+  CONFIG_NOT_FOUND: "CONFIG_NOT_FOUND",
+  CONFIG_INVALID: "CONFIG_INVALID",
+  ENV_UNRESOLVED: "ENV_UNRESOLVED",
+  INVALID_CONCURRENCY: "INVALID_CONCURRENCY",
+  CONFIRM_REQUIRED: "CONFIRM_REQUIRED",
+  DESTRUCTIVE_CONFIRM_REQUIRED: "DESTRUCTIVE_CONFIRM_REQUIRED",
+  DEPLOY_FAILED: "DEPLOY_FAILED",
+} as const;
+
+type DeployErrorCode = (typeof DEPLOY_ERROR_CODES)[keyof typeof DEPLOY_ERROR_CODES];
+
+/**
+ * 携带稳定错误码的部署错误。抛出后由 buildErrorEnvelope 归一为信封的 errorCode 字段。
+ */
+class DeployError extends Error {
+  readonly code: DeployErrorCode;
+
+  constructor(code: DeployErrorCode, message: string) {
+    super(message);
+    this.name = "DeployError";
+    this.code = code;
+  }
+}
+
+function buildEnvelope(data: Record<string, unknown>, message: string): ToolEnvelope {
+  return { success: true, data, message };
+}
+
+function buildErrorEnvelope(error: unknown): ToolEnvelope {
+  // DeployError 带显式错误码；引擎/SDK 抛出的错误若带 code 也透传；其余归为 DEPLOY_FAILED。
+  let errorCode: string = DEPLOY_ERROR_CODES.DEPLOY_FAILED;
+  if (error instanceof DeployError) {
+    errorCode = error.code;
+  } else if (
+    error &&
+    typeof error === "object" &&
+    "code" in error &&
+    typeof (error as { code: unknown }).code === "string" &&
+    (error as { code: string }).code.length > 0
+  ) {
+    errorCode = (error as { code: string }).code;
+  }
+  return {
+    success: false,
+    data: {},
+    message: error instanceof Error ? error.message : String(error),
+    errorCode,
+  };
+}
+
+/**
+ * 解析 cloudbaserc 声明式部署配置。
+ *
+ * 分两步完成：
+ * 1. 定位并读取配置文件：searchConfig 从 cwd 探测 cloudbaserc.*（json/yaml/yml/js），
+ *    loadConfig 读取原始内容。读取阶段不强制 envId，
+ *    envId 由调用方按优先级单独确定，以支持用登录态环境部署未写死 envId 的配置。
+ * 2. ConfigParser.parseRawConfig：按 mode 合并 envOverrides、下发 functionDefaultConfig
+ *    到各函数、加载 .env / .env.local / .env.<mode> 并渲染 {{env.*}} / {{tcb.*}} 模板变量。
+ */
+async function resolveDeployConfig(options: {
+  cwd: string;
+  mode?: string;
+}): Promise<Record<string, unknown>> {
+  const found = await searchConfig(options.cwd);
+  if (!found?.filepath) {
+    throw new DeployError(
+      DEPLOY_ERROR_CODES.CONFIG_NOT_FOUND,
+      t("deploy.configNotFound", { cwd: options.cwd }),
+    );
+  }
+  const rawConfig = await loadConfig({ configPath: found.filepath });
+  return ConfigParser.parseRawConfig(rawConfig ?? {}, options.cwd, {
+    mode: options.mode,
+  });
+}
+
+/**
+ * 确定部署使用的环境 ID。
+ *
+ * 优先级：显式传入的 envId > 解析后配置中的 envId > MCP 登录态 / 绑定环境。
+ * 显式入参优先于配置文件，配置未写死 envId 时回退到当前会话绑定的环境。
+ * 三者都无则抛出错误。
+ */
+async function resolveDeployEnvId(options: {
+  envId?: string;
+  config: Record<string, unknown>;
+  cloudBaseOptions: ExtendedMcpServer["cloudBaseOptions"];
+}): Promise<string> {
+  if (options.envId && options.envId.length > 0) {
+    return options.envId;
+  }
+  const configEnvId = options.config.envId;
+  if (typeof configEnvId === "string" && configEnvId.length > 0) {
+    return configEnvId;
+  }
+  const resolved = await getEnvId(options.cloudBaseOptions);
+  if (!resolved) {
+    throw new DeployError(
+      DEPLOY_ERROR_CODES.ENV_UNRESOLVED,
+      t("deploy.envUnresolved"),
+    );
+  }
+  return resolved;
+}
+
+/**
+ * 按 cloudbaserc schema 校验解析后的配置。
+ *
+ * 校验不通过时抛出错误，错误消息包含各字段的具体校验失败原因，供调用方定位问题。
+ */
+function assertConfigValid(config: Record<string, unknown>): void {
+  const result = validateCloudBaseConfigBySchema(config);
+  if (result.valid) {
+    return;
+  }
+  const detail = result.errors
+    .map((item) => `${item.dataPath || "<root>"} ${item.message}`)
+    .join("; ");
+  throw new DeployError(
+    DEPLOY_ERROR_CODES.CONFIG_INVALID,
+    t("deploy.configInvalid", { detail }),
+  );
+}
+
+/**
+ * 校验并发数取值，非法时抛出错误。
+ *
+ * 未指定时返回 undefined（由编排器使用默认串行）；指定时必须为不小于 1 的整数。
+ */
+function normalizeConcurrency(concurrency?: number): number | undefined {
+  if (concurrency === undefined) {
+    return undefined;
+  }
+  if (!Number.isInteger(concurrency) || concurrency < 1) {
+    throw new DeployError(
+      DEPLOY_ERROR_CODES.INVALID_CONCURRENCY,
+      t("deploy.invalidConcurrency", { concurrency }),
+    );
+  }
+  return concurrency;
+}
+
+// 编排器返回的单条计划项形状（字段随资源类型不同，这里只约束需要读写的部分）
+type PlanItem = {
+  type: string;
+  name: string;
+  status: string;
+  action?: string;
+  declaredStatus?: string;
+  [key: string]: unknown;
+};
+
+/**
+ * 让 deployPlan 的预演结论与 deployApply 的实际执行语义对齐。
+ *
+ * 背景：编排器把「云端已存在的函数」标为 status='update'，但 deployApply 在 yes!==true
+ * 且无交互确认回调时，会对 functions+update 保守跳过（reason='no-confirm'）。
+ * 若 plan 原样返回 update，agent 预演看到「会更新」，实际执行却「跳过」——结论相反。
+ *
+ * 此函数按传入的 yes 复算 functions+update 的「有效动作」：
+ * - yes===true：维持 update（执行时确实会覆盖）
+ * - 否则：改标为 skip，并保留原始判定到 declaredStatus，action 说明为何跳过。
+ * 其它资源类型与状态原样透传（database/app/hosting/gateway 的分类不受 yes 影响）。
+ */
+function reconcilePlanWithExecution(plan: unknown, yes: boolean): PlanItem[] {
+  if (!Array.isArray(plan)) {
+    return [];
+  }
+  return (plan as PlanItem[]).map((item) => {
+    if (!item || typeof item !== "object") {
+      return item;
+    }
+    if (item.type === "functions" && item.status === "update" && !yes) {
+      return {
+        ...item,
+        status: "skip",
+        declaredStatus: "update",
+        action: t("deploy.planSkipExistingFn", { fnName: item.name }),
+      };
+    }
+    return item;
+  });
+}
+
+/** 单条被判定为破坏性的待执行迁移 */
+type DestructiveMigration = {
+  migration: string;
+  file: string;
+  statements: string[];
+};
+
+/**
+ * 解析 migrations 目录（与引擎 DatabaseDeployer.resolveMigrationsDir 同规则）：
+ * 未配置默认 ./cloudbase/migrations；仅允许相对路径（禁止绝对路径 / 开头）。
+ * 非法时返回 undefined（交由引擎在真正执行时抛出一致的错误，这里不抢报错）。
+ */
+function resolveMigrationsDir(cwd: string, migrations?: unknown): string | undefined {
+  const raw = typeof migrations === "string" && migrations ? migrations : "./cloudbase/migrations";
+  if (path.isAbsolute(raw) || raw.startsWith("/")) {
+    return undefined;
+  }
+  return path.resolve(cwd, raw);
+}
+
+/**
+ * 从 dry-run plan 中提取「待执行（pending）的数据库迁移标识」。
+ *
+ * 编排器把 database 计划聚合为单条 create 项，pending 迁移写在
+ * changes[].to（field==='migration'），形如 "{version}_{name}"。
+ * 只关注 pending：已 applied 的迁移不会被重复执行，不应触发破坏性确认门。
+ */
+function extractPendingMigrations(plan: PlanItem[]): string[] {
+  const result: string[] = [];
+  for (const item of plan) {
+    if (!item || item.type !== "database" || item.status !== "create") {
+      continue;
+    }
+    const changes = item.changes;
+    if (!Array.isArray(changes)) {
+      continue;
+    }
+    for (const change of changes as Array<Record<string, unknown>>) {
+      if (change?.field === "migration" && typeof change.to === "string" && change.to) {
+        result.push(change.to);
+      }
+    }
+  }
+  return result;
+}
+
+/**
+ * 检测「本次将要执行的数据库迁移」中是否含破坏性语句（DROP/TRUNCATE/DELETE、
+ * ALTER ... DROP/RENAME）。
+ *
+ * 仅扫描 pending 迁移对应的本地 .sql 文件；已 applied 的不扫描，避免误拦。
+ * 读文件失败（缺文件/目录非法）视为无法确认破坏性，返回空——真正的存在性/
+ * 格式校验交由引擎执行时处理，这里只在能确证破坏性时加门，避免与引擎报错重复。
+ */
+function detectDestructiveMigrations(options: {
+  plan: PlanItem[];
+  cwd: string;
+  databaseConfig: unknown;
+}): DestructiveMigration[] {
+  const pending = extractPendingMigrations(options.plan);
+  if (pending.length === 0) {
+    return [];
+  }
+  const dbConfig =
+    options.databaseConfig && typeof options.databaseConfig === "object"
+      ? (options.databaseConfig as Record<string, unknown>)
+      : undefined;
+  const migrationsDir = resolveMigrationsDir(options.cwd, dbConfig?.migrations);
+  if (!migrationsDir) {
+    return [];
+  }
+
+  const hits: DestructiveMigration[] = [];
+  for (const migration of pending) {
+    const file = path.join(migrationsDir, `${migration}.sql`);
+    let sqlText: string;
+    try {
+      sqlText = fs.readFileSync(file, "utf-8");
+    } catch {
+      // 文件读不到：不在此处报错，交给引擎执行时给出一致错误
+      continue;
+    }
+    const statements = findDestructiveStatements(sqlText);
+    if (statements.length > 0) {
+      hits.push({ migration, file, statements });
+    }
+  }
+  return hits;
+}
+
+export function registerDeployTools(server: ExtendedMcpServer) {
+  const cloudBaseOptions = server.cloudBaseOptions;
+  const getManager = () => getCloudBaseManager({ cloudBaseOptions });
+
+  // 工具一：deployBuild —— 本地构建 hosting[] 产物（build → plan → apply 的第一步，与 tcb app build 对齐）
+  server.registerTool?.(
+    "deployBuild",
+    {
+      title: "deploy.buildTitle",
+      description: "deploy.buildDescription",
+      inputSchema: {
+        cwd: z
+          .string()
+          .optional()
+          .describe("deploy.schema.build.cwd"),
+        mode: z
+          .string()
+          .optional()
+          .describe("deploy.schema.build.mode"),
+      },
+      annotations: {
+        // 本地构建会执行 buildCommand 并写产物文件，不是 read-only；但不变更云端资源，非 destructive。
+        readOnlyHint: false,
+        destructiveHint: false,
+        openWorldHint: false,
+        category: "deploy",
+      },
+    },
+    async ({ cwd, mode }: { cwd?: string; mode?: string }) => {
+      try {
+        const projectRoot = requireProjectRoot(cwd);
+        const config = await resolveDeployConfig({ cwd: projectRoot, mode });
+        assertConfigValid(config);
+
+        const hostingItems = Array.isArray(config.hosting)
+          ? (config.hosting as HostingItem[])
+          : [];
+        if (hostingItems.length === 0) {
+          return jsonContent(
+            buildEnvelope(
+              { cwd: projectRoot, mode: mode ?? null, built: 0, skipped: 0, items: [] },
+              "配置中无 hosting 项，无需构建",
+            ),
+          );
+        }
+
+        // 依次构建各 hosting 项（fail-fast：任一项构建失败即中断，与 CLI tcb app build 一致）
+        const items: Array<{
+          name: string;
+          root: string;
+          action: string;
+          outputDir: string | null;
+        }> = [];
+        let built = 0;
+        let skipped = 0;
+        for (const item of hostingItems) {
+          const outcome = buildHostingItem(item, projectRoot);
+          items.push({
+            name: outcome.name,
+            root: outcome.root,
+            action: outcome.action,
+            outputDir: outcome.outputDir ?? null,
+          });
+          if (outcome.action === "built") {
+            built += 1;
+          } else {
+            skipped += 1;
+          }
+        }
+
+        return jsonContent(
+          buildEnvelope(
+            { cwd: projectRoot, mode: mode ?? null, built, skipped, items },
+            `构建完成：共 ${hostingItems.length} 项，产物已生成，可执行 deployApply 完成部署`,
+          ),
+        );
+      } catch (error) {
+        return jsonContent(buildErrorEnvelope(error));
+      }
+    },
+  );
+
+  // 工具二：deployPlan —— 只读，预演部署计划（dry-run）
+  server.registerTool?.(
+    "deployPlan",
+    {
+      title: "deploy.planTitle",
+      description: "deploy.planDescription",
+      inputSchema: {
+        cwd: z
+          .string()
+          .optional()
+          .describe("deploy.schema.plan.cwd"),
+        mode: z
+          .string()
+          .optional()
+          .describe("deploy.schema.plan.mode"),
+        envId: z
+          .string()
+          .optional()
+          .describe("deploy.schema.plan.envId"),
+        only: z
+          .array(z.enum(RESOURCE_TYPES))
+          .optional()
+          .describe("deploy.schema.plan.only"),
+        skip: z
+          .array(z.enum(RESOURCE_TYPES))
+          .optional()
+          .describe("deploy.schema.plan.skip"),
+        yes: z
+          .boolean()
+          .optional()
+          .describe("deploy.schema.plan.yes"),
+      },
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        openWorldHint: false,
+        category: "deploy",
+      },
+    },
+    async ({
+      cwd,
+      mode,
+      envId: envIdInput,
+      only,
+      skip,
+      yes,
+    }: {
+      cwd?: string;
+      mode?: string;
+      envId?: string;
+      only?: ResourceType[];
+      skip?: ResourceType[];
+      yes?: boolean;
+    }) => {
+      try {
+        const projectRoot = requireProjectRoot(cwd);
+        const config = await resolveDeployConfig({ cwd: projectRoot, mode });
+        assertConfigValid(config);
+        const envId = await resolveDeployEnvId({
+          envId: envIdInput,
+          config,
+          cloudBaseOptions,
+        });
+
+        const manager = await getManager();
+        const rawPlan = await manager.getDeployOrchestrator().deployPlan({
+          config,
+          envId,
+          cwd: projectRoot,
+          only,
+          skip,
+          dryRun: true,
+        });
+
+        // 按 yes 复算为「实际会发生的动作」，使预演与 deployApply 的执行结果一致
+        const plan = reconcilePlanWithExecution(rawPlan, yes === true);
+
+        return jsonContent(
+          buildEnvelope(
+            { cwd: projectRoot, mode: mode ?? null, envId, yes: yes === true, plan },
+            t("deploy.planGenerated"),
+          ),
+        );
+      } catch (error) {
+        return jsonContent(buildErrorEnvelope(error));
+      }
+    },
+  );
+
+  // 工具三：deployApply —— 写操作，执行声明式部署（本地形态的 apply，与 deployPlan 对仗）
+  server.registerTool?.(
+    "deployApply",
+    {
+      title: "deploy.applyTitle",
+      description: "deploy.applyDescription",
+      inputSchema: {
+        confirm: z
+          .boolean()
+          .optional()
+          .describe("deploy.schema.apply.confirm"),
+        confirmDestructive: z
+          .boolean()
+          .optional()
+          .describe("deploy.schema.apply.confirmDestructive"),
+        cwd: z
+          .string()
+          .optional()
+          .describe("deploy.schema.apply.cwd"),
+        mode: z
+          .string()
+          .optional()
+          .describe("deploy.schema.apply.mode"),
+        envId: z
+          .string()
+          .optional()
+          .describe("deploy.schema.apply.envId"),
+        only: z
+          .array(z.enum(RESOURCE_TYPES))
+          .optional()
+          .describe("deploy.schema.apply.only"),
+        skip: z
+          .array(z.enum(RESOURCE_TYPES))
+          .optional()
+          .describe("deploy.schema.apply.skip"),
+        yes: z
+          .boolean()
+          .optional()
+          .describe("deploy.schema.apply.yes"),
+        concurrency: z
+          .number()
+          .int()
+          .min(1)
+          .optional()
+          .describe("deploy.schema.apply.concurrency"),
+        continueOnError: z
+          .boolean()
+          .optional()
+          .describe("deploy.schema.apply.continueOnError"),
+      },
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        openWorldHint: false,
+        category: "deploy",
+      },
+    },
+    async ({
+      confirm,
+      confirmDestructive,
+      cwd,
+      mode,
+      envId: envIdInput,
+      only,
+      skip,
+      yes,
+      concurrency,
+      continueOnError,
+    }: {
+      confirm?: boolean;
+      confirmDestructive?: boolean;
+      cwd?: string;
+      mode?: string;
+      envId?: string;
+      only?: ResourceType[];
+      skip?: ResourceType[];
+      yes?: boolean;
+      concurrency?: number;
+      continueOnError?: boolean;
+    }) => {
+      try {
+        if (confirm !== true) {
+          throw new DeployError(
+            DEPLOY_ERROR_CODES.CONFIRM_REQUIRED,
+            t("deploy.confirmRequired"),
+          );
+        }
+
+        const projectRoot = requireProjectRoot(cwd);
+        const config = await resolveDeployConfig({ cwd: projectRoot, mode });
+        assertConfigValid(config);
+        const envId = await resolveDeployEnvId({
+          envId: envIdInput,
+          config,
+          cloudBaseOptions,
+        });
+
+        const manager = await getManager();
+        const orchestrator = manager.getDeployOrchestrator();
+
+        // 破坏性数据库变更门：仅当 database 参与本次部署时，先 dry-run 取 pending 迁移，
+        // 检测破坏性语句；命中且未额外确认则拒绝，独立于总 confirm 之外多一道门。
+        const databaseParticipates =
+          !!config.database &&
+          (!only || only.includes("database")) &&
+          !(skip ?? []).includes("database");
+        if (databaseParticipates && confirmDestructive !== true) {
+          const dryRunPlan = await orchestrator.deployPlan({
+            config,
+            envId,
+            cwd: projectRoot,
+            only,
+            skip,
+            dryRun: true,
+          });
+          const destructive = detectDestructiveMigrations({
+            plan: Array.isArray(dryRunPlan) ? (dryRunPlan as PlanItem[]) : [],
+            cwd: projectRoot,
+            databaseConfig: config.database,
+          });
+          if (destructive.length > 0) {
+            throw new DeployError(
+              DEPLOY_ERROR_CODES.DESTRUCTIVE_CONFIRM_REQUIRED,
+              t("deploy.destructiveConfirmRequired", {
+                items: destructive
+                  .map((d) =>
+                    t("deploy.destructiveMigrationItem", {
+                      migration: d.migration,
+                      count: d.statements.length,
+                    }),
+                  )
+                  .join("；"),
+              }),
+            );
+          }
+        }
+
+        // hosting 中立化：hosting 参与本次部署时，deploy 不再隐式本地构建
+        // （声明式构建已拆到 deployBuild）。每个带 buildCommand 的项必须有构建产物：
+        // 有则清空命令后直传产物；缺失则抛 BUILD_OUTPUT_NOT_FOUND 引导先 deployBuild。
+        // 与 databaseParticipates 同一判定模式：hosting 被 only/skip 排除时不检查，
+        // 避免「本次不部署 hosting」却因产物缺失误报。
+        const hostingParticipates =
+          Array.isArray(config.hosting) &&
+          config.hosting.length > 0 &&
+          (!only || only.includes("hosting")) &&
+          !(skip ?? []).includes("hosting");
+
+        let deployConfig = config;
+        if (hostingParticipates) {
+          // 中立化返回新 config（不改入参）；可能抛 HostingBuildError(BUILD_OUTPUT_NOT_FOUND)
+          deployConfig = neutralizeHostingForDeploy(config, projectRoot);
+        }
+
+        const result = await orchestrator.deploy({
+          config: deployConfig,
+          envId,
+          cwd: projectRoot,
+          only,
+          skip,
+          yes: yes === true,
+          concurrency: normalizeConcurrency(concurrency),
+          continueOnError,
+        });
+
+        return jsonContent(
+          buildEnvelope(
+            {
+              cwd: projectRoot,
+              mode: mode ?? null,
+              envId,
+              hostingNeutralized: hostingParticipates,
+              result,
+            },
+            t("deploy.applied"),
+          ),
+        );
+      } catch (error) {
+        return jsonContent(buildErrorEnvelope(error));
+      }
+    },
+  );
+}

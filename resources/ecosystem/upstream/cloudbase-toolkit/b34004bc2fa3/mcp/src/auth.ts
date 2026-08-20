@@ -1,0 +1,771 @@
+import { AuthSupervisor, authStore, refreshTmpToken, resolveCredential } from "@cloudbase/toolbox";
+import { debug } from "./utils/logger.js";
+import { requireProjectRoot } from "./utils/project-config.js";
+import {
+  getSite,
+  normalizeSite,
+  resolveApiKeyExchangeRegion,
+  resolveSite,
+  SITE_REGION_MAP,
+} from "./utils/site-map.js";
+
+const auth = AuthSupervisor.getInstance({});
+
+export type AuthFlowMode = "web" | "device";
+
+export interface AuthOptions {
+  authMode?: AuthFlowMode;
+  clientId?: string;
+  oauthEndpoint?: string;
+  oauthCustom?: boolean;
+}
+
+export interface ResolvedAuthOptions {
+  authMode: AuthFlowMode;
+  clientId?: string;
+  oauthEndpoint?: string;
+  oauthCustom: boolean;
+  usesToolboxDefaults: boolean;
+}
+
+export interface EnsureLoginOptions extends AuthOptions {
+  fromCloudBaseLoginPage?: boolean;
+  ignoreEnvVars?: boolean;
+  region?: string;
+  site?: string;
+  serverAuthOptions?: AuthOptions;
+  onDeviceCode?: (info: DeviceFlowAuthInfo) => void;
+}
+
+export interface DeviceFlowAuthInfo {
+  user_code: string;
+  verification_uri?: string;
+  verification_uri_complete?: string;
+  device_code: string;
+  expires_in: number;
+}
+
+export type AuthProgressStatus =
+  | "IDLE"
+  | "PENDING"
+  | "READY"
+  | "DENIED"
+  | "EXPIRED"
+  | "ERROR";
+
+export interface AuthProgressState {
+  status: AuthProgressStatus;
+  authMode?: AuthFlowMode;
+  authChallenge?: DeviceFlowAuthInfo;
+  lastError?: string;
+  updatedAt: number;
+}
+
+const authProgressState: AuthProgressState = {
+  status: "IDLE",
+  updatedAt: Date.now(),
+};
+
+function normalizeOptionalString(value?: string | null) {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+export function buildVerificationUriComplete(
+  deviceAuthInfo?: Pick<
+    DeviceFlowAuthInfo,
+    "verification_uri" | "verification_uri_complete" | "user_code"
+  >,
+) {
+  const explicitComplete = normalizeOptionalString(
+    deviceAuthInfo?.verification_uri_complete,
+  );
+  if (explicitComplete) {
+    return explicitComplete;
+  }
+
+  const verificationUri = normalizeOptionalString(deviceAuthInfo?.verification_uri);
+  const userCode = normalizeOptionalString(deviceAuthInfo?.user_code);
+  if (!verificationUri || !userCode) {
+    return undefined;
+  }
+
+  try {
+    const url = new URL(verificationUri);
+    const hash = url.hash.startsWith("#") ? url.hash.slice(1) : url.hash;
+
+    if (hash) {
+      const [hashPath, hashQuery = ""] = hash.split("?");
+      const hashParams = new URLSearchParams(hashQuery);
+      if (!hashParams.has("user_code")) {
+        hashParams.set("user_code", userCode);
+      }
+      url.hash = hashParams.toString()
+        ? `#${hashPath}?${hashParams.toString()}`
+        : `#${hashPath}`;
+      return url.toString();
+    }
+
+    if (!url.searchParams.has("user_code")) {
+      url.searchParams.set("user_code", userCode);
+    }
+    return url.toString();
+  } catch {
+    if (verificationUri.includes("user_code=")) {
+      return verificationUri;
+    }
+
+    const separator = verificationUri.includes("?") ? "&" : "?";
+    return `${verificationUri}${separator}user_code=${encodeURIComponent(userCode)}`;
+  }
+}
+
+export function buildDeviceAuthChallengePayload(deviceAuthInfo?: DeviceFlowAuthInfo) {
+  if (!deviceAuthInfo) {
+    return undefined;
+  }
+
+  return {
+    user_code: deviceAuthInfo.user_code,
+    verification_uri: deviceAuthInfo.verification_uri,
+    verification_uri_complete: buildVerificationUriComplete(deviceAuthInfo),
+    expires_in: deviceAuthInfo.expires_in,
+  };
+}
+
+function normalizeAuthMode(value?: string | null): AuthFlowMode | undefined {
+  return value === "web" || value === "device" ? value : undefined;
+}
+
+function normalizeOptionalBoolean(value?: boolean | string | null) {
+  if (typeof value === "boolean") {
+    return value;
+  }
+
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "true") {
+    return true;
+  }
+  if (normalized === "false") {
+    return false;
+  }
+  return undefined;
+}
+
+function updateAuthProgressState(
+  partial: Partial<AuthProgressState>,
+): AuthProgressState {
+  Object.assign(authProgressState, partial, {
+    updatedAt: Date.now(),
+  });
+  return getAuthProgressStateSync();
+}
+
+/**
+ * Resolve CloudBase API Key from env.
+ * Prefer CLOUDBASE_API_KEY; fall back to CLOUDBASE_APIKEY (js-sdk / node-sdk convention).
+ */
+export function getCloudBaseApiKeyFromEnv(): string | undefined {
+  return process.env.CLOUDBASE_API_KEY || process.env.CLOUDBASE_APIKEY || undefined;
+}
+
+function normalizeLoginStateFromEnvVars(options?: {
+  ignoreEnvVars?: boolean;
+}) {
+  if (options?.ignoreEnvVars) {
+    return null;
+  }
+
+  // Prefer CloudBase API Key over TENCENTCLOUD_*
+  const apiKey = getCloudBaseApiKeyFromEnv();
+  const CLOUDBASE_ENV = process.env.CLOUDBASE_ENV_ID;
+
+  if (apiKey && CLOUDBASE_ENV) {
+    return {
+      _type: 'api_key' as const,
+      apiKey,
+      envId: CLOUDBASE_ENV,
+    };
+  }
+
+  // 然后检查腾讯云密钥环境变量
+  const {
+    TENCENTCLOUD_SECRETID,
+    TENCENTCLOUD_SECRETKEY,
+    TENCENTCLOUD_SESSIONTOKEN,
+  } = process.env;
+
+  if (TENCENTCLOUD_SECRETID && TENCENTCLOUD_SECRETKEY) {
+    return {
+      secretId: TENCENTCLOUD_SECRETID,
+      secretKey: TENCENTCLOUD_SECRETKEY,
+      token: TENCENTCLOUD_SESSIONTOKEN,
+      envId: process.env.CLOUDBASE_ENV_ID,
+    };
+  }
+
+  return null;
+}
+
+function mapAuthErrorStatus(error: unknown): Extract<AuthProgressStatus, "DENIED" | "EXPIRED" | "ERROR"> {
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  if (message.includes("拒绝") || message.includes("denied")) {
+    return "DENIED";
+  }
+  if (message.includes("过期") || message.includes("expired")) {
+    return "EXPIRED";
+  }
+  return "ERROR";
+}
+
+export function getAuthProgressStateSync(): AuthProgressState {
+  return {
+    ...authProgressState,
+    authChallenge: authProgressState.authChallenge
+      ? { ...authProgressState.authChallenge }
+      : undefined,
+  };
+}
+
+export async function getAuthProgressState(): Promise<AuthProgressState> {
+  const loginState = await peekLoginState();
+  if (loginState && authProgressState.status === "PENDING") {
+    updateAuthProgressState({
+      status: "READY",
+      lastError: undefined,
+    });
+  }
+
+  if (
+    authProgressState.status === "PENDING" &&
+    authProgressState.authChallenge?.expires_in
+  ) {
+    const issuedAt = authProgressState.updatedAt;
+    const expiresAt = issuedAt + authProgressState.authChallenge.expires_in * 1000;
+    if (Date.now() > expiresAt) {
+      updateAuthProgressState({
+        status: "EXPIRED",
+        lastError: "设备码已过期，请重新发起授权",
+      });
+    }
+  }
+
+  return getAuthProgressStateSync();
+}
+
+export function resolveAuthOptions(options?: AuthOptions & {
+  ignoreEnvVars?: boolean;
+  serverAuthOptions?: AuthOptions;
+}): ResolvedAuthOptions {
+  const envAuthMode = options?.ignoreEnvVars
+    ? undefined
+    : normalizeAuthMode(process.env.TCB_AUTH_MODE);
+  const envClientId = options?.ignoreEnvVars
+    ? undefined
+    : normalizeOptionalString(process.env.TCB_AUTH_CLIENT_ID);
+  const envOAuthEndpoint = options?.ignoreEnvVars
+    ? undefined
+    : normalizeOptionalString(process.env.TCB_AUTH_OAUTH_ENDPOINT);
+  const envOAuthCustom = options?.ignoreEnvVars
+    ? undefined
+    : normalizeOptionalBoolean(process.env.TCB_AUTH_OAUTH_CUSTOM);
+
+  const explicitAuthMode =
+    normalizeAuthMode(options?.authMode) ??
+    normalizeAuthMode(options?.serverAuthOptions?.authMode) ??
+    envAuthMode;
+  const clientId =
+    normalizeOptionalString(options?.clientId) ??
+    normalizeOptionalString(options?.serverAuthOptions?.clientId) ??
+    envClientId;
+  const oauthEndpoint =
+    normalizeOptionalString(options?.oauthEndpoint) ??
+    normalizeOptionalString(options?.serverAuthOptions?.oauthEndpoint) ??
+    envOAuthEndpoint;
+  const explicitOAuthCustom =
+    normalizeOptionalBoolean(options?.oauthCustom) ??
+    normalizeOptionalBoolean(options?.serverAuthOptions?.oauthCustom) ??
+    envOAuthCustom;
+  const oauthCustom = explicitOAuthCustom ?? (oauthEndpoint ? true : false);
+  const authMode = explicitAuthMode ?? "device";
+
+  return {
+    authMode,
+    clientId,
+    oauthEndpoint,
+    oauthCustom,
+    usesToolboxDefaults:
+      explicitAuthMode === undefined &&
+      clientId === undefined &&
+      oauthEndpoint === undefined &&
+      oauthCustom === false,
+  };
+}
+
+export function getAuthConfigValidationError(options: ResolvedAuthOptions): string | null {
+  if (
+    options.authMode === "web" &&
+    (options.clientId !== undefined ||
+      options.oauthEndpoint !== undefined ||
+      options.oauthCustom)
+  ) {
+    return "自定义 device 登录参数仅支持 authMode=device。";
+  }
+
+  if (options.oauthCustom && !options.oauthEndpoint) {
+    return "oauthCustom=true 时必须同时提供 oauthEndpoint。";
+  }
+
+  // oauthEndpoint + 显式 oauthCustom=false 放行：resolveAuthOptions 对"只配 endpoint
+  // 未配 custom"已默认 custom=true，走到这里的 endpoint+false 只可能是用户显式指定——
+  // 即标准 {code,result} 包装格式的自定义端点（如国际站 tcb-api.tencentcloud.com），
+  // 拦截会导致标准格式端点在工具层永远不可用。
+
+  return null;
+}
+
+export function buildAuthConfigSummary(options: ResolvedAuthOptions) {
+  return {
+    auth_mode: options.authMode,
+    client_id: options.clientId ?? null,
+    oauth_endpoint: options.oauthEndpoint ?? null,
+    oauth_custom: options.oauthCustom,
+    uses_toolbox_defaults: options.usesToolboxDefaults,
+  };
+}
+
+/**
+ * 构造 device flow 的 loginByWebAuth 基础参数（onDeviceCode 由调用方按需注入）。
+ *
+ * 所有 device 登录路径（ensureLogin 与 auth 工具 start_auth 的 device 分支）必须
+ * 共享本函数：TCB_SITE=intl 时的 getOAuthEndpoint 覆写与 getAuthUrl 授权页改写
+ * 只在 ensureLogin 生效，会导致工具层直连路径仍打国内站端点/授权页，国际站账号
+ * 无法完成授权（device-code 注册表国内外隔离，国内授权页对国际站账号无效）。
+ */
+export function buildDeviceLoginOptions(
+  resolvedAuthOptions: ResolvedAuthOptions,
+  siteHints: { region?: string; site?: string } = {},
+): Record<string, unknown> {
+  const resolvedSite = resolveSite(
+    siteHints.region,
+    siteHints.site ?? process.env.TCB_SITE,
+  );
+  const loginOptions: Record<string, unknown> = { flow: "device" };
+
+  if (resolvedAuthOptions.clientId) {
+    loginOptions.client_id = resolvedAuthOptions.clientId;
+  }
+  if (resolvedAuthOptions.oauthEndpoint) {
+    loginOptions.getOAuthEndpoint = () => resolvedAuthOptions.oauthEndpoint!;
+  } else if (resolvedSite === "intl") {
+    // 国际站 OAuth 后端独立部署（2026-09-01 实测 device/code+token 可用，注册表与国内站隔离）；
+    // 不覆写时 toolbox 默认打国内站端点，国际站账号无法完成授权
+    loginOptions.getOAuthEndpoint = () => SITE_REGION_MAP.intl.oauthEndpoint!;
+  }
+  if (resolvedSite === "intl") {
+    // device 模式的 verification_uri 标准模式下由客户端拼接，指向国内站授权页；
+    // 与 web 模式同款 host 改写，把授权页切到国际站
+    loginOptions.getAuthUrl = (url: string) =>
+      url
+        .replace(
+          `${SITE_REGION_MAP.domestic.authHost}/dev`,
+          `${SITE_REGION_MAP.intl.authHost}/dev`,
+        )
+        .replace(SITE_REGION_MAP.domestic.authHost, SITE_REGION_MAP.intl.authHost);
+  }
+  if (resolvedAuthOptions.oauthCustom) {
+    loginOptions.custom = true;
+  }
+  return loginOptions;
+}
+
+export function setPendingAuthProgressState(
+  challenge: DeviceFlowAuthInfo,
+  authMode: AuthFlowMode = "device",
+) {
+  return updateAuthProgressState({
+    status: "PENDING",
+    authMode,
+    authChallenge: challenge,
+    lastError: undefined,
+  });
+}
+
+export function resolveAuthProgressState() {
+  return updateAuthProgressState({
+    status: "READY",
+    lastError: undefined,
+  });
+}
+
+export function rejectAuthProgressState(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error ?? "unknown error");
+  return updateAuthProgressState({
+    status: mapAuthErrorStatus(error),
+    lastError: message,
+  });
+}
+
+export function resetAuthProgressState() {
+  return updateAuthProgressState({
+    status: "IDLE",
+    authMode: undefined,
+    authChallenge: undefined,
+    lastError: undefined,
+  });
+}
+
+export interface LoginState {
+  secretId: string;
+  secretKey: string;
+  token?: string;
+  envId?: string;
+  /**
+   * 主账号 uin。本地凭证（`~/.config/.cloudbase/auth.json`）自带，
+   * 由 `@cloudbase/toolbox` 的 `resolveCredential()` 透传。
+   * 注意：临时密钥续期响应里没有 uin，须由调用方保留旧值（见 resolveSiteLoginState）。
+   */
+  uin?: string | number;
+}
+
+// ---- 多 site 凭证分槽（credential[site]）----
+// 存储结构：credential = { domestic?: {...}, intl?: {...} }
+// 旧格式（单槽 flat）视为 domestic 槽位，读取兼容、写回时升级分槽。
+
+type SlotId = "domestic" | "intl";
+
+const LEGACY_SITE: SlotId = "domestic";
+
+function isSlottedCredential(value: unknown): value is Record<SlotId, unknown> {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+  return "domestic" in value || "intl" in value;
+}
+
+async function readStoredCredentialRaw(): Promise<unknown> {
+  return authStore.get("credential");
+}
+
+/**
+ * 读取指定 site 槽位的原始凭证；旧格式（单槽 flat）视为 domestic 槽位。
+ */
+async function readSiteCredentialRaw(site: SlotId): Promise<unknown> {
+  const raw = await readStoredCredentialRaw();
+  if (!raw) {
+    return undefined;
+  }
+  if (isSlottedCredential(raw)) {
+    return raw[site];
+  }
+  return site === LEGACY_SITE ? raw : undefined;
+}
+
+/**
+ * 将凭证写入指定 site 槽位，保留其他槽位数据。
+ * base 缺省时读取当前存储；旧单槽数据会被迁移为 domestic 槽位（写回时升级分槽）。
+ */
+async function writeSiteCredential(
+  site: SlotId,
+  credential: unknown,
+  base?: unknown,
+): Promise<void> {
+  const current = base ?? (await readStoredCredentialRaw());
+  const slotted: Partial<Record<SlotId, unknown>> =
+    current && isSlottedCredential(current)
+      ? { ...current }
+      : { domestic: current ?? {} };
+  slotted[site] = credential ?? {};
+  await authStore.set("credential", slotted);
+}
+
+/**
+ * 确保存储已为分槽格式并返回槽位快照。
+ * 用于登录前迁移旧单槽数据，避免 @cloudbase/toolbox 内部误命中旧凭证而跳过新站点登录。
+ */
+export async function ensureSlottedCredential(): Promise<Record<string, unknown>> {
+  const raw = await readStoredCredentialRaw();
+  if (raw && isSlottedCredential(raw)) {
+    return { ...raw };
+  }
+  const slotted: Record<string, unknown> = { domestic: raw ?? {} };
+  await authStore.set("credential", slotted);
+  return slotted;
+}
+
+function isSlotTokenExpired(
+  credential: { accessTokenExpired?: number | string },
+  gap = 120,
+): boolean {
+  return (
+    !!credential.accessTokenExpired &&
+    Number(credential.accessTokenExpired) < Date.now() + gap * 1000
+  );
+}
+
+/**
+ * 读取并解析指定 site 的登录态，必要时走 refreshToken 续期（镜像 @cloudbase/toolbox 行为）。
+ */
+async function resolveSiteLoginState(site: SlotId): Promise<LoginState | null> {
+  const raw = await readSiteCredentialRaw(site);
+  if (!raw) {
+    return null;
+  }
+  const credential = resolveCredential(raw as any);
+  if (!credential?.secretId || !credential?.secretKey) {
+    return null;
+  }
+
+  if (credential.refreshToken) {
+    if (!isSlotTokenExpired(credential)) {
+      return credential as LoginState;
+    }
+    if (Date.now() < Number(credential.expired)) {
+      try {
+        const refreshed = await refreshTmpToken(credential);
+        // 续期响应只回密钥字段（toolbox 在 refreshTmpToken 里仅手动回填 envId），不含 uin。
+        // 直接写回会让账号归因在每次续期后丢失，因此显式沿用续期前的 uin。
+        const refreshedCredential =
+          refreshed &&
+          (refreshed as { uin?: unknown }).uin === undefined &&
+          credential.uin !== undefined
+            ? { ...refreshed, uin: credential.uin }
+            : refreshed;
+        await writeSiteCredential(site, refreshedCredential ?? {});
+        const resolved = resolveCredential(refreshedCredential ?? {});
+        return resolved?.secretId ? (resolved as LoginState) : null;
+      } catch (e) {
+        const code = (e as any)?.code;
+        if (code === "AUTH_FAIL" || code === "InternalError.GetRoleError") {
+          return null;
+        }
+        throw e;
+      }
+    }
+    return null;
+  }
+
+  return credential as LoginState;
+}
+
+function isUsableCredential(value: unknown): boolean {
+  return (
+    !!value &&
+    typeof value === "object" &&
+    Object.keys(value as Record<string, unknown>).length > 0
+  );
+}
+
+/**
+ * 返回当前存在可用凭证的 site 槽位列表（凭证续期失败视为不可用）。
+ * 用于歧义 region（如 ap-singapore）时判定用户实际所属站点。
+ */
+export async function listUsableCredentialSites(): Promise<SlotId[]> {
+  const usable: SlotId[] = [];
+  for (const site of ["domestic", "intl"] as const) {
+    const state = await resolveSiteLoginState(site).catch(() => null);
+    if (state) {
+      usable.push(site);
+    }
+  }
+  return usable;
+}
+
+export async function peekLoginState(options?: {
+  ignoreEnvVars?: boolean;
+  site?: string;
+  region?: string;
+}): Promise<LoginState | null> {
+  const envVarLoginState = normalizeLoginStateFromEnvVars(options);
+
+  if (envVarLoginState) {
+    // API Key 模式：需要先用 API Key 换取临时密钥
+    if ('_type' in envVarLoginState && envVarLoginState._type === 'api_key') {
+      debug("peekLoginState: detected CLOUDBASE_API_KEY env var");
+      try {
+        const projectCwd = requireProjectRoot();
+        // 换取网关按站点选型：显式 intl → ap-singapore；domestic/歧义 → toolbox 默认
+        // ap-shanghai（国内站多地域环境均经其全局路由，详见 resolveApiKeyExchangeRegion）
+        const exchangeRegion = resolveApiKeyExchangeRegion({
+          site: options?.site,
+          region: options?.region,
+        });
+        const credential = await auth.loginByApiKey(
+          envVarLoginState.apiKey,
+          envVarLoginState.envId,
+          { cwd: projectCwd, ...(exchangeRegion ? { region: exchangeRegion } : {}) }
+        );
+        return credential;
+      } catch (e) {
+        debug("peekLoginState: API Key login failed", { error: e instanceof Error ? e.message : String(e) });
+        return null;
+      }
+    }
+
+    // 腾讯云密钥模式：直接返回
+    debug("loginByApiSecret");
+    return envVarLoginState as LoginState;
+  }
+
+  // 按 site 读取分槽凭证（缺省按 TCB_SITE/region 解析站点，默认 domestic）
+  const explicitSite = normalizeSite(options?.site) ?? normalizeSite(process.env.TCB_SITE);
+  const site: SlotId = explicitSite ?? resolveSite(options?.region);
+  let slotLoginState = await resolveSiteLoginState(site);
+
+  // 歧义 region（如 ap-singapore 同时属于 domestic 与 intl）且未显式指定 site 时，
+  // 解析槽位为空则回退检查另一槽位：仅另一槽位有可用凭证时直接使用，
+  // 避免对单站点用户误报 AUTH_REQUIRED（如国内站 ap-singapore 环境场景）。
+  if (!slotLoginState && !explicitSite && getSite(options?.region) === "ambiguous") {
+    const fallbackSite: SlotId = site === "domestic" ? "intl" : "domestic";
+    const fallbackLoginState = await resolveSiteLoginState(fallbackSite);
+    if (fallbackLoginState) {
+      debug("peekLoginState: ambiguous region, using the only usable site slot", {
+        resolvedSite: site,
+        fallbackSite,
+      });
+      return fallbackLoginState;
+    }
+  }
+
+  if (slotLoginState) {
+    return slotLoginState;
+  }
+
+  // 兼容旧单槽数据（视为 domestic），走 toolbox 读取/续期
+  if (site === LEGACY_SITE) {
+    return auth.getLoginState();
+  }
+  return null;
+}
+
+export async function ensureLogin(options?: EnsureLoginOptions) {
+  debug("TENCENTCLOUD_SECRETID", { hasSecretId: !!process.env.TENCENTCLOUD_SECRETID });
+  debug("CLOUDBASE_API_KEY", { hasApiKey: !!getCloudBaseApiKeyFromEnv() });
+
+  const loginState = await peekLoginState({
+    ignoreEnvVars: options?.ignoreEnvVars,
+    site: options?.site,
+    region: options?.region,
+  });
+  if (!loginState) {
+    const resolvedAuthOptions = resolveAuthOptions({
+      authMode: options?.authMode,
+      clientId: options?.clientId,
+      oauthEndpoint: options?.oauthEndpoint,
+      oauthCustom: options?.oauthCustom,
+      ignoreEnvVars: options?.ignoreEnvVars,
+      serverAuthOptions: options?.serverAuthOptions,
+    });
+    const validationError = getAuthConfigValidationError(resolvedAuthOptions);
+    if (validationError) {
+      throw new Error(validationError);
+    }
+
+    const mode = resolvedAuthOptions.authMode;
+    // 按显式 site > TCB_SITE > region 映射表解析站点（ap-singapore 歧义默认 intl，兼容既有国际站行为）
+    const resolvedSite: SlotId = resolveSite(
+      options?.region,
+      options?.site ?? process.env.TCB_SITE,
+    );
+    const loginOptions: Record<string, unknown> = { flow: mode };
+
+    if (mode === "web") {
+      loginOptions.getAuthUrl =
+        options?.fromCloudBaseLoginPage && resolvedSite === "domestic"
+          ? (url: string) => {
+            const separator = url.includes("?") ? "&" : "?";
+            const urlWithParam = `${url}${separator}allowNoEnv=true`;
+            return `https://${SITE_REGION_MAP.domestic.authHost}/login?_redirect_uri=${encodeURIComponent(urlWithParam)}`;
+          }
+          : (url: string) => {
+            let finalUrl = url;
+            if (resolvedSite === "intl") {
+              try {
+                const parsed = new URL(url);
+                parsed.host = SITE_REGION_MAP.intl.authHost;
+                finalUrl = parsed.toString();
+              } catch {
+                finalUrl = url.replace("cloud.tencent.com", "tencentcloud.com");
+              }
+            }
+            const separator = finalUrl.includes("?") ? "&" : "?";
+            return `${finalUrl}${separator}allowNoEnv=true`;
+          };
+    } else {
+      // device 模式：与 auth 工具 start_auth device 分支共享 intl 端点覆写与授权页改写
+      Object.assign(
+        loginOptions,
+        buildDeviceLoginOptions(resolvedAuthOptions, {
+          region: options?.region,
+          site: options?.site,
+        }),
+      );
+      if (options?.onDeviceCode) {
+        loginOptions.onDeviceCode = (info: DeviceFlowAuthInfo) => {
+          setPendingAuthProgressState(info, mode);
+          options.onDeviceCode?.(info);
+        };
+      }
+    }
+    debug("beforeloginByWebAuth", { loginOptions });
+    // 登录前迁移旧单槽数据为分槽格式，避免 toolbox 内部命中旧凭证而跳过新站点登录
+    const slotsBefore = await ensureSlottedCredential();
+    try {
+      const loginResult = await auth.loginByWebAuth(
+        loginOptions as Parameters<typeof auth.loginByWebAuth>[0],
+      );
+      // toolbox 将新凭证写入 flat 'credential'，将其并入对应 site 槽位，保留其他槽位
+      const newRaw = await readStoredCredentialRaw();
+      let credentialToSlot: unknown = loginResult;
+      if (isSlottedCredential(newRaw)) {
+        credentialToSlot = newRaw[resolvedSite] ?? newRaw.domestic;
+      } else if (newRaw) {
+        credentialToSlot = newRaw;
+      }
+      if (isUsableCredential(credentialToSlot)) {
+        const merged = { ...slotsBefore, [resolvedSite]: credentialToSlot };
+        await authStore.set("credential", merged);
+      }
+      resolveAuthProgressState();
+    } catch (error) {
+      rejectAuthProgressState(error);
+      throw error;
+    }
+    const loginState = await peekLoginState({
+      ignoreEnvVars: options?.ignoreEnvVars,
+      site: options?.site,
+      region: options?.region,
+    });
+    debug("loginByWebAuth", { mode, hasLoginState: !!loginState });
+    return loginState;
+  } else {
+    resolveAuthProgressState();
+    return loginState;
+  }
+}
+
+export async function getLoginState(options?: EnsureLoginOptions) {
+  return ensureLogin(options);
+}
+
+export async function logout(options?: { site?: string }) {
+  const site: SlotId = normalizeSite(options?.site) ?? "domestic";
+  const raw = await readStoredCredentialRaw();
+  if (raw && isSlottedCredential(raw)) {
+    const slotted: Record<string, unknown> = { ...raw };
+    delete slotted[site];
+    await authStore.set("credential", slotted);
+  } else if (site === LEGACY_SITE) {
+    const cwd = requireProjectRoot();
+    await auth.logout({ cwd });
+  }
+  resetAuthProgressState();
+}
