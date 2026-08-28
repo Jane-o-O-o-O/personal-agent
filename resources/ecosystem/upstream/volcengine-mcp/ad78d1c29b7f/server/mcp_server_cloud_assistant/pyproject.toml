@@ -1,0 +1,17 @@
+[project]
+name = "mcp-server-cloud-assistant"
+version = "0.1.0"
+description = "Cloud Assistant MCP Server"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "mcp>=1.9.4",
+    "volcengine-python-sdk>=3.0.1",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project.scripts]
+mcp-server-cloud-assistant = "mcp_server_cloud_assistant.server:main"

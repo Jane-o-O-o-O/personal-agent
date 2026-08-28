@@ -1,0 +1,702 @@
+import logging
+import os
+import asyncio
+import random
+from collections.abc import Callable
+from typing import Any, Optional
+from urllib.parse import urlsplit
+from ..config import VOLCENGINE_REGION
+from ..credentials import resolve_volcengine_credentials
+from ..utils import pick_value
+
+logger = logging.getLogger(__name__)
+
+try:
+    import volcenginesdkcore
+    from volcenginesdkaidap import AIDAPApi
+    from volcenginesdkaidap.models import (
+        DescribeBranchesRequest,
+        DescribeWorkspaceEndpointRequest,
+        DescribeAPIKeysRequest,
+        BranchRestoreRequest,
+        RestoreSettingsForBranchRestoreInput,
+        CreateBranchRequest,
+        DeleteBranchRequest,
+        BranchSettingsForCreateBranchInput,
+        CreateWorkspaceRequest,
+        WorkspaceSettingsForCreateWorkspaceInput,
+        BranchSettingsForCreateWorkspaceInput,
+        ComputeSettingsForCreateWorkspaceInput,
+        StartWorkspaceRequest,
+        StopWorkspaceRequest,
+        DescribeWorkspaceDetailRequest,
+        DescribeComputesRequest,
+        ModifyComputeSettingsRequest,
+        CreateDatabaseRequest,
+        DescribeDatabasesRequest,
+        CreateDBAccountRequest,
+        DescribeDBAccountsRequest,
+        DescribeDBAccountConnectionRequest,
+    )
+except ImportError:
+    logger.error("volcenginesdkaidap client dependencies not installed")
+    raise
+
+
+class AidapClient:
+    def __init__(self, context_getter: Callable[[], Any] | None = None) -> None:
+        self._context_getter = context_getter
+
+    def _get_credentials(self):
+        return resolve_volcengine_credentials(self._context_getter)
+
+    def _create_client(self) -> AIDAPApi:
+        credentials = self._get_credentials()
+        configuration = volcenginesdkcore.Configuration()
+        configuration.ak = credentials.access_key
+        configuration.sk = credentials.secret_key
+        configuration.region = VOLCENGINE_REGION
+        if credentials.session_token:
+            configuration.session_token = credentials.session_token
+        api_client = volcenginesdkcore.ApiClient(configuration)
+        return AIDAPApi(api_client)
+
+    @property
+    def client(self) -> AIDAPApi:
+        return self._create_client()
+
+    def _branch_error_code(self, error_text: str) -> str:
+        if "OperationDenied_BranchNotReady" in error_text:
+            return "OperationDenied_BranchNotReady"
+        if "BranchStatusNotMatch" in error_text:
+            return "BranchStatusNotMatch"
+        if "BranchNotFound" in error_text:
+            return "BranchNotFound"
+        return "AIDAPError"
+
+    def _pick_value(self, source: Any, *field_names: str) -> Any:
+        return pick_value(source, *field_names)
+
+    def _normalize_port(self, port: Any) -> Optional[int]:
+        if port is None:
+            return None
+        try:
+            return int(port)
+        except (TypeError, ValueError):
+            logger.warning("Invalid endpoint port from AIDAP: %s", port)
+            return None
+
+    def _scheme_from_port(self, port: int) -> str:
+        return "https" if port == 443 else "http"
+
+    def _host_has_port(self, host: str) -> bool:
+        try:
+            return urlsplit(f"//{host}").port is not None
+        except ValueError:
+            return ":" in host.rsplit("]", 1)[-1]
+
+    def _endpoint_url(self, address: dict[str, Any]) -> Optional[str]:
+        domain = address.get("domain")
+        if not domain:
+            return None
+
+        port = self._normalize_port(address.get("port"))
+        if port is None:
+            return None
+
+        host = domain.strip().rstrip("/")
+        if "://" in host:
+            parsed = urlsplit(host)
+            host = parsed.netloc or parsed.path
+
+        scheme = self._scheme_from_port(port)
+        if not self._host_has_port(host):
+            host = f"{host}:{port}"
+        return f"{scheme}://{host}"
+
+    def _endpoint_address_payload(self, addr: Any) -> Optional[dict[str, Any]]:
+        domain = self._pick_value(addr, "address_domain", "AddressDomain", "domain", "Domain")
+        if not domain:
+            return None
+        return {
+            "domain": domain,
+            "port": self._pick_value(addr, "address_port", "AddressPort", "port", "Port"),
+            "address_type": self._pick_value(addr, "address_type", "AddressType"),
+        }
+
+    def _address_type_priority(self, address: dict[str, Any]) -> int:
+        address_type = address.get("address_type")
+        if isinstance(address_type, str) and address_type.lower() == "public":
+            return 0
+        if isinstance(address_type, str) and address_type.lower() == "private":
+            return 1
+        return 2
+
+    def _endpoint_priority(self, endpoint: Any, address: dict[str, Any]) -> tuple[int, int, int]:
+        endpoint_type = str(self._pick_value(endpoint, "endpoint_type", "EndpointType") or "").lower()
+        is_dashboard = endpoint_type == "dashboard"
+        has_domain = bool(address.get("domain"))
+
+        return (
+            self._address_type_priority(address),
+            0 if is_dashboard else 1,
+            0 if has_domain else 1,
+        )
+
+    def _branch_payload(self, branch: Any, fallback_name: Optional[str] = None) -> dict:
+        parent_branch = self._pick_value(branch, "parent_branch")
+        parent_id = self._pick_value(parent_branch, "branch_id", "parent_id")
+        payload = {
+            "branch_id": self._pick_value(branch, "branch_id"),
+            "name": self._pick_value(branch, "name", "branch_name") or fallback_name,
+            "status": self._pick_value(branch, "status", "branch_status"),
+            "default": bool(self._pick_value(branch, "default", "is_default") or False),
+            "parent_id": parent_id or self._pick_value(branch, "parent_id", "parent_branch_id"),
+            "workspace_id": self._pick_value(branch, "workspace_id"),
+            "archived": self._pick_value(branch, "archived"),
+            "protected": self._pick_value(branch, "protected"),
+            "created_at": self._pick_value(branch, "create_time", "created_at"),
+            "updated_at": self._pick_value(branch, "update_time", "updated_at"),
+        }
+        return {key: value for key, value in payload.items() if value is not None}
+
+    async def _find_branch(
+        self,
+        workspace_id: str,
+        branch_id: Optional[str] = None,
+        name: Optional[str] = None,
+        max_attempts: int = 6,
+        ) -> Optional[dict]:
+        for attempt in range(1, max_attempts + 1):
+            branches = await self.list_branches(workspace_id)
+            for branch in branches:
+                if branch_id and branch.get("branch_id") == branch_id:
+                    return branch
+                if name and branch.get("name") == name:
+                    return branch
+            if attempt < max_attempts:
+                await self._sleep_backoff(attempt, base_seconds=0.5, max_seconds=3.0)
+        return None
+
+    async def get_branch(self, workspace_id: str, branch_id: str) -> Optional[dict]:
+        return await self._find_branch(workspace_id, branch_id=branch_id, max_attempts=1)
+
+    async def _sleep_backoff(
+        self,
+        attempt: int,
+        base_seconds: float = 1.0,
+        max_seconds: float = 10.0,
+    ) -> None:
+        delay = min(max_seconds, base_seconds * (2 ** max(attempt - 1, 0)))
+        jitter = random.uniform(0.0, delay * 0.2)
+        await asyncio.sleep(delay + jitter)
+    
+    async def get_default_branch_id(self, workspace_id: str) -> Optional[str]:
+        try:
+            request = DescribeBranchesRequest(workspace_id=workspace_id)
+            response = self.client.describe_branches(request)
+            
+            if hasattr(response, 'branches') and response.branches:
+                for branch in response.branches:
+                    if getattr(branch, 'default', False):
+                        return branch.branch_id
+                
+                first_branch = response.branches[0]
+                return first_branch.branch_id
+            
+            return None
+        except Exception as e:
+            logger.error(f"Error getting default branch: {e}")
+            return None
+    
+    async def list_branches(self, workspace_id: str) -> list[dict]:
+        try:
+            request = DescribeBranchesRequest(workspace_id=workspace_id)
+            response = self.client.describe_branches(request)
+
+            branches = []
+            if hasattr(response, 'branches') and response.branches:
+                for branch in response.branches:
+                    branches.append(self._branch_payload(branch))
+            return branches
+        except Exception as e:
+            logger.error(f"Error listing branches: {e}")
+            raise RuntimeError(str(e))
+
+    async def create_branch(self, workspace_id: str, name: str = "develop") -> dict:
+        try:
+            request = CreateBranchRequest(
+                workspace_id=workspace_id,
+                branch_settings=BranchSettingsForCreateBranchInput(name=name),
+            )
+            response = self.client.create_branch(request)
+
+            branch_id = getattr(response, 'branch_id', None)
+            if not branch_id and hasattr(response, 'branch'):
+                branch_id = getattr(response.branch, 'branch_id', None)
+
+            branch_payload = None
+            if branch_id or name:
+                try:
+                    branch_payload = await self._find_branch(workspace_id, branch_id, name)
+                except Exception as lookup_error:
+                    logger.warning(f"Error loading created branch details: {lookup_error}")
+
+            result = {
+                "success": True,
+                "branch_id": branch_id,
+                "workspace_id": workspace_id,
+                "name": name,
+            }
+            if branch_payload:
+                result.update(branch_payload)
+            return result
+        except Exception as e:
+            logger.error(f"Error creating branch: {e}")
+            return {
+                "success": False,
+                "error": str(e),
+            }
+
+    async def create_workspace(
+        self,
+        workspace_name: str,
+        engine_type: str = "Supabase",
+        engine_version: str = "Supabase_1_24",
+        agent_plan_api_key: Optional[str] = None,
+        min_cu: float = 0.25,
+        max_cu: float = 1,
+        suspend_timeout_seconds: int = 300,
+    ) -> dict:
+        try:
+            request = CreateWorkspaceRequest(
+                workspace_name=workspace_name,
+                engine_type=engine_type,
+                engine_version=engine_version,
+                branch_settings=BranchSettingsForCreateWorkspaceInput(branch_name="main"),
+                compute_settings=ComputeSettingsForCreateWorkspaceInput(
+                    auto_scaling_limit_min_cu=min_cu,
+                    auto_scaling_limit_max_cu=max_cu,
+                    suspend_timeout_seconds=suspend_timeout_seconds
+                ),
+                workspace_settings=WorkspaceSettingsForCreateWorkspaceInput(
+                    public_connection="Disabled",
+                    deletion_protection="Disabled"
+                ),
+            )
+            agent_plan_api_key = agent_plan_api_key or os.getenv("ARK_AGENT_PLAN_API_KEY")
+            if agent_plan_api_key:
+                request.agent_plan_api_key = agent_plan_api_key
+            response = self.client.create_workspace(request)
+
+            workspace_id = getattr(response, 'workspace_id', None)
+            if not workspace_id and hasattr(response, 'workspace'):
+                workspace_id = getattr(response.workspace, 'workspace_id', None)
+
+            return {
+                "success": True,
+                "workspace_id": workspace_id,
+                "workspace_name": workspace_name,
+                "engine_type": engine_type,
+                "engine_version": engine_version,
+            }
+        except Exception as e:
+            logger.error(f"Error creating workspace: {e}")
+            return {
+                "success": False,
+                "error": str(e),
+            }
+
+    async def get_workspace_detail(self, workspace_id: str) -> Optional[Any]:
+        try:
+            request = DescribeWorkspaceDetailRequest(workspace_id=workspace_id)
+            response = self.client.describe_workspace_detail(request)
+            return getattr(response, "workspace", None)
+        except Exception as e:
+            logger.error(f"Error getting workspace detail: {e}")
+            raise RuntimeError(str(e))
+
+    async def describe_computes(
+        self,
+        workspace_id: str,
+        branch_id: Optional[str] = None,
+        service_type: Optional[str] = None,
+    ) -> list[dict]:
+        if not branch_id:
+            branch_id = await self.get_default_branch_id(workspace_id)
+            if not branch_id:
+                raise RuntimeError(f"Could not resolve default branch for workspace {workspace_id}")
+        request_kwargs = {"workspace_id": workspace_id, "branch_id": branch_id}
+        if service_type:
+            request_kwargs["service_type"] = service_type
+        request = DescribeComputesRequest(**request_kwargs)
+        response = self.client.describe_computes(request)
+        computes = []
+        for compute in getattr(response, "computes", []) or []:
+            computes.append(compute.to_dict() if hasattr(compute, "to_dict") else compute)
+        return computes
+
+    async def modify_compute_settings(
+        self,
+        workspace_id: str,
+        min_cu: float,
+        max_cu: float,
+        suspend_timeout_seconds: Optional[int] = None,
+        service_type: Optional[str] = None,
+    ) -> dict:
+        try:
+            request_kwargs = {
+                "workspace_id": workspace_id,
+                "auto_scaling_limit_min_cu": min_cu,
+                "auto_scaling_limit_max_cu": max_cu,
+            }
+            if suspend_timeout_seconds is not None:
+                request_kwargs["suspend_timeout_seconds"] = suspend_timeout_seconds
+            if service_type:
+                request_kwargs["service_type"] = service_type
+            request = ModifyComputeSettingsRequest(**request_kwargs)
+            self.client.modify_compute_settings(request)
+            return {"success": True, "workspace_id": workspace_id}
+        except Exception as e:
+            logger.error(f"Error modifying compute settings: {e}")
+            return {"success": False, "error": str(e)}
+
+    async def _ensure_branch_id(self, workspace_id: str, branch_id: Optional[str] = None) -> str:
+        if branch_id:
+            return branch_id
+        resolved = await self.get_default_branch_id(workspace_id)
+        if not resolved:
+            raise RuntimeError(f"Could not resolve default branch for workspace {workspace_id}")
+        return resolved
+
+    async def _resolve_primary_compute_id(self, workspace_id: str, branch_id: str) -> Optional[str]:
+        computes = await self.describe_computes(workspace_id, branch_id=branch_id)
+        for compute in computes:
+            if str(compute.get("compute_role") or "").lower() == "primary":
+                return compute.get("compute_id")
+        return computes[0].get("compute_id") if computes else None
+
+    async def describe_databases(
+        self,
+        workspace_id: str,
+        branch_id: Optional[str] = None,
+        search: Optional[str] = None,
+        limit: Optional[int] = None,
+        offset: Optional[int] = None,
+    ) -> list[dict]:
+        branch_id = await self._ensure_branch_id(workspace_id, branch_id)
+        request_kwargs = {"workspace_id": workspace_id, "branch_id": branch_id}
+        if search:
+            request_kwargs["search"] = search
+        if limit is not None:
+            request_kwargs["limit"] = limit
+        if offset is not None:
+            request_kwargs["offset"] = offset
+        request = DescribeDatabasesRequest(**request_kwargs)
+        response = self.client.describe_databases(request)
+        databases = []
+        for database in getattr(response, "databases", []) or []:
+            databases.append(database.to_dict() if hasattr(database, "to_dict") else database)
+        return databases
+
+    async def create_database(
+        self,
+        workspace_id: str,
+        database_name: str,
+        branch_id: Optional[str] = None,
+        database_owner: Optional[str] = None,
+        database_desc: Optional[str] = None,
+    ) -> dict:
+        try:
+            branch_id = await self._ensure_branch_id(workspace_id, branch_id)
+            request_kwargs = {
+                "workspace_id": workspace_id,
+                "branch_id": branch_id,
+                "database_name": database_name,
+            }
+            if database_owner:
+                request_kwargs["database_owner"] = database_owner
+            if database_desc:
+                request_kwargs["database_desc"] = database_desc
+            request = CreateDatabaseRequest(**request_kwargs)
+            response = self.client.create_database(request)
+            database = getattr(response, "database", None)
+            return {
+                "success": True,
+                "database": database.to_dict() if hasattr(database, "to_dict") else database,
+            }
+        except Exception as e:
+            logger.error(f"Error creating database: {e}")
+            return {"success": False, "error": str(e)}
+
+    async def describe_db_accounts(
+        self,
+        workspace_id: str,
+        branch_id: Optional[str] = None,
+        search: Optional[str] = None,
+        limit: Optional[int] = None,
+        offset: Optional[int] = None,
+    ) -> list[dict]:
+        branch_id = await self._ensure_branch_id(workspace_id, branch_id)
+        request_kwargs = {"workspace_id": workspace_id, "branch_id": branch_id}
+        if search:
+            request_kwargs["search"] = search
+        if limit is not None:
+            request_kwargs["limit"] = limit
+        if offset is not None:
+            request_kwargs["offset"] = offset
+        request = DescribeDBAccountsRequest(**request_kwargs)
+        response = self.client.describe_db_accounts(request)
+        accounts = []
+        for account in getattr(response, "accounts", []) or []:
+            accounts.append(account.to_dict() if hasattr(account, "to_dict") else account)
+        return accounts
+
+    async def create_db_account(
+        self,
+        workspace_id: str,
+        account_name: str,
+        account_password: str,
+        branch_id: Optional[str] = None,
+        account_desc: Optional[str] = None,
+    ) -> dict:
+        try:
+            branch_id = await self._ensure_branch_id(workspace_id, branch_id)
+            request_kwargs = {
+                "workspace_id": workspace_id,
+                "branch_id": branch_id,
+                "account_name": account_name,
+                "account_password": account_password,
+            }
+            if account_desc:
+                request_kwargs["account_desc"] = account_desc
+            request = CreateDBAccountRequest(**request_kwargs)
+            response = self.client.create_db_account(request)
+            account = getattr(response, "account", None)
+            return {
+                "success": True,
+                "account": account.to_dict() if hasattr(account, "to_dict") else account,
+            }
+        except Exception as e:
+            logger.error(f"Error creating db account: {e}")
+            return {"success": False, "error": str(e)}
+
+    async def describe_db_account_connection(
+        self,
+        workspace_id: str,
+        account_name: str,
+        database_name: str,
+        branch_id: Optional[str] = None,
+        compute_id: Optional[str] = None,
+        address_id: Optional[str] = None,
+    ) -> dict:
+        branch_id = await self._ensure_branch_id(workspace_id, branch_id)
+        if not compute_id:
+            compute_id = await self._resolve_primary_compute_id(workspace_id, branch_id)
+            if not compute_id:
+                raise RuntimeError(f"Could not resolve compute for workspace {workspace_id}")
+        request_kwargs = {
+            "workspace_id": workspace_id,
+            "branch_id": branch_id,
+            "account_name": account_name,
+            "database_name": database_name,
+            "compute_id": compute_id,
+        }
+        if address_id:
+            request_kwargs["address_id"] = address_id
+        request = DescribeDBAccountConnectionRequest(**request_kwargs)
+        response = self.client.describe_db_account_connection(request)
+        return response.to_dict() if hasattr(response, "to_dict") else response
+
+    async def start_workspace(self, workspace_id: str) -> dict:
+        try:
+            request = StartWorkspaceRequest(workspace_id=workspace_id)
+            self.client.start_workspace(request)
+            return {"success": True, "workspace_id": workspace_id, "status": "starting"}
+        except Exception as e:
+            logger.error(f"Error starting workspace: {e}")
+            return {"success": False, "error": str(e)}
+
+    async def stop_workspace(self, workspace_id: str) -> dict:
+        try:
+            request = StopWorkspaceRequest(workspace_id=workspace_id)
+            self.client.stop_workspace(request)
+            return {"success": True, "workspace_id": workspace_id, "status": "stopping"}
+        except Exception as e:
+            logger.error(f"Error stopping workspace: {e}")
+            return {"success": False, "error": str(e)}
+
+    async def delete_branch(self, workspace_id: str, branch_id: str) -> dict:
+        max_attempts = 8
+        for attempt in range(1, max_attempts + 1):
+            try:
+                request = DeleteBranchRequest(
+                    workspace_id=workspace_id,
+                    branch_id=branch_id,
+                )
+                self.client.delete_branch(request)
+                return {"success": True}
+            except Exception as e:
+                error_text = str(e)
+                code = self._branch_error_code(error_text)
+                retriable = code in {"OperationDenied_BranchNotReady", "BranchStatusNotMatch"}
+                if retriable and attempt < max_attempts:
+                    await self._sleep_backoff(attempt)
+                    continue
+                logger.error(f"Error deleting branch: {e}")
+                return {
+                    "success": False,
+                    "error": error_text,
+                    "code": code,
+                    "retriable": retriable,
+                }
+        return {
+            "success": False,
+            "error": "delete_branch failed after retries",
+            "code": "OperationDenied_BranchNotReady",
+            "retriable": True,
+        }
+
+    async def get_endpoint(self, workspace_id: str, branch_id: Optional[str] = None) -> Optional[str]:
+        if not branch_id:
+            branch_id = await self.get_default_branch_id(workspace_id)
+            if not branch_id:
+                return None
+
+        try:
+            request = DescribeWorkspaceEndpointRequest(
+                workspace_id=workspace_id,
+                branch_id=branch_id
+            )
+            response = self.client.describe_workspace_endpoint(request)
+
+            if hasattr(response, 'endpoints') and response.endpoints:
+                candidates: list[tuple[tuple[int, int, int], str]] = []
+                for endpoint in response.endpoints:
+                    if hasattr(endpoint, 'addresses') and endpoint.addresses:
+                        for addr in endpoint.addresses:
+                            address = self._endpoint_address_payload(addr)
+                            if not address:
+                                continue
+                            endpoint_url = self._endpoint_url(address)
+                            if not endpoint_url:
+                                continue
+                            candidates.append((
+                                self._endpoint_priority(endpoint, address),
+                                endpoint_url,
+                            ))
+
+                if candidates:
+                    candidates.sort(key=lambda item: item[0])
+                    return candidates[0][1]
+
+            return None
+        except Exception as e:
+            logger.error(f"Error getting endpoint: {e}")
+            return None
+    
+    async def restore_branch(
+        self,
+        workspace_id: str,
+        branch_id: str,
+        source_branch_id: Optional[str] = None,
+        time: Optional[str] = None,
+    ) -> dict:
+        max_attempts = 8
+        for attempt in range(1, max_attempts + 1):
+            try:
+                request = BranchRestoreRequest(
+                    workspace_id=workspace_id,
+                    branch_id=branch_id,
+                    restore_settings=RestoreSettingsForBranchRestoreInput(
+                        source_branch_id=source_branch_id or branch_id,
+                        time=time,
+                    ),
+                )
+                response = self.client.branch_restore(request)
+                return {
+                    "success": True,
+                    "workspace_id": workspace_id,
+                    "branch_id": branch_id,
+                    "source_branch_id": source_branch_id or branch_id,
+                    "time": time,
+                    "backup_branch_id": self._pick_value(response, "backup_branch_id", "BackupBranchID"),
+                }
+            except Exception as e:
+                error_text = str(e)
+                code = self._branch_error_code(error_text)
+                retriable = code in {"OperationDenied_BranchNotReady", "BranchStatusNotMatch"}
+                if retriable and attempt < max_attempts:
+                    await self._sleep_backoff(attempt)
+                    continue
+                logger.error(f"Error restoring branch: {e}")
+                return {
+                    "success": False,
+                    "error": error_text,
+                    "code": code,
+                    "retriable": retriable,
+                }
+        return {
+            "success": False,
+            "error": "restore_branch failed after retries",
+            "code": "OperationDenied_BranchNotReady",
+            "retriable": True,
+        }
+
+    async def get_api_key(self, workspace_id: str, key_type: str = "service_role",
+                         branch_id: Optional[str] = None) -> Optional[str]:
+        if not branch_id:
+            branch_id = await self.get_default_branch_id(workspace_id)
+            if not branch_id:
+                return None
+
+        try:
+            request = DescribeAPIKeysRequest(
+                workspace_id=workspace_id,
+                branch_id=branch_id
+            )
+            response = self.client.describe_api_keys(request)
+
+            if hasattr(response, 'api_keys') and response.api_keys:
+                type_mapping = {
+                    "service_role": "Service",
+                    "anon": "Public"
+                }
+                target_type = type_mapping.get(key_type, "Service")
+
+                for key in response.api_keys:
+                    if hasattr(key, 'type') and key.type == target_type:
+                        return key.key if hasattr(key, 'key') else None
+
+            return None
+        except Exception as e:
+            logger.error(f"Error getting API key: {e}")
+            return None
+
+    async def get_api_keys(
+        self,
+        workspace_id: str,
+        branch_id: Optional[str] = None,
+        use_default_branch: bool = False,
+    ) -> list[dict]:
+        if use_default_branch and not branch_id:
+            branch_id = await self.get_default_branch_id(workspace_id)
+            if not branch_id:
+                raise RuntimeError(f"Could not get default branch for workspace {workspace_id}")
+
+        request_kwargs = {"workspace_id": workspace_id}
+        if branch_id:
+            request_kwargs["branch_id"] = branch_id
+
+        request = DescribeAPIKeysRequest(**request_kwargs)
+        response = self.client.describe_api_keys(request)
+
+        keys = []
+        if hasattr(response, 'api_keys') and response.api_keys:
+            for key in response.api_keys:
+                keys.append({
+                    "type": getattr(key, "type", None),
+                    "key": getattr(key, "key", None),
+                    "description": getattr(key, "description", None),
+                })
+        return keys

@@ -1,0 +1,22 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+.python-version
+
+# vscode settings
+.vscode
+.devcontainer
+
+# uv
+.venv
+
+# env
+.env
+
+build.sh
+mcp_server_tls.zip

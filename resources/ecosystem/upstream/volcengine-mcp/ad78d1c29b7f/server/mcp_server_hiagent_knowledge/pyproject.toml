@@ -1,0 +1,26 @@
+[project]
+name = "mcp-server-hiagent-knowledge"
+version = "0.1.0"
+description = "MCP server for the HiAgent Knowledge (knowledge base) engine"
+readme = "README.md"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+dependencies = [
+    "fastmcp>=2.0.0",
+    "pydantic>=2.8.0",
+]
+
+[project.scripts]
+mcp-server-hiagent-knowledge = "mcp_server_hiagent_knowledge.main:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/mcp_server_hiagent_knowledge"]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0.0",
+]

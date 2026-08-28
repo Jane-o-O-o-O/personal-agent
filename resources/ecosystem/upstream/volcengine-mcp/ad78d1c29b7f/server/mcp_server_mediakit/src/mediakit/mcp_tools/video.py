@@ -1,0 +1,663 @@
+from __future__ import annotations
+
+from typing import Annotated, Any
+from pydantic import Field, WithJsonSchema
+from base.context import get_client
+from ..utils.response import (
+    async_task_response,
+    error_response,
+    sync_result_response,
+)
+
+TOOL_NAMES = ['add_video_invisible_watermark', 'analyze_video_highlights', 'analyze_video_storyline', 'asr_subtitles', 'assess_video_quality', 'drama_recap', 'drama_recap_vertical', 'drama_script', 'enhance_video', 'enhance_video_fast', 'enhance_video_generative', 'erase_video_subtitle', 'erase_video_subtitle_pro', 'extract_frames', 'extract_video_invisible_watermark', 'face_blur_video', 'face_swap_video', 'generate_highlights_microdrama', 'generate_highlights_minigame', 'generate_highlights_movie', 'martencode_video', 'matte_greenscreen_video', 'matte_portrait_video', 'probe_video_metadata', 'remux_video', 'segment_scenes', 'semantic_segment', 'transcode_video', 'video_ocr', 'video_understand_router']
+
+
+def _structured_error(exc: Exception) -> object:
+    response = getattr(exc, "response", None)
+    if response is not None:
+        try:
+            return response.json()
+        except Exception:
+            pass
+    return {"message": str(exc)}
+
+
+def register_tools(mcp) -> None:
+    @mcp.tool(name='add_video_invisible_watermark', description='用于视频暗水印添加。在不影响视频画面视觉质量与完整性的前提下，将一串数字信息隐藏式地嵌入视频文件中。适用于视频版权保护、内容泄露溯源、文件真实性校验等场景。')
+    async def add_video_invisible_watermark(
+        video_url: Annotated[str, WithJsonSchema({'description': '待添加暗水印的视频 URL。支持 mp4、mov、mkv、flv、ts、avi、wmv 等主流视频格式；支持公网 HTTP/HTTPS URL、视频点播 vod://、对象存储 tos:// 三种输入协议；分辨率最高支持 4K。', 'format': 'media-to-vid', 'type': 'string'})] = Field(...),
+        watermark_content: Annotated[str, WithJsonSchema({'description': '待嵌入视频的隐藏数字信息，用于版权追溯。需传入一个代表 64 位正整数的字符串，且必须为纯数字字符串；数字必须在 1 至 9223372036854775807 之间；不允许使用前导零或包含任何非数字字符。', 'pattern': '^[1-9][0-9]{0,18}$', 'type': 'string'})] = Field(...),
+        callback_args: Annotated[str | None, WithJsonSchema({'description': '自定义回调参数；任务完成时会通过事件回调原样返回，用于关联业务；字段长度最大为 512 字节。 仅在用户明确提供该值时传递；不得由 Agent 生成、推断或补写。', 'type': 'string'})] = Field(None),
+        callback_url: Annotated[str | None, WithJsonSchema({'description': '用于接收该任务结果回调的 URL 地址；提供后优先级高于全局回调地址；地址必须以 http:// 或 https:// 开头。 仅在用户明确提供该值时传递；不得由 Agent 生成、推断或补写。', 'type': 'string'})] = Field(None),
+        client_token: Annotated[str | None, WithJsonSchema({'description': '用户请求凭证，用于幂等控制；大小写敏感，长度不超过 64 个 ASCII 可打印字符。 默认不传。用户明确指定时原样使用；用户明确要求重试时，同一逻辑请求的重试链必须复用同一 token。已有 token 时必须复用原值；此前请求未带 token 时，可从本次重试开始创建一次并持续复用，但该 token 不对此前请求提供追溯幂等。业务参数变化视为新请求，不得复用旧 token。不得为每次尝试生成不同值。调用端运行时不判断重试意图，也不自动生成 token。', 'type': 'string'})] = Field(None),
+        media_output_destination: Annotated[str | None, WithJsonSchema({'description': '指定处理产物的目标存储位置；支持将处理产物存储至火山引擎视频点播（VOD）空间或对象存储（TOS）桶。存储至 VOD 时设为 `vod://<您的空间名>`，存储至 TOS 时设为 `tos://<您的桶名>`。设置后，任务结果中的 `url` 相关字段返回 `vod://` 或 `tos://` 格式的资源地址，不再返回临时下载地址。首次使用前需按需授权 AI MediaKit 将文件写入您的 VOD 空间或 TOS 桶。 仅在用户明确提供该值时传递；不得由 Agent 生成、推断或补写。', 'type': 'string'})] = Field(None),
+        queue_id: Annotated[str | None, WithJsonSchema({'description': '任务提交的目标队列 ID；不传时默认使用系统自动创建的队列 ID。可将不同业务或优先级的任务提交到不同队列，以按队列对应的项目进行分账。队列可创建和管理，系统会自动分配队列 ID。 仅在用户明确提供该值时传递；不得由 Agent 生成、推断或补写。', 'type': 'string'})] = Field(None),
+        watermark_level: Annotated[str | None, WithJsonSchema({'default': 'normal', 'description': '可选的暗水印强度，用于决定抗攻击性与画面影响程度的平衡。normal 为标准强度，在画质与抗攻击性之间取得平衡，适用于大多数场景；high 为高强度，抗攻击性最强，能抵抗更强的视频处理，但对画面的潜在影响也相对更大；默认值为 normal 标准强度。', 'enum': ['low', 'normal', 'high'], 'type': 'string'})] = Field(None, json_schema_extra={'default': 'normal'}),
+    ) -> dict:
+        try:
+            result = get_client().call('add_video_invisible_watermark', **{
+                key: item for key, item in {'video_url': video_url, 'watermark_content': watermark_content, 'callback_args': callback_args, 'callback_url': callback_url, 'client_token': client_token, 'media_output_destination': media_output_destination, 'queue_id': queue_id, 'watermark_level': watermark_level}.items()
+                if item is not None
+            })
+            return async_task_response(result)
+        except Exception as exc:
+            return error_response(_structured_error(exc))
+
+    @mcp.tool(name='analyze_video_highlights', description='支持短剧 Miniseries 和小游戏 Game 两种分析模型，用于高光片段提取，并输出精准时间戳、高光打分、OCR 文本和画面描述，供二次开发或内容分析。')
+    async def analyze_video_highlights(
+        mode: Annotated[str, WithJsonSchema({'description': '当 model 为 Miniseries 时，mode 必须为 StorylineCuts；当 model 为 Game 时，mode 必须为 HighlightExtract。', 'enum': ['StorylineCuts', 'HighlightExtract'], 'type': 'string'})] = Field(...),
+        model: Annotated[str, WithJsonSchema({'description': 'Miniseries 是短剧模型，结合故事线理解，智能识别钩子点、反转、亲密、冲突等高光片段；Game 是小游戏模型，精准识别玩法操作片段和击杀、连胜、满血反杀等高光瞬间。', 'enum': ['Miniseries', 'Game'], 'type': 'string'})] = Field(...),
+        video_urls: Annotated[list[Any], WithJsonSchema({'description': '待分析的视频 URL 列表，不同模型对输入视频的数量、时长和内容有不同要求。支持公网 HTTP/HTTPS URL、火山引擎视频点播 vod:// 和火山引擎对象存储 tos:// 三种输入协议；支持 mp4、flv、ts、avi、mov、wmv、mkv 等主流视频格式；输入分辨率最高支持 1080p。用于短剧高光片段提取时，单次任务最多支持输入 30 个视频文件，累计总时长建议不超过 45 分钟，输入素材必须同时包含视频流和音频流，视频画面下半部分垂直位置 0.5-1.0 范围内必须包含清晰居中的中文字幕，音频轨道必须包含清晰可识别的中文对话文本；仅含 BGM（含歌词）、纯音乐、语气词或无有效语义的声音将无法准确识别剧情逻辑。用于小游戏高光片段提取时，当前单次任务仅支持输入单个视频文件；输入多个视频时默认选择第一个文件分析，输入文件时长不得超过 10 分钟。', 'items': {'description': '视频 URL，支持 http:// 或 https:// 格式', 'format': 'media-to-vid', 'type': 'string'}, 'maxItems': 100, 'minItems': 1, 'type': 'array'})] = Field(...),
+        callback_args: Annotated[str | None, WithJsonSchema({'description': '自定义回调参数；任务完成时会通过事件回调原样返回，用于关联业务；字段长度最大为 512 字节。 仅在用户明确提供该值时传递；不得由 Agent 生成、推断或补写。', 'type': 'string'})] = Field(None),
+        callback_url: Annotated[str | None, WithJsonSchema({'description': '用于接收该任务结果回调的 URL 地址；提供后优先级高于全局回调地址；地址必须以 http:// 或 https:// 开头。 仅在用户明确提供该值时传递；不得由 Agent 生成、推断或补写。', 'type': 'string'})] = Field(None),
+        client_token: Annotated[str | None, WithJsonSchema({'description': '用户请求凭证，用于幂等控制；大小写敏感，长度不超过 64 个 ASCII 可打印字符。 默认不传。用户明确指定时原样使用；用户明确要求重试时，同一逻辑请求的重试链必须复用同一 token。已有 token 时必须复用原值；此前请求未带 token 时，可从本次重试开始创建一次并持续复用，但该 token 不对此前请求提供追溯幂等。业务参数变化视为新请求，不得复用旧 token。不得为每次尝试生成不同值。调用端运行时不判断重试意图，也不自动生成 token。', 'type': 'string'})] = Field(None),
+        minigame_info: Annotated[dict[str, Any] | None, WithJsonSchema({'description': '仅当 model 为 Game 时可选填，用于提供小游戏描述信息以辅助模型更精准地识别高光内容。', 'properties': {'highlight_definition': {'description': '描述游戏中的高光时刻或精彩瞬间的定义。', 'maxLength': 5000, 'type': 'string'}, 'name': {'description': '用于标识游戏内容的游戏名称。', 'maxLength': 5000, 'type': 'string'}, 'play_definition': {'description': '描述游戏的玩法规则或核心特点。', 'maxLength': 5000, 'type': 'string'}}, 'type': 'object'})] = Field(None),
+        queue_id: Annotated[str | None, WithJsonSchema({'description': '任务提交的目标队列 ID；不传时默认使用系统自动创建的队列 ID。可将不同业务或优先级的任务提交到不同队列，以按队列对应的项目进行分账。队列可创建和管理，系统会自动分配队列 ID。 仅在用户明确提供该值时传递；不得由 Agent 生成、推断或补写。', 'type': 'string'})] = Field(None),
+    ) -> dict:
+        try:
+            result = get_client().call('analyze_video_highlights', **{
+                key: item for key, item in {'mode': mode, 'model': model, 'video_urls': video_urls, 'callback_args': callback_args, 'callback_url': callback_url, 'client_token': client_token, 'minigame_info': minigame_info, 'queue_id': queue_id}.items()
+                if item is not None
+            })
+            return async_task_response(result)
+        except Exception as exc:
+            return error_response(_structured_error(exc))
+
+    @mcp.tool(name='analyze_video_storyline', description='用于剧情故事线分析，基于大模型视频理解分析单个或多个长视频并生成结构化剧情数据。分析结果包含两部分：按时间顺序排列的剧情片段，以及基于视频片段整理和归纳出的高光故事线。')
+    async def analyze_video_storyline(
+        video_urls: Annotated[list[Any], WithJsonSchema({'description': 'video_urls 是待处理的视频 URL 列表，支持公网 HTTP/HTTPS URL、vod:// 和 tos:// 三种协议来源，支持 mp4、flv、ts、avi、mov、wmv、mkv 等主流视频格式；单次任务最多支持传入 30 个视频文件；输入视频分辨率最高支持 1080p；输入视频累计总时长不得超过 210 分钟，即 3.5 小时；建议单个视频文件时长不得超过 150 分钟，即 2.5 小时。', 'items': {'description': '视频 URL，支持 http:// 或 https:// 格式', 'format': 'media-to-vid', 'type': 'string'}, 'maxItems': 30, 'minItems': 1, 'type': 'array'})] = Field(...),
+        callback_args: Annotated[str | None, WithJsonSchema({'description': '自定义回调参数；任务完成时会通过事件回调原样返回，用于关联业务；字段长度最大为 512 字节。 仅在用户明确提供该值时传递；不得由 Agent 生成、推断或补写。', 'type': 'string'})] = Field(None),
+        callback_url: Annotated[str | None, WithJsonSchema({'description': '用于接收该任务结果回调的 URL 地址；提供后优先级高于全局回调地址；地址必须以 http:// 或 https:// 开头。 仅在用户明确提供该值时传递；不得由 Agent 生成、推断或补写。', 'type': 'string'})] = Field(None),
+        client_token: Annotated[str | None, WithJsonSchema({'description': '用户请求凭证，用于幂等控制；大小写敏感，长度不超过 64 个 ASCII 可打印字符。 默认不传。用户明确指定时原样使用；用户明确要求重试时，同一逻辑请求的重试链必须复用同一 token。已有 token 时必须复用原值；此前请求未带 token 时，可从本次重试开始创建一次并持续复用，但该 token 不对此前请求提供追溯幂等。业务参数变化视为新请求，不得复用旧 token。不得为每次尝试生成不同值。调用端运行时不判断重试意图，也不自动生成 token。', 'type': 'string'})] = Field(None),
+        enable_snapshot: Annotated[bool | None, WithJsonSchema({'default': False, 'description': 'enable_snapshot 可选，用于控制是否为每个剧情片段生成关键帧快照；默认 false。', 'type': 'boolean'})] = Field(None, json_schema_extra={'default': False}),
+        queue_id: Annotated[str | None, WithJsonSchema({'description': '任务提交的目标队列 ID；不传时默认使用系统自动创建的队列 ID。可将不同业务或优先级的任务提交到不同队列，以按队列对应的项目进行分账。队列可创建和管理，系统会自动分配队列 ID。 仅在用户明确提供该值时传递；不得由 Agent 生成、推断或补写。', 'type': 'string'})] = Field(None),
+    ) -> dict:
+        try:
+            result = get_client().call('analyze_video_storyline', **{
+                key: item for key, item in {'video_urls': video_urls, 'callback_args': callback_args, 'callback_url': callback_url, 'client_token': client_token, 'enable_snapshot': enable_snapshot, 'queue_id': queue_id}.items()
+                if item is not None
+            })
+            return async_task_response(result)
+        except Exception as exc:
+            return error_response(_structured_error(exc))
+
+    @mcp.tool(name='asr_subtitles', description='从视频或音频的语音中识别并提取带时间戳的字幕文本；适用于提取视频字幕、语音转字幕、听写对白等诉求。识别对象是音轨中的语音内容，不是画面上已烧录的硬字幕。')
+    async def asr_subtitles(
+        audio_url: Annotated[str | None, WithJsonSchema({'description': 'audio_url 是待处理的音频 URL；支持 mp3、m4a、wav 等主流音频格式；音频文件时长必须不超过 3 小时；支持公网 HTTP/HTTPS URL、火山引擎视频点播 vod:// 和火山引擎对象存储 tos:// 三种输入协议。', 'format': 'media-to-vid', 'type': 'string'})] = Field(None),
+        callback_args: Annotated[str | None, WithJsonSchema({'description': '自定义回调参数；任务完成时会通过事件回调原样返回，用于关联业务；字段长度最大为 512 字节。 仅在用户明确提供该值时传递；不得由 Agent 生成、推断或补写。', 'type': 'string'})] = Field(None),
+        callback_url: Annotated[str | None, WithJsonSchema({'description': '用于接收该任务结果回调的 URL 地址；提供后优先级高于全局回调地址；地址必须以 http:// 或 https:// 开头。 仅在用户明确提供该值时传递；不得由 Agent 生成、推断或补写。', 'type': 'string'})] = Field(None),
+        client_token: Annotated[str | None, WithJsonSchema({'description': '用户请求凭证，用于幂等控制；大小写敏感，长度不超过 64 个 ASCII 可打印字符。 默认不传。用户明确指定时原样使用；用户明确要求重试时，同一逻辑请求的重试链必须复用同一 token。已有 token 时必须复用原值；此前请求未带 token 时，可从本次重试开始创建一次并持续复用，但该 token 不对此前请求提供追溯幂等。业务参数变化视为新请求，不得复用旧 token。不得为每次尝试生成不同值。调用端运行时不判断重试意图，也不自动生成 token。', 'type': 'string'})] = Field(None),
+        content_type: Annotated[str | None, WithJsonSchema({'description': 'content_type 指定识别内容类型；支持 speech 表示普通说话，singing 表示唱歌；content_type 留空时由算法自动探测识别内容类型。', 'enum': ['speech', 'singing'], 'type': 'string'})] = Field(None),
+        enable_confidence: Annotated[bool | None, WithJsonSchema({'default': False, 'description': 'enable_confidence 控制是否返回每个字幕片段的置信度，默认为 false；开启 enable_confidence 后，结果中包含 confidence 字段。', 'type': 'boolean'})] = Field(None, json_schema_extra={'default': False}),
+        enable_speaker_info: Annotated[bool | None, WithJsonSchema({'default': False, 'description': 'enable_speaker_info 控制是否开启说话人识别，默认为 false；开启 enable_speaker_info 后，结果中包含 speaker 字段。', 'type': 'boolean'})] = Field(None, json_schema_extra={'default': False}),
+        language: Annotated[str | None, WithJsonSchema({'description': 'language 指定识别语种；支持 cmn-Hans-CN 表示简体中文，eng-US 表示英语；language 留空时由算法自动探测语种。', 'enum': ['cmn-Hans-CN', 'eng-US'], 'type': 'string'})] = Field(None),
+        queue_id: Annotated[str | None, WithJsonSchema({'description': '任务提交的目标队列 ID；不传时默认使用系统自动创建的队列 ID。可将不同业务或优先级的任务提交到不同队列，以按队列对应的项目进行分账。队列可创建和管理，系统会自动分配队列 ID。 仅在用户明确提供该值时传递；不得由 Agent 生成、推断或补写。', 'type': 'string'})] = Field(None),
+        video_url: Annotated[str | None, WithJsonSchema({'description': 'video_url 是待处理的视频 URL；支持 mp4、flv、ts、avi、mov、wmv、mkv 等主流视频格式；视频文件时长必须不超过 3 小时；支持公网 HTTP/HTTPS URL、火山引擎视频点播 vod:// 和火山引擎对象存储 tos:// 三种输入协议；video_url 和 audio_url 同时存在时优先使用 video_url。', 'format': 'media-to-vid', 'type': 'string'})] = Field(None),
+    ) -> dict:
+        try:
+            result = get_client().call('asr_subtitles', **{
+                key: item for key, item in {'audio_url': audio_url, 'callback_args': callback_args, 'callback_url': callback_url, 'client_token': client_token, 'content_type': content_type, 'enable_confidence': enable_confidence, 'enable_speaker_info': enable_speaker_info, 'language': language, 'queue_id': queue_id, 'video_url': video_url}.items()
+                if item is not None
+            })
+            return async_task_response(result)
+        except Exception as exc:
+            return error_response(_structured_error(exc))
+
+    @mcp.tool(name='assess_video_quality', description='用于视频画质检测。')
+    async def assess_video_quality(
+        video_url: Annotated[str, WithJsonSchema({'description': '用于指定待检测的视频 URL，支持公网 HTTP/HTTPS URL、火山引擎视频点播和火山引擎对象存储三种输入协议；支持 mp4、flv、ts、avi、mov、wmv、mkv 等主流视频格式；输入视频最高支持 4K (3840×2160) 分辨率。', 'format': 'media-to-vid', 'type': 'string'})] = Field(...),
+        callback_args: Annotated[str | None, WithJsonSchema({'description': '自定义回调参数；任务完成时会通过事件回调原样返回，用于关联业务；字段长度最大为 512 字节。 仅在用户明确提供该值时传递；不得由 Agent 生成、推断或补写。', 'type': 'string'})] = Field(None),
+        callback_url: Annotated[str | None, WithJsonSchema({'description': '用于接收该任务结果回调的 URL 地址；提供后优先级高于全局回调地址；地址必须以 http:// 或 https:// 开头。 仅在用户明确提供该值时传递；不得由 Agent 生成、推断或补写。', 'type': 'string'})] = Field(None),
+        client_token: Annotated[str | None, WithJsonSchema({'description': '用户请求凭证，用于幂等控制；大小写敏感，长度不超过 64 个 ASCII 可打印字符。 默认不传。用户明确指定时原样使用；用户明确要求重试时，同一逻辑请求的重试链必须复用同一 token。已有 token 时必须复用原值；此前请求未带 token 时，可从本次重试开始创建一次并持续复用，但该 token 不对此前请求提供追溯幂等。业务参数变化视为新请求，不得复用旧 token。不得为每次尝试生成不同值。调用端运行时不判断重试意图，也不自动生成 token。', 'type': 'string'})] = Field(None),
+        queue_id: Annotated[str | None, WithJsonSchema({'description': '任务提交的目标队列 ID；不传时默认使用系统自动创建的队列 ID。可将不同业务或优先级的任务提交到不同队列，以按队列对应的项目进行分账。队列可创建和管理，系统会自动分配队列 ID。 仅在用户明确提供该值时传递；不得由 Agent 生成、推断或补写。', 'type': 'string'})] = Field(None),
+    ) -> dict:
+        try:
+            result = get_client().call('assess_video_quality', **{
+                key: item for key, item in {'video_url': video_url, 'callback_args': callback_args, 'callback_url': callback_url, 'client_token': client_token, 'queue_id': queue_id}.items()
+                if item is not None
+            })
+            return async_task_response(result)
+        except Exception as exc:
+            return error_response(_structured_error(exc))
+
+    @mcp.tool(name='drama_recap', description='将原始短剧/长剧/电影视频自动转化为带 AI 配音与解说字幕的全新视频。\n自定义解说词或 AI 自动生成解说词、可选原字幕擦除。\n')
+    async def drama_recap(
+        drama_script_task_id: Annotated[str, WithJsonSchema({'description': '已成功完成的剧本还原任务的 task_id；传入后系统会参考该 task_id 对应的剧本还原结果进行解说视频生成。', 'minLength': 1, 'type': 'string'})] = Field(...),
+        batch_count: Annotated[int | None, WithJsonSchema({'default': 1, 'description': '批量生成的解说视频数量，最大为 100，默认为 1，允许基于同一份输入一次性生成多个版本的解说视频。', 'maximum': 100, 'minimum': 1, 'type': 'integer'})] = Field(None, json_schema_extra={'default': 1}),
+        callback_args: Annotated[str | None, WithJsonSchema({'description': '自定义回调参数；任务完成时会通过事件回调原样返回，用于关联业务；字段长度最大为 512 字节。 仅在用户明确提供该值时传递；不得由 Agent 生成、推断或补写。', 'type': 'string'})] = Field(None),
+        callback_url: Annotated[str | None, WithJsonSchema({'description': '用于接收该任务结果回调的 URL 地址；提供后优先级高于全局回调地址；地址必须以 http:// 或 https:// 开头。 仅在用户明确提供该值时传递；不得由 Agent 生成、推断或补写。', 'type': 'string'})] = Field(None),
+        client_token: Annotated[str | None, WithJsonSchema({'description': '用户请求凭证，用于幂等控制；大小写敏感，长度不超过 64 个 ASCII 可打印字符。 默认不传。用户明确指定时原样使用；用户明确要求重试时，同一逻辑请求的重试链必须复用同一 token。已有 token 时必须复用原值；此前请求未带 token 时，可从本次重试开始创建一次并持续复用，但该 token 不对此前请求提供追溯幂等。业务参数变化视为新请求，不得复用旧 token。不得为每次尝试生成不同值。调用端运行时不判断重试意图，也不自动生成 token。', 'type': 'string'})] = Field(None),
+        drama_recap_config: Annotated[dict[str, Any] | None, WithJsonSchema({'description': '解说词配置，用于控制解说词的生成方式、风格、语速等核心创作参数。', 'properties': {'auto_generate_recap': {'default': False, 'description': '是否由 AI 自动生成解说词；true 时根据视频内容自动创作解说文案，false 时使用用户提供的文案，默认 false。', 'type': 'boolean'}, 'enable_repeat_match': {'default': False, 'description': '是否允许解说词匹配重复的视频画面；true 为宽松匹配模式，允许视频片段被重复使用，可提升生成速度和成功率，但可能导致成片出现少量重复画面；false 为严格匹配模式，确保每个视频片段只被使用一次，成片重复度更低但耗时可能更长；默认 false。', 'type': 'boolean'}, 'pause_time': {'default': 120, 'description': 'AI 配音的句间停顿时长，单位为毫秒，范围为 [1, 1000]，默认 120；可以控制解说配音的节奏感，数值较大时停顿更明显、节奏更舒缓，数值较小时节奏更紧凑。', 'maximum': 1000, 'minimum': 1, 'type': 'integer'}, 'prefer_speed': {'default': False, 'description': '是否优先保障生成速度；true 时使用更少的模型尝试次数，生成耗时更短；false 时生成结果整体更稳定，耗时较长；默认 false。', 'type': 'boolean'}, 'style': {'description': 'AI 生成解说词的风格指令，仅在 auto_generate_recap 为 true 时生效。', 'maxLength': 500, 'type': 'string'}, 'text_length': {'description': 'AI 生成解说词的期望长度（UTF-8 字符数），最大 5000；仅在 auto_generate_recap 为 true 时生效；为保证解说内容自然流畅，最终输出的文本长度可能不会严格等于期望长度，但会尽量趋近。', 'maximum': 5000, 'minimum': 1, 'type': 'integer'}, 'text_speed': {'default': 1, 'description': '期望的解说词语速，范围为 [0.5, 2.0]，默认 1.0（标准语速）；数值越大语速越快，推荐 1.2 或 1.3 以获得更好的听感。', 'maximum': 2, 'minimum': 0.5, 'type': 'number'}}, 'type': 'object'})] = Field(None),
+        erase_mode: Annotated[str | None, WithJsonSchema({'default': 'standard', 'description': '字幕擦除模式；仅当 erase_subtitle 为 true 时生效。默认 standard；standard 表示标准版字幕擦除，平衡擦除效果和处理效率，会残留轻微的涂抹痕迹。', 'enum': ['standard'], 'type': 'string'})] = Field(None, json_schema_extra={'default': 'standard'}),
+        erase_subtitle: Annotated[bool | None, WithJsonSchema({'default': False, 'description': '是否擦除原视频中的字幕；true 时移除原有字幕，false 时保留原有字幕，默认 false。', 'type': 'boolean'})] = Field(None, json_schema_extra={'default': False}),
+        media_output_destination: Annotated[str | None, WithJsonSchema({'description': '指定处理产物的目标存储位置；支持将处理产物存储至火山引擎视频点播（VOD）空间或对象存储（TOS）桶。存储至 VOD 时设为 `vod://<您的空间名>`，存储至 TOS 时设为 `tos://<您的桶名>`。设置后，任务结果中的 `url` 相关字段返回 `vod://` 或 `tos://` 格式的资源地址，不再返回临时下载地址。首次使用前需按需授权 AI MediaKit 将文件写入您的 VOD 空间或 TOS 桶。 仅在用户明确提供该值时传递；不得由 Agent 生成、推断或补写。', 'type': 'string'})] = Field(None),
+        miniseries_edit: Annotated[dict[str, Any] | None, WithJsonSchema({'description': '仅竖屏的短剧三要素配置，使用预设视觉模板，为解说视频一键添加“短剧三要素”（剧名、角标、提示语）。', 'properties': {'hint': {'description': '短剧提示语，是画面左右两侧的一行文字；可以是概括视频核心冲突或亮点的引导性文字，也可以是“影视效果 请勿模仿 无不良价值观引导”的免责声明；不得超过 20 个字。', 'maxLength': 20, 'type': 'string'}, 'template': {'description': '“短剧三要素”视觉模板名称，不同模板决定剧名、角标、提示语的位置和样式；支持 热门短剧1、热门短剧2、热门短剧3、热门短剧4、热门短剧5。', 'enum': ['热门短剧1', '热门短剧2', '热门短剧3', '热门短剧4', '热门短剧5'], 'type': 'string'}, 'title': {'description': '短剧名称，会在解说视频画面上展示剧名，用于品牌识别和引导用户搜索；不得超过 15 个字。', 'maxLength': 15, 'type': 'string'}}, 'type': 'object'})] = Field(None),
+        queue_id: Annotated[str | None, WithJsonSchema({'description': '任务提交的目标队列 ID；不传时默认使用系统自动创建的队列 ID。可将不同业务或优先级的任务提交到不同队列，以按队列对应的项目进行分账。队列可创建和管理，系统会自动分配队列 ID。 仅在用户明确提供该值时传递；不得由 Agent 生成、推断或补写。', 'type': 'string'})] = Field(None),
+        recap_text: Annotated[str | None, WithJsonSchema({'description': '用户自定义的解说词文本，最多 5000 字符；drama_recap_config.auto_generate_recap 为 true 时，不得传入 recap_text。', 'maxLength': 5000, 'type': 'string'})] = Field(None),
+        speaker_config: Annotated[dict[str, Any] | None, WithJsonSchema({'description': 'AI 配音配置。', 'properties': {'voice_type': {'default': 'Yunxi', 'description': '配音的音色名称，默认 Yunxi；支持预置音色 Yunxi、Yunjian、Yunfeng、Yunyi、Yunjie、Yunze、Yunye、Xiaoxiao、Xiaochen、Xiaohan、Xiaomo。', 'enum': ['Yunxi', 'Yunjian', 'Yunfeng', 'Yunyi', 'Yunjie', 'Yunze', 'Yunye', 'Xiaoxiao', 'Xiaochen', 'Xiaohan', 'Xiaomo'], 'type': 'string'}}, 'type': 'object'})] = Field(None),
+        subtitle_config: Annotated[dict[str, Any] | None, WithJsonSchema({'description': '解说字幕配置，用于自定义新生成的解说字幕的字体、位置、颜色等。', 'properties': {'align_type': {'default': 1, 'description': '文本对齐方式，默认 1（居中）；横排时 0 表示左对齐、1 表示居中、2 表示右对齐；竖排时 1 表示居中、3 表示上对齐、4 表示下对齐。', 'type': 'integer'}, 'alpha': {'default': 1, 'description': '字幕字体透明度，范围为 [0, 1]，默认 1。', 'maximum': 1, 'minimum': 0, 'type': 'number'}, 'background_border_size': {'default': 0, 'description': '字幕背景边框大小，默认 0。', 'minimum': 0, 'type': 'number'}, 'background_color': {'default': '#00000000', 'description': '字幕背景颜色，RGBA 格式，默认 "#00000000"（透明）。', 'type': 'string'}, 'border_color': {'default': '#00000000', 'description': '字幕描边颜色，RGBA 格式，默认 "#00000000"（透明）。', 'type': 'string'}, 'border_width': {'description': '字幕描边宽度，单位为 px。', 'minimum': 1, 'type': 'integer'}, 'bottom_right_x': {'description': '字幕矩形区域右下角的 X 坐标，单位为像素（px），需大于 top_left_x。', 'minimum': 1, 'type': 'integer'}, 'bottom_right_y': {'description': '字幕矩形区域右下角的 Y 坐标，单位为像素（px），需大于 top_left_y。', 'minimum': 1, 'type': 'integer'}, 'disable_subtitle': {'default': False, 'description': '是否不在生成的解说视频中添加新的解说字幕；false 时添加新的解说字幕，默认 false。', 'type': 'boolean'}, 'font_color': {'default': '#FFFFFFFF', 'description': '字幕字体颜色，RGBA 格式，默认 "#FFFFFFFF"（白色）。', 'type': 'string'}, 'font_size': {'description': '字幕字体大小，单位为 px。', 'minimum': 1, 'type': 'integer'}, 'font_type': {'default': 'sy_black', 'description': '字幕字体，默认 sy_black；支持 sy_black、ali_puhui、pm_zhengdao。', 'enum': ['sy_black', 'ali_puhui', 'pm_zhengdao'], 'type': 'string'}, 'line_max_width': {'default': 1, 'description': '自动换行宽度占字幕区域的比例，范围为 [0, 1]，默认 1。', 'maximum': 1, 'minimum': 0, 'type': 'number'}, 'top_left_x': {'description': '字幕矩形区域左上角的 X 坐标，单位为像素（px）。', 'minimum': 0, 'type': 'integer'}, 'top_left_y': {'description': '字幕矩形区域左上角的 Y 坐标，单位为像素（px）。', 'minimum': 0, 'type': 'integer'}, 'typesetting': {'default': 0, 'description': '文字排列方向，默认 0；0 表示横排，1 表示竖排。', 'enum': [0, 1], 'type': 'integer'}}, 'type': 'object'})] = Field(None),
+    ) -> dict:
+        try:
+            result = get_client().call('drama_recap', **{
+                key: item for key, item in {'drama_script_task_id': drama_script_task_id, 'batch_count': batch_count, 'callback_args': callback_args, 'callback_url': callback_url, 'client_token': client_token, 'drama_recap_config': drama_recap_config, 'erase_mode': erase_mode, 'erase_subtitle': erase_subtitle, 'media_output_destination': media_output_destination, 'miniseries_edit': miniseries_edit, 'queue_id': queue_id, 'recap_text': recap_text, 'speaker_config': speaker_config, 'subtitle_config': subtitle_config}.items()
+                if item is not None
+            })
+            return async_task_response(result)
+        except Exception as exc:
+            return error_response(_structured_error(exc))
+
+    @mcp.tool(name='drama_recap_vertical', description='支持基于输入短剧剧集的角色和剧情故事线理解（剧本还原），自动提取高光片段并生成全新的解说视频。')
+    async def drama_recap_vertical(
+        video_urls: Annotated[list[Any], WithJsonSchema({'description': '待处理短剧原片的视频源 URL 列表；支持公网 HTTP/HTTPS、视频点播 vod:// 和对象存储 tos:// 四类协议；支持 mp4、flv、ts、avi、mov、wmv、mkv 等主流视频格式；单次任务支持传入 1 到 30 个视频文件；累计时长不得超过 120 分钟，即 2 小时；输入分辨率当前仅支持 1080p；输入素材需保持分辨率一致，否则会有兼容性问题；每个输入视频必须同时包含视频流和音频流；音频轨道必须包含清晰可识别的中文对话文本，仅含 BGM、纯音乐或语气词无法准确还原剧情；建议视频画面下半部分包含清晰居中的中文字幕，以提升文字解说定位和剧情理解准确度。', 'items': {'description': '视频源 URL（公网可访问的 mp4/flv/ts/avi/mov/mkv/m3u8 等主流视频格式直链或 VOD 资源链接）。', 'format': 'media-to-vid', 'type': 'string'}, 'maxItems': 30, 'minItems': 1, 'type': 'array'})] = Field(...),
+        callback_args: Annotated[str | None, WithJsonSchema({'description': '自定义回调参数；任务完成时会通过事件回调原样返回，用于关联业务；字段长度最大为 512 字节。 仅在用户明确提供该值时传递；不得由 Agent 生成、推断或补写。', 'type': 'string'})] = Field(None),
+        callback_url: Annotated[str | None, WithJsonSchema({'description': '用于接收该任务结果回调的 URL 地址；提供后优先级高于全局回调地址；地址必须以 http:// 或 https:// 开头。 仅在用户明确提供该值时传递；不得由 Agent 生成、推断或补写。', 'type': 'string'})] = Field(None),
+        client_token: Annotated[str | None, WithJsonSchema({'description': '用户请求凭证，用于幂等控制；大小写敏感，长度不超过 64 个 ASCII 可打印字符。 默认不传。用户明确指定时原样使用；用户明确要求重试时，同一逻辑请求的重试链必须复用同一 token。已有 token 时必须复用原值；此前请求未带 token 时，可从本次重试开始创建一次并持续复用，但该 token 不对此前请求提供追溯幂等。业务参数变化视为新请求，不得复用旧 token。不得为每次尝试生成不同值。调用端运行时不判断重试意图，也不自动生成 token。', 'type': 'string'})] = Field(None),
+        edit_param: Annotated[dict[str, Any] | None, WithJsonSchema({'description': '支持在 narrate 和 text 两种模式中使用；可选配置成片剪辑效果，包括套用包含剧名、角标和提示语的短剧三要素视觉模板。', 'properties': {'mode': {'default': 'BasicEdit', 'description': '默认为 BasicEdit；支持 BasicEdit 和 TemplateEdit，BasicEdit 仅拼接高光片段，TemplateEdit 在基础剪辑上套用短剧三要素视觉模板。', 'enum': ['BasicEdit', 'TemplateEdit'], 'type': 'string'}, 'template_edit': {'description': '仅当 edit_param.mode 为 TemplateEdit 时生效。', 'properties': {'hint': {'description': '画面左右两侧的一行短剧提示语，可选用于概括核心冲突或亮点，也可用作免责声明；不得超过 20 个字。', 'maxLength': 20, 'type': 'string'}, 'template': {'default': '热门短剧1', 'description': '默认为 热门短剧1；决定剧名、角标和提示语的位置及样式；支持 热门短剧1、热门短剧2、热门短剧3、热门短剧4、热门短剧5。', 'enum': ['热门短剧1', '热门短剧2', '热门短剧3', '热门短剧4', '热门短剧5'], 'type': 'string'}, 'title': {'description': '展示在解说视频画面上的短剧名称，用于品牌识别和引导用户搜索；不得超过 22 个字。', 'maxLength': 22, 'type': 'string'}}, 'type': 'object'}}, 'required': ['mode'], 'type': 'object'})] = Field(None),
+        enable_return_poster: Annotated[bool | None, WithJsonSchema({'default': False, 'description': '默认为 false；true 会在任务结果中返回 poster_url，false 不返回封面图。', 'type': 'boolean'})] = Field(None, json_schema_extra={'default': False}),
+        max_count: Annotated[int | None, WithJsonSchema({'default': 3, 'description': '单次任务期望生成的解说视频数量上限，最小值为 1，不得超过 100，默认为 3。', 'maximum': 100, 'minimum': 1, 'type': 'integer'})] = Field(None, json_schema_extra={'default': 3}),
+        max_duration: Annotated[float | None, WithJsonSchema({'default': 180, 'description': '每个解说视频的时长上限，单位为秒，最小值为 1，最大值为 7200，默认为 180 秒。', 'maximum': 7200, 'minimum': 1, 'type': 'number'})] = Field(None, json_schema_extra={'default': 180}),
+        media_output_destination: Annotated[str | None, WithJsonSchema({'description': '指定处理产物的目标存储位置；支持将处理产物存储至火山引擎视频点播（VOD）空间或对象存储（TOS）桶。存储至 VOD 时设为 `vod://<您的空间名>`，存储至 TOS 时设为 `tos://<您的桶名>`。设置后，任务结果中的 `url` 相关字段返回 `vod://` 或 `tos://` 格式的资源地址，不再返回临时下载地址。首次使用前需按需授权 AI MediaKit 将文件写入您的 VOD 空间或 TOS 桶。 仅在用户明确提供该值时传递；不得由 Agent 生成、推断或补写。', 'type': 'string'})] = Field(None),
+        min_duration: Annotated[float | None, WithJsonSchema({'default': 30, 'description': '每个解说视频的时长下限，单位为秒，最小值为 1，最大值为 7200，默认为 30 秒。', 'maximum': 7200, 'minimum': 1, 'type': 'number'})] = Field(None, json_schema_extra={'default': 30}),
+        mode: Annotated[str | None, WithJsonSchema({'default': 'text', 'description': '默认为 text；支持 narrate 和 text 两种模式。narrate 生成原片高光混剪、AI 语音解说和 BGM；text 生成原片高光混剪与屏幕文字解说。', 'enum': ['narrate', 'text'], 'type': 'string'})] = Field(None, json_schema_extra={'default': 'text'}),
+        narrate_bgm_url: Annotated[str | None, WithJsonSchema({'description': '指定旁白解说模式下使用的背景音乐音频 URL；仅支持公网可访问的 HTTP/HTTPS URL；支持 mp3、m4a、wav 等主流音频格式；可选，不传时生成的解说视频不添加背景音乐。', 'format': 'media-to-vid', 'type': 'string'})] = Field(None),
+        narrate_options: Annotated[dict[str, Any] | None, WithJsonSchema({'description': '仅当 mode 为 narrate 时生效。', 'properties': {'enable_narrate_bgm': {'default': True, 'description': '默认为 true；true 启用 BGM 并使用 narrate_bgm_url 指定的音频，false 关闭背景音乐。', 'type': 'boolean'}, 'erase_subtitle_mode': {'default': 'mosaic', 'description': '默认为 mosaic；支持 mosaic 和 standard。mosaic 直接高斯模糊遮盖字幕区域，处理效率最高，适合快速遮挡且画面完整性要求不高的场景；standard 平衡擦除效果与效率，对纯色或简单背景效果良好，但复杂纹理或剧烈运动背景可能残留轻微涂抹痕迹。', 'enum': ['mosaic', 'standard'], 'type': 'string'}, 'narrate_ratio': {'default': 0.3, 'description': '控制旁白解说时长占生成视频时长的比例，最小值为 0，最大值为 1，默认为 0.3，建议不超过 0.5。', 'maximum': 1, 'minimum': 0, 'type': 'number'}}, 'type': 'object'})] = Field(None),
+        opening_hook: Annotated[str | None, WithJsonSchema({'default': 'auto', 'description': '精彩片段前置策略默认为 auto；支持 auto、force 和 disable。auto 会智能判断是否将最精彩片段前置到视频开头，force 强制开启精彩前置，disable 关闭精彩前置。', 'enum': ['auto', 'force', 'disable'], 'type': 'string'})] = Field(None, json_schema_extra={'default': 'auto'}),
+        queue_id: Annotated[str | None, WithJsonSchema({'description': '任务提交的目标队列 ID；不传时默认使用系统自动创建的队列 ID。可将不同业务或优先级的任务提交到不同队列，以按队列对应的项目进行分账。队列可创建和管理，系统会自动分配队列 ID。 仅在用户明确提供该值时传递；不得由 Agent 生成、推断或补写。', 'type': 'string'})] = Field(None),
+        text_options: Annotated[dict[str, Any] | None, WithJsonSchema({'description': '仅当 mode 为 text 时生效。', 'properties': {'align_type': {'default': 'left', 'description': '默认为 left；支持 left、middle、right，分别表示左对齐、居中对齐和右对齐。', 'enum': ['left', 'middle', 'right'], 'type': 'string'}, 'border_color': {'default': '#00000080', 'description': '花字描边颜色必须使用 #RRGGBBAA 格式，默认为 #00000080。', 'pattern': '^#[0-9A-Fa-f]{8}$', 'type': 'string'}, 'border_width': {'default': 2, 'description': '花字描边宽度单位为 px，默认为 2，建议不超过字号的 0.1 倍。', 'minimum': 1, 'type': 'integer'}, 'font_color': {'default': '#FFFFF290', 'description': '花字颜色必须使用 #RRGGBBAA 格式，默认为 #FFFFF290。', 'pattern': '^#[0-9A-Fa-f]{8}$', 'type': 'string'}, 'font_size': {'description': '花字字号单位为 px；未传时按视频短边除以 24 自动计算，例如 720p 默认 30、1080p 默认 45；不得小于 1。', 'minimum': 1, 'type': 'integer'}, 'font_type': {'default': 'SY_Bold', 'description': '默认为 SY_Bold；支持 SY_Bold 和 SY_Black，分别表示思源粗体和思源黑体。', 'enum': ['SY_Bold', 'SY_Black'], 'type': 'string'}, 'inner_padding': {'default': 1, 'description': '花字内边距单位为 px，默认为 1。', 'minimum': 0, 'type': 'integer'}, 'is_bold': {'default': False, 'description': '花字是否加粗，默认为 false。', 'type': 'boolean'}, 'is_italic': {'default': True, 'description': '花字是否斜体，默认为 true。', 'type': 'boolean'}, 'is_underline': {'default': False, 'description': '花字是否添加下划线，默认为 false。', 'type': 'boolean'}, 'shadow_color': {'default': '#00000080', 'description': '花字阴影颜色必须使用 #RRGGBBAA 格式，默认为 #00000080。', 'pattern': '^#[0-9A-Fa-f]{8}$', 'type': 'string'}}, 'type': 'object'})] = Field(None),
+    ) -> dict:
+        try:
+            result = get_client().call('drama_recap_vertical', **{
+                key: item for key, item in {'video_urls': video_urls, 'callback_args': callback_args, 'callback_url': callback_url, 'client_token': client_token, 'edit_param': edit_param, 'enable_return_poster': enable_return_poster, 'max_count': max_count, 'max_duration': max_duration, 'media_output_destination': media_output_destination, 'min_duration': min_duration, 'mode': mode, 'narrate_bgm_url': narrate_bgm_url, 'narrate_options': narrate_options, 'opening_hook': opening_hook, 'queue_id': queue_id, 'text_options': text_options}.items()
+                if item is not None
+            })
+            return async_task_response(result)
+        except Exception as exc:
+            return error_response(_structured_error(exc))
+
+    @mcp.tool(name='drama_script', description='基于大模型视频理解能力，将短剧视频转化为结构化剧本文本，识别并提取场景、人物、对话和情节等核心元素。')
+    async def drama_script(
+        video_urls: Annotated[list[Any], WithJsonSchema({'description': '待处理短剧视频的 URL 列表。单次任务支持传入 1 个至 100 个视频文件，并按 video_urls 的数组顺序拼接视频后进行分析。视频输入支持公网 HTTP/HTTPS URL、vod:// 和 tos:// 三种协议来源，也支持 mp4、flv、ts、avi、mov、wmv、mkv 等主流格式；不支持 HLS（M3U8）格式。单个视频文件时长不超过 120 分钟，单次任务所有视频累计时长不超过 300 分钟，视频必须包含内嵌硬字幕。适用于以人物对话和情节发展为核心的真人实拍短剧、长剧和电影；不适用于缺乏连贯真人剧情或人脸识别线索的动画、纪录片、广告和直播录屏。', 'items': {'description': '视频 URL，支持 http:// 或 https:// 格式', 'format': 'media-to-vid', 'type': 'string'}, 'maxItems': 100, 'minItems': 1, 'type': 'array'})] = Field(...),
+        callback_args: Annotated[str | None, WithJsonSchema({'description': '自定义回调参数；任务完成时会通过事件回调原样返回，用于关联业务；字段长度最大为 512 字节。 仅在用户明确提供该值时传递；不得由 Agent 生成、推断或补写。', 'type': 'string'})] = Field(None),
+        callback_url: Annotated[str | None, WithJsonSchema({'description': '用于接收该任务结果回调的 URL 地址；提供后优先级高于全局回调地址；地址必须以 http:// 或 https:// 开头。 仅在用户明确提供该值时传递；不得由 Agent 生成、推断或补写。', 'type': 'string'})] = Field(None),
+        client_token: Annotated[str | None, WithJsonSchema({'description': '用户请求凭证，用于幂等控制；大小写敏感，长度不超过 64 个 ASCII 可打印字符。 默认不传。用户明确指定时原样使用；用户明确要求重试时，同一逻辑请求的重试链必须复用同一 token。已有 token 时必须复用原值；此前请求未带 token 时，可从本次重试开始创建一次并持续复用，但该 token 不对此前请求提供追溯幂等。业务参数变化视为新请求，不得复用旧 token。不得为每次尝试生成不同值。调用端运行时不判断重试意图，也不自动生成 token。', 'type': 'string'})] = Field(None),
+        queue_id: Annotated[str | None, WithJsonSchema({'description': '任务提交的目标队列 ID；不传时默认使用系统自动创建的队列 ID。可将不同业务或优先级的任务提交到不同队列，以按队列对应的项目进行分账。队列可创建和管理，系统会自动分配队列 ID。 仅在用户明确提供该值时传递；不得由 Agent 生成、推断或补写。', 'type': 'string'})] = Field(None),
+        return_pkg: Annotated[bool | None, WithJsonSchema({'default': False, 'description': '控制任务结果的输出封装格式。true 时，所有任务产物会打包为 .tar.gz 压缩包，result_url 指向该压缩包，压缩包包含核心剧本 JSON、人物名及其图片、场景截图等分析结果；false 时，仅返回核心剧本数据，result_url 指向 Gzip 压缩的 JSON 文件 .json.gz。', 'type': 'boolean'})] = Field(None, json_schema_extra={'default': False}),
+    ) -> dict:
+        try:
+            result = get_client().call('drama_script', **{
+                key: item for key, item in {'video_urls': video_urls, 'callback_args': callback_args, 'callback_url': callback_url, 'client_token': client_token, 'queue_id': queue_id, 'return_pkg': return_pkg}.items()
+                if item is not None
+            })
+            return async_task_response(result)
+        except Exception as exc:
+            return error_response(_structured_error(exc))
+
+    @mcp.tool(name='enhance_video', description='用于视频画质增强。利用 AI 算法对输入视频进行分析，并智能执行包括但不限于视频去噪、色彩增强、清晰度提升、瑕疵修复和超分辨率的一系列优化操作。提供 standard 和 professional 两种版本：standard 兼顾处理速度与视频画质，内置高频使用的 10 余种增强算法，适用于视频分发场景的画质增强；professional 提供极致画质增强，内置 30 余种深度 AI 增强算法，适用于影视级视频制作。不同版本会影响增强算法的强度、适用场景与计费。')
+    async def enhance_video(
+        video_url: Annotated[str, WithJsonSchema({'description': '待增强的视频 URL，支持公网 HTTP/HTTPS URL、火山引擎视频点播的 vod://、火山引擎对象存储的 tos:// 输入协议。支持 mp4、flv、ts、avi、mov、wmv、mkv 等主流视频格式。建议单个输入文件大小不超过 10 GB。输入视频分辨率最高支持 2K，长边范围为 360 到 2560，短边范围为 360 到 1440。', 'format': 'media-to-vid', 'type': 'string'})] = Field(...),
+        bit_depth: Annotated[int | None, WithJsonSchema({'default': 8, 'description': '目标色深，也称为位深。bit_depth 仅在 professional 版本支持设置，可选 8、10、12，默认 8。8 表示 8 bit 位深，使用 H.264 编码；10 表示 10 bit 位深，使用 H.265 编码；12 表示 12 bit 位深，使用 H.265 编码。', 'enum': [8, 10, 12], 'type': 'integer'})] = Field(None, json_schema_extra={'default': 8}),
+        bitrate_level: Annotated[str | None, WithJsonSchema({'default': 'medium', 'description': '用于控制输出视频的平均码率，会影响视频的视觉质量和最终的文件体积。可选 low、medium、high；其中 high 表示高码率，medium 表示中码率，推荐使用，low 表示低码率；默认 medium。', 'enum': ['low', 'medium', 'high'], 'type': 'string'})] = Field(None, json_schema_extra={'default': 'medium'}),
+        callback_args: Annotated[str | None, WithJsonSchema({'description': '自定义回调参数；任务完成时会通过事件回调原样返回，用于关联业务；字段长度最大为 512 字节。 仅在用户明确提供该值时传递；不得由 Agent 生成、推断或补写。', 'type': 'string'})] = Field(None),
+        callback_url: Annotated[str | None, WithJsonSchema({'description': '用于接收该任务结果回调的 URL 地址；提供后优先级高于全局回调地址；地址必须以 http:// 或 https:// 开头。 仅在用户明确提供该值时传递；不得由 Agent 生成、推断或补写。', 'type': 'string'})] = Field(None),
+        client_token: Annotated[str | None, WithJsonSchema({'description': '用户请求凭证，用于幂等控制；大小写敏感，长度不超过 64 个 ASCII 可打印字符。 默认不传。用户明确指定时原样使用；用户明确要求重试时，同一逻辑请求的重试链必须复用同一 token。已有 token 时必须复用原值；此前请求未带 token 时，可从本次重试开始创建一次并持续复用，但该 token 不对此前请求提供追溯幂等。业务参数变化视为新请求，不得复用旧 token。不得为每次尝试生成不同值。调用端运行时不判断重试意图，也不自动生成 token。', 'type': 'string'})] = Field(None),
+        fps: Annotated[float | None, WithJsonSchema({'description': '目标帧率，单位为 fps，取值范围为 15 到 120。若未指定 fps，输出视频将保持与原始片源一致的帧率。建议 fps 不超过原片的 4 倍。', 'maximum': 120, 'minimum': 15, 'type': 'number'})] = Field(None),
+        media_output_destination: Annotated[str | None, WithJsonSchema({'description': '指定处理产物的目标存储位置；支持将处理产物存储至火山引擎视频点播（VOD）空间或对象存储（TOS）桶。存储至 VOD 时设为 `vod://<您的空间名>`，存储至 TOS 时设为 `tos://<您的桶名>`。设置后，任务结果中的 `url` 相关字段返回 `vod://` 或 `tos://` 格式的资源地址，不再返回临时下载地址。首次使用前需按需授权 AI MediaKit 将文件写入您的 VOD 空间或 TOS 桶。 仅在用户明确提供该值时传递；不得由 Agent 生成、推断或补写。', 'type': 'string'})] = Field(None),
+        queue_id: Annotated[str | None, WithJsonSchema({'description': '任务提交的目标队列 ID；不传时默认使用系统自动创建的队列 ID。可将不同业务或优先级的任务提交到不同队列，以按队列对应的项目进行分账。队列可创建和管理，系统会自动分配队列 ID。 仅在用户明确提供该值时传递；不得由 Agent 生成、推断或补写。', 'type': 'string'})] = Field(None),
+        resolution: Annotated[str | None, WithJsonSchema({'description': '目标分辨率档位，支持 240p、360p、480p、540p、720p、1080p、2k、4k、8k。可以使用 resolution 将视频超分到指定规格。resolution 与 resolution_limit 不可同时配置。', 'enum': ['240p', '360p', '480p', '540p', '720p', '1080p', '2k', '4k', '8k'], 'type': 'string'})] = Field(None),
+        resolution_limit: Annotated[int | None, WithJsonSchema({'description': '目标分辨率的短边像素限制，取值范围为 128 到 4320。系统将根据 resolution_limit 在保持原视频宽高比的前提下等比缩放到该限制值。resolution_limit 与 resolution 不可同时配置。', 'maximum': 4320, 'minimum': 128, 'type': 'integer'})] = Field(None),
+        scene: Annotated[str | None, WithJsonSchema({'default': 'common', 'description': '用于选择一个针对特定业务场景的预设画质增强模板。scene 仅在 tool_version 为 standard 时生效，可选 common、ugc、short_series、aigc、old_film，默认 common。其中 common 表示通用模板，ugc 表示 UGC 短视频场景，short_series 表示短剧场景，aigc 表示 AIGC 内容场景，old_film 表示老片修复场景。', 'enum': ['common', 'ugc', 'short_series', 'aigc', 'old_film'], 'type': 'string'})] = Field(None, json_schema_extra={'default': 'common'}),
+        tool_version: Annotated[str | None, WithJsonSchema({'default': 'standard', 'description': '影响增强算法的强度、适用场景与计费。可选 standard 和 professional，默认 standard。其中 standard 表示标准版，兼顾处理速度与视频画质，内置高频使用的 10 余种增强算法，覆盖主流播放平台画质要求，适用于视频分发场景的画质增强；professional 表示专业版，提供极致画质增强，保障镜头级画质效果，内置 30 余种深度 AI 增强算法，适用于影视级视频制作。', 'enum': ['standard', 'professional'], 'type': 'string'})] = Field(None, json_schema_extra={'default': 'standard'}),
+    ) -> dict:
+        try:
+            result = get_client().call('enhance_video', **{
+                key: item for key, item in {'video_url': video_url, 'bit_depth': bit_depth, 'bitrate_level': bitrate_level, 'callback_args': callback_args, 'callback_url': callback_url, 'client_token': client_token, 'fps': fps, 'media_output_destination': media_output_destination, 'queue_id': queue_id, 'resolution': resolution, 'resolution_limit': resolution_limit, 'scene': scene, 'tool_version': tool_version}.items()
+                if item is not None
+            })
+            return async_task_response(result)
+        except Exception as exc:
+            return error_response(_structured_error(exc))
+
+    @mcp.tool(name='enhance_video_fast', description='集成轻量级超分与智能画质增强，采用速度优先策略，高效兼顾处理效率与画面效果，尤其适用于处理时延敏感的业务场景。')
+    async def enhance_video_fast(
+        video_url: Annotated[str, WithJsonSchema({'description': 'video_url 是待增强视频的 URL。必须提供 video_url；支持公网 HTTP/HTTPS URL、火山引擎视频点播 vod://、火山引擎对象存储 tos:// 三种输入协议。输入支持 mp4、flv、ts、avi、mov、wmv、mkv 等主流视频格式；输入视频分辨率长边范围为 [360,2560]、短边范围为 [360,1440]，最高支持 2K。建议单个输入文件大小不超过 10 GB。', 'format': 'media-to-vid', 'type': 'string'})] = Field(...),
+        bitrate_level: Annotated[str | None, WithJsonSchema({'default': 'medium', 'description': 'bitrate_level 是控制输出视频平均码率的目标码率档位，会影响输出视频的视觉质量和文件体积。可使用 low、medium、high：low 表示低码率，medium 表示中码率且为推荐档位，high 表示高码率。bitrate_level 非必填，默认为 medium。', 'enum': ['low', 'medium', 'high'], 'type': 'string'})] = Field(None, json_schema_extra={'default': 'medium'}),
+        callback_args: Annotated[str | None, WithJsonSchema({'description': '自定义回调参数；任务完成时会通过事件回调原样返回，用于关联业务；字段长度最大为 512 字节。 仅在用户明确提供该值时传递；不得由 Agent 生成、推断或补写。', 'type': 'string'})] = Field(None),
+        callback_url: Annotated[str | None, WithJsonSchema({'description': '用于接收该任务结果回调的 URL 地址；提供后优先级高于全局回调地址；地址必须以 http:// 或 https:// 开头。 仅在用户明确提供该值时传递；不得由 Agent 生成、推断或补写。', 'type': 'string'})] = Field(None),
+        client_token: Annotated[str | None, WithJsonSchema({'description': '用户请求凭证，用于幂等控制；大小写敏感，长度不超过 64 个 ASCII 可打印字符。 默认不传。用户明确指定时原样使用；用户明确要求重试时，同一逻辑请求的重试链必须复用同一 token。已有 token 时必须复用原值；此前请求未带 token 时，可从本次重试开始创建一次并持续复用，但该 token 不对此前请求提供追溯幂等。业务参数变化视为新请求，不得复用旧 token。不得为每次尝试生成不同值。调用端运行时不判断重试意图，也不自动生成 token。', 'type': 'string'})] = Field(None),
+        fps: Annotated[float | None, WithJsonSchema({'description': 'fps 用于指定目标帧率，单位为 fps，范围为 [15, 120]。建议 fps 不超过原片帧率的 4 倍。fps 非必填；未指定 fps 时，输出视频保持与原始片源一致的帧率。', 'maximum': 120, 'minimum': 15, 'type': 'number'})] = Field(None),
+        media_output_destination: Annotated[str | None, WithJsonSchema({'description': '指定处理产物的目标存储位置；支持将处理产物存储至火山引擎视频点播（VOD）空间或对象存储（TOS）桶。存储至 VOD 时设为 `vod://<您的空间名>`，存储至 TOS 时设为 `tos://<您的桶名>`。设置后，任务结果中的 `url` 相关字段返回 `vod://` 或 `tos://` 格式的资源地址，不再返回临时下载地址。首次使用前需按需授权 AI MediaKit 将文件写入您的 VOD 空间或 TOS 桶。 仅在用户明确提供该值时传递；不得由 Agent 生成、推断或补写。', 'type': 'string'})] = Field(None),
+        queue_id: Annotated[str | None, WithJsonSchema({'description': '任务提交的目标队列 ID；不传时默认使用系统自动创建的队列 ID。可将不同业务或优先级的任务提交到不同队列，以按队列对应的项目进行分账。队列可创建和管理，系统会自动分配队列 ID。 仅在用户明确提供该值时传递；不得由 Agent 生成、推断或补写。', 'type': 'string'})] = Field(None),
+        resolution: Annotated[str | None, WithJsonSchema({'description': 'resolution 是目标分辨率档位，用于将视频超分到指定规格；支持 240p、360p、480p、540p、720p、1080p、2k、4k。resolution 非必填；resolution 与 resolution_limit 互斥，不得同时配置。', 'enum': ['240p', '360p', '480p', '540p', '720p', '1080p', '2k', '4k'], 'type': 'string'})] = Field(None),
+        resolution_limit: Annotated[int | None, WithJsonSchema({'description': 'resolution_limit 用于指定目标分辨率的短边像素限制，范围为 [128, 2160]；系统会在保持原视频宽高比的前提下等比缩放到该短边限制值。resolution_limit 非必填；resolution_limit 与 resolution 互斥，不得同时配置。', 'maximum': 2160, 'minimum': 128, 'type': 'integer'})] = Field(None),
+    ) -> dict:
+        try:
+            result = get_client().call('enhance_video_fast', **{
+                key: item for key, item in {'video_url': video_url, 'bitrate_level': bitrate_level, 'callback_args': callback_args, 'callback_url': callback_url, 'client_token': client_token, 'fps': fps, 'media_output_destination': media_output_destination, 'queue_id': queue_id, 'resolution': resolution, 'resolution_limit': resolution_limit}.items()
+                if item is not None
+            })
+            return async_task_response(result)
+        except Exception as exc:
+            return error_response(_structured_error(exc))
+
+    @mcp.tool(name='enhance_video_generative', description='基于 Diffusion 扩散大模型技术提供生成式视频增强与修复，通过深度语义理解，智能补全和生成符合视频内容的真实细节，可修复视频在压缩或老化过程中损失的像素，最终产出自然、高保真的视频画面。')
+    async def enhance_video_generative(
+        video_url: Annotated[str, WithJsonSchema({'description': 'video_url 是待增强的视频 URL；支持公网 HTTP/HTTPS URL、火山引擎视频点播 vod:// 和火山引擎对象存储 tos:// 三种输入协议；仅支持 SDR 视频；支持 mp4、flv、ts、avi、mov、wmv、mkv 等主流视频格式；输入视频最高支持 1080p，长边范围为 [360,1920]，短边范围为 [360,1080]。', 'format': 'media-to-vid', 'type': 'string'})] = Field(...),
+        bitrate_level: Annotated[str | None, WithJsonSchema({'default': 'medium', 'description': 'bitrate_level 是控制输出视频平均码率的目标码率档位，会影响视频的视觉质量和最终文件体积；high 表示高码率，medium 表示中码率且为推荐档位，low 表示低码率；默认值为 medium。', 'enum': ['low', 'medium', 'high'], 'type': 'string'})] = Field(None, json_schema_extra={'default': 'medium'}),
+        callback_args: Annotated[str | None, WithJsonSchema({'description': '自定义回调参数；任务完成时会通过事件回调原样返回，用于关联业务；字段长度最大为 512 字节。 仅在用户明确提供该值时传递；不得由 Agent 生成、推断或补写。', 'type': 'string'})] = Field(None),
+        callback_url: Annotated[str | None, WithJsonSchema({'description': '用于接收该任务结果回调的 URL 地址；提供后优先级高于全局回调地址；地址必须以 http:// 或 https:// 开头。 仅在用户明确提供该值时传递；不得由 Agent 生成、推断或补写。', 'type': 'string'})] = Field(None),
+        client_token: Annotated[str | None, WithJsonSchema({'description': '用户请求凭证，用于幂等控制；大小写敏感，长度不超过 64 个 ASCII 可打印字符。 默认不传。用户明确指定时原样使用；用户明确要求重试时，同一逻辑请求的重试链必须复用同一 token。已有 token 时必须复用原值；此前请求未带 token 时，可从本次重试开始创建一次并持续复用，但该 token 不对此前请求提供追溯幂等。业务参数变化视为新请求，不得复用旧 token。不得为每次尝试生成不同值。调用端运行时不判断重试意图，也不自动生成 token。', 'type': 'string'})] = Field(None),
+        fps: Annotated[float | None, WithJsonSchema({'description': 'fps 指定目标帧率，单位为 fps；支持范围为 [15, 120]；建议不超过原片帧率的 4 倍；未指定 fps 时，输出视频保持与原始片源一致的帧率。', 'maximum': 120, 'minimum': 15, 'type': 'number'})] = Field(None),
+        media_output_destination: Annotated[str | None, WithJsonSchema({'description': '指定处理产物的目标存储位置；支持将处理产物存储至火山引擎视频点播（VOD）空间或对象存储（TOS）桶。存储至 VOD 时设为 `vod://<您的空间名>`，存储至 TOS 时设为 `tos://<您的桶名>`。设置后，任务结果中的 `url` 相关字段返回 `vod://` 或 `tos://` 格式的资源地址，不再返回临时下载地址。首次使用前需按需授权 AI MediaKit 将文件写入您的 VOD 空间或 TOS 桶。 仅在用户明确提供该值时传递；不得由 Agent 生成、推断或补写。', 'type': 'string'})] = Field(None),
+        queue_id: Annotated[str | None, WithJsonSchema({'description': '任务提交的目标队列 ID；不传时默认使用系统自动创建的队列 ID。可将不同业务或优先级的任务提交到不同队列，以按队列对应的项目进行分账。队列可创建和管理，系统会自动分配队列 ID。 仅在用户明确提供该值时传递；不得由 Agent 生成、推断或补写。', 'type': 'string'})] = Field(None),
+        resolution: Annotated[str | None, WithJsonSchema({'default': '720p', 'description': 'resolution 指定目标分辨率；支持 720p、1080p、2k；默认值为 720p。', 'enum': ['720p', '1080p', '2k'], 'type': 'string'})] = Field(None, json_schema_extra={'default': '720p'}),
+    ) -> dict:
+        try:
+            result = get_client().call('enhance_video_generative', **{
+                key: item for key, item in {'video_url': video_url, 'bitrate_level': bitrate_level, 'callback_args': callback_args, 'callback_url': callback_url, 'client_token': client_token, 'fps': fps, 'media_output_destination': media_output_destination, 'queue_id': queue_id, 'resolution': resolution}.items()
+                if item is not None
+            })
+            return async_task_response(result)
+        except Exception as exc:
+            return error_response(_structured_error(exc))
+
+    @mcp.tool(name='erase_video_subtitle', description='智能检测并擦除视频画面中已有的硬字幕，保留原始背景；仅处理字幕，不支持水印擦除。')
+    async def erase_video_subtitle(
+        video_url: Annotated[str, WithJsonSchema({'description': 'video_url 是待擦除字幕的视频 URL，支持公网 HTTP/HTTPS URL、vod://、tos:// 三种输入协议；支持 mp4、flv、ts、avi、mov、wmv、mkv 等主流视频格式。输入视频最高支持 2K 分辨率，输出分辨率最高支持 1080P。', 'format': 'media-to-vid', 'type': 'string'})] = Field(...),
+        callback_args: Annotated[str | None, WithJsonSchema({'description': '自定义回调参数；任务完成时会通过事件回调原样返回，用于关联业务；字段长度最大为 512 字节。 仅在用户明确提供该值时传递；不得由 Agent 生成、推断或补写。', 'type': 'string'})] = Field(None),
+        callback_url: Annotated[str | None, WithJsonSchema({'description': '用于接收该任务结果回调的 URL 地址；提供后优先级高于全局回调地址；地址必须以 http:// 或 https:// 开头。 仅在用户明确提供该值时传递；不得由 Agent 生成、推断或补写。', 'type': 'string'})] = Field(None),
+        client_token: Annotated[str | None, WithJsonSchema({'description': '用户请求凭证，用于幂等控制；大小写敏感，长度不超过 64 个 ASCII 可打印字符。 默认不传。用户明确指定时原样使用；用户明确要求重试时，同一逻辑请求的重试链必须复用同一 token。已有 token 时必须复用原值；此前请求未带 token 时，可从本次重试开始创建一次并持续复用，但该 token 不对此前请求提供追溯幂等。业务参数变化视为新请求，不得复用旧 token。不得为每次尝试生成不同值。调用端运行时不判断重试意图，也不自动生成 token。', 'type': 'string'})] = Field(None),
+        media_output_destination: Annotated[str | None, WithJsonSchema({'description': '指定处理产物的目标存储位置；支持将处理产物存储至火山引擎视频点播（VOD）空间或对象存储（TOS）桶。存储至 VOD 时设为 `vod://<您的空间名>`，存储至 TOS 时设为 `tos://<您的桶名>`。设置后，任务结果中的 `url` 相关字段返回 `vod://` 或 `tos://` 格式的资源地址，不再返回临时下载地址。首次使用前需按需授权 AI MediaKit 将文件写入您的 VOD 空间或 TOS 桶。 仅在用户明确提供该值时传递；不得由 Agent 生成、推断或补写。', 'type': 'string'})] = Field(None),
+        queue_id: Annotated[str | None, WithJsonSchema({'description': '任务提交的目标队列 ID；不传时默认使用系统自动创建的队列 ID。可将不同业务或优先级的任务提交到不同队列，以按队列对应的项目进行分账。队列可创建和管理，系统会自动分配队列 ID。 仅在用户明确提供该值时传递；不得由 Agent 生成、推断或补写。', 'type': 'string'})] = Field(None),
+    ) -> dict:
+        try:
+            result = get_client().call('erase_video_subtitle', **{
+                key: item for key, item in {'video_url': video_url, 'callback_args': callback_args, 'callback_url': callback_url, 'client_token': client_token, 'media_output_destination': media_output_destination, 'queue_id': queue_id}.items()
+                if item is not None
+            })
+            return async_task_response(result)
+        except Exception as exc:
+            return error_response(_structured_error(exc))
+
+    @mcp.tool(name='erase_video_subtitle_pro', description='用于字幕擦除（精细化版），对视频字幕进行高质量无痕擦除，并最大程度还原视频画面。')
+    async def erase_video_subtitle_pro(
+        video_url: Annotated[str, WithJsonSchema({'description': '支持公网 HTTP/HTTPS URL、火山引擎视频点播 vod:// 和火山引擎对象存储 tos:// 三种输入协议，支持 mp4、flv、ts、avi、mov、wmv、mkv 等主流视频格式，输入分辨率最高支持 2K，输出分辨率最高支持 1080P。', 'format': 'media-to-vid', 'type': 'string'})] = Field(...),
+        callback_args: Annotated[str | None, WithJsonSchema({'description': '自定义回调参数；任务完成时会通过事件回调原样返回，用于关联业务；字段长度最大为 512 字节。 仅在用户明确提供该值时传递；不得由 Agent 生成、推断或补写。', 'type': 'string'})] = Field(None),
+        callback_url: Annotated[str | None, WithJsonSchema({'description': '用于接收该任务结果回调的 URL 地址；提供后优先级高于全局回调地址；地址必须以 http:// 或 https:// 开头。 仅在用户明确提供该值时传递；不得由 Agent 生成、推断或补写。', 'type': 'string'})] = Field(None),
+        client_token: Annotated[str | None, WithJsonSchema({'description': '用户请求凭证，用于幂等控制；大小写敏感，长度不超过 64 个 ASCII 可打印字符。 默认不传。用户明确指定时原样使用；用户明确要求重试时，同一逻辑请求的重试链必须复用同一 token。已有 token 时必须复用原值；此前请求未带 token 时，可从本次重试开始创建一次并持续复用，但该 token 不对此前请求提供追溯幂等。业务参数变化视为新请求，不得复用旧 token。不得为每次尝试生成不同值。调用端运行时不判断重试意图，也不自动生成 token。', 'type': 'string'})] = Field(None),
+        erase_ratio_location: Annotated[list[Any] | None, WithJsonSchema({'description': '配置擦除框位置数组后，系统仅在指定矩形框选区域内执行文本擦除。每个 location 由左上角与右下角两个顶点确定矩形擦除区域，坐标以画面左上角 (0, 0) 为原点、右下角为 (1, 1)，X 轴向右、Y 轴向下，使用相对画面宽高的归一化比例 [0,1]。最多支持 20 个擦除框。', 'items': {'description': 'location 对象用于定义一个矩形擦除框，使用归一化的坐标系，以视频画面左上角为原点 (0, 0)、右下角为 (1, 1)，通过指定左上和右下两个顶点的坐标来确定擦除区域。', 'properties': {'bottom_right_x': {'description': 'bottom_right_x 是框选区域右下角相对于视频左上角在 X 轴上的偏移比例，范围 [0,1]；0 与左边缘对齐，1 与右边缘对齐。', 'maximum': 1, 'minimum': 0, 'type': 'number'}, 'bottom_right_y': {'description': 'bottom_right_y 是框选区域右下角相对于视频左上角在 Y 轴上的偏移比例，范围 [0,1]；0 与上边缘对齐，1 与下边缘对齐。', 'maximum': 1, 'minimum': 0, 'type': 'number'}, 'top_left_x': {'description': 'top_left_x 是框选区域左上角相对于视频左上角在 X 轴上的偏移比例，范围 [0,1]；0 与左边缘对齐，1 与右边缘对齐。', 'maximum': 1, 'minimum': 0, 'type': 'number'}, 'top_left_y': {'description': 'top_left_y 是框选区域左上角相对于视频左上角在 Y 轴上的偏移比例，范围 [0,1]；0 与上边缘对齐，1 与下边缘对齐。', 'maximum': 1, 'minimum': 0, 'type': 'number'}}, 'required': ['top_left_x', 'top_left_y', 'bottom_right_x', 'bottom_right_y'], 'type': 'object'}, 'maxItems': 20, 'minItems': 0, 'type': 'array'})] = Field(None),
+        media_output_destination: Annotated[str | None, WithJsonSchema({'description': '指定处理产物的目标存储位置；支持将处理产物存储至火山引擎视频点播（VOD）空间或对象存储（TOS）桶。存储至 VOD 时设为 `vod://<您的空间名>`，存储至 TOS 时设为 `tos://<您的桶名>`。设置后，任务结果中的 `url` 相关字段返回 `vod://` 或 `tos://` 格式的资源地址，不再返回临时下载地址。首次使用前需按需授权 AI MediaKit 将文件写入您的 VOD 空间或 TOS 桶。 仅在用户明确提供该值时传递；不得由 Agent 生成、推断或补写。', 'type': 'string'})] = Field(None),
+        mode: Annotated[str | None, WithJsonSchema({'default': 'Subtitle', 'description': '字幕擦除模式，默认 Subtitle，支持 Subtitle 和 Text。Subtitle 模式擦除 OCR 检测为字幕的文本，默认仅处理视频画面下半部分（下方 50%）区域；配置 erase_ratio_location 时，只处理自定义擦除框与画面下半部分的交集。Text 模式擦除 OCR 检测为字幕及人名、地名等其他类型文本，不包含牌匾等场景文字；默认检测整个视频画面，配置 erase_ratio_location 时仅在指定擦除框内执行。', 'enum': ['Subtitle', 'Text'], 'type': 'string'})] = Field(None, json_schema_extra={'default': 'Subtitle'}),
+        model_version: Annotated[str | None, WithJsonSchema({'default': 'v4', 'description': '擦除算法版本，支持 v4 和 v5，默认 v4。相比 V4，V5 优化 AIGC 生成视频擦除字幕后的闪烁问题、带阴影字幕的擦除效果和误擦问题，并提升处理速度。', 'enum': ['v4', 'v5'], 'type': 'string', 'x-sites': ['volcengine']})] = Field(None, json_schema_extra={'default': 'v4'}),
+        output_encode_mode: Annotated[str | None, WithJsonSchema({'default': 'Quality', 'description': '输出视频编码模式，默认 Quality。Quality 采用较高码率编码，画质更好，但文件体积可能更大；Size 在保证一定画质的前提下使输出码率接近源文件。', 'enum': ['Quality', 'Size'], 'type': 'string'})] = Field(None, json_schema_extra={'default': 'Quality'}),
+        queue_id: Annotated[str | None, WithJsonSchema({'description': '任务提交的目标队列 ID；不传时默认使用系统自动创建的队列 ID。可将不同业务或优先级的任务提交到不同队列，以按队列对应的项目进行分账。队列可创建和管理，系统会自动分配队列 ID。 仅在用户明确提供该值时传递；不得由 Agent 生成、推断或补写。', 'type': 'string'})] = Field(None),
+        subtitle_filter: Annotated[dict[str, Any] | None, WithJsonSchema({'description': 'subtitle_filter 通过文字高度和水平居中程度帮助系统更准确地判断哪些文本属于字幕，避免误擦大标题、台标、水印等非字幕文本。仅当文本高度不低于下限、不高于上限且水平方向足够居中时，文本才会被判定为字幕并擦除，大标题、台标、水印等文本会被排除。仅在 mode 为 Subtitle 时生效，不传时使用系统默认值。', 'properties': {'center_offset_ratio': {'description': 'center_offset_ratio 是文字区域中心相对视频宽度中心的最大偏离比例，范围 [0,1]，默认 0.08；超过该比例的文本不会被判定为字幕。', 'maximum': 1, 'minimum': 0, 'type': 'number'}, 'max_text_height_ratio': {'description': 'max_text_height_ratio 是相对视频高度的文字高度最大比例，范围 [0,1]；高于该高度的文本不会被判定为字幕；不传时 v4 默认 0.2（20%），v5 默认 0.1（10%）。', 'maximum': 1, 'minimum': 0, 'type': 'number'}, 'min_text_height_ratio': {'description': 'min_text_height_ratio 是相对视频高度的文字高度最小比例，范围 [0,1]，默认 0.01（1%）；低于该高度的文本不会被判定为字幕。', 'maximum': 1, 'minimum': 0, 'type': 'number'}}, 'type': 'object'})] = Field(None),
+        time_segment_filter: Annotated[dict[str, Any] | None, WithJsonSchema({'description': '按 mode 对指定时间段执行或跳过擦除；不配置则对整段视频生效，适用于只擦除正片或保留片头、片尾字幕等场景。', 'properties': {'mode': {'description': 'skip 跳过 segments 中列出的时间段并擦除其余部分；selected 仅擦除 segments 中列出的时间段。', 'enum': ['skip', 'selected'], 'type': 'string'}, 'segments': {'description': 'segments 时间段列表至少包含 1 个时间段。', 'items': {'description': '单个时间段', 'properties': {'end_time': {'description': 'end_time 是以秒为单位的片段结束时间，需大于 start_time。', 'minimum': 0, 'type': 'number'}, 'start_time': {'description': 'start_time 是以秒为单位的片段起始时间，取值大于等于 0。', 'minimum': 0, 'type': 'number'}}, 'required': ['start_time', 'end_time'], 'type': 'object'}, 'minItems': 1, 'type': 'array'}}, 'required': ['mode', 'segments'], 'type': 'object'})] = Field(None),
+    ) -> dict:
+        try:
+            result = get_client().call('erase_video_subtitle_pro', **{
+                key: item for key, item in {'video_url': video_url, 'callback_args': callback_args, 'callback_url': callback_url, 'client_token': client_token, 'erase_ratio_location': erase_ratio_location, 'media_output_destination': media_output_destination, 'mode': mode, 'model_version': model_version, 'output_encode_mode': output_encode_mode, 'queue_id': queue_id, 'subtitle_filter': subtitle_filter, 'time_segment_filter': time_segment_filter}.items()
+                if item is not None
+            })
+            return async_task_response(result)
+        except Exception as exc:
+            return error_response(_structured_error(exc))
+
+    @mcp.tool(name='extract_frames', description='从视频中抽取截图，截图结果支持用于视频封面、预览图、雪碧图或其他视频理解任务的输入。')
+    async def extract_frames(
+        video_url: Annotated[str, WithJsonSchema({'description': 'video_url 是待处理的视频 URL，支持公网 HTTP/HTTPS URL、vod:// 和 tos:// 三种输入协议。视频输入支持 mp4、mov、mkv、flv、ts、avi、wmv 等主流视频格式。', 'format': 'media-to-vid', 'type': 'string'})] = Field(...),
+        callback_args: Annotated[str | None, WithJsonSchema({'description': '自定义回调参数；任务完成时会通过事件回调原样返回，用于关联业务；字段长度最大为 512 字节。 仅在用户明确提供该值时传递；不得由 Agent 生成、推断或补写。', 'type': 'string'})] = Field(None),
+        callback_url: Annotated[str | None, WithJsonSchema({'description': '用于接收该任务结果回调的 URL 地址；提供后优先级高于全局回调地址；地址必须以 http:// 或 https:// 开头。 仅在用户明确提供该值时传递；不得由 Agent 生成、推断或补写。', 'type': 'string'})] = Field(None),
+        client_token: Annotated[str | None, WithJsonSchema({'description': '用户请求凭证，用于幂等控制；大小写敏感，长度不超过 64 个 ASCII 可打印字符。 默认不传。用户明确指定时原样使用；用户明确要求重试时，同一逻辑请求的重试链必须复用同一 token。已有 token 时必须复用原值；此前请求未带 token 时，可从本次重试开始创建一次并持续复用，但该 token 不对此前请求提供追溯幂等。业务参数变化视为新请求，不得复用旧 token。不得为每次尝试生成不同值。调用端运行时不判断重试意图，也不自动生成 token。', 'type': 'string'})] = Field(None),
+        enable_sprite: Annotated[bool | None, WithJsonSchema({'default': False, 'description': '默认 false。设为 true 时输出包含所有截图的雪碧图；设为 false 时输出多张独立截图。', 'type': 'boolean'})] = Field(None, json_schema_extra={'default': False}),
+        queue_id: Annotated[str | None, WithJsonSchema({'description': '任务提交的目标队列 ID；不传时默认使用系统自动创建的队列 ID。可将不同业务或优先级的任务提交到不同队列，以按队列对应的项目进行分账。队列可创建和管理，系统会自动分配队列 ID。 仅在用户明确提供该值时传递；不得由 Agent 生成、推断或补写。', 'type': 'string'})] = Field(None),
+        scale_long: Annotated[int | None, WithJsonSchema({'description': 'scale_long 最小值为 0，最大值为 4096。输出图片长边不得超过原始视频长边。按长边缩放时，输出图片短边按原始比例自适应。enable_sprite 为 true 时，scale_long 定义单张小图的长边。同时设置 scale_long 和 scale_short 时保持原始宽高比，并分别约束长边和短边。', 'maximum': 4096, 'minimum': 0, 'type': 'integer'})] = Field(None),
+        scale_short: Annotated[int | None, WithJsonSchema({'description': 'scale_short 最小值为 0，最大值为 4096。输出图片短边不得超过原始视频短边。按短边缩放时，输出图片长边按原始比例自适应。enable_sprite 为 true 时，scale_short 定义单张小图的短边。同时设置 scale_long 和 scale_short 时保持原始宽高比，并分别约束长边和短边。', 'maximum': 4096, 'minimum': 0, 'type': 'integer'})] = Field(None),
+        scene_change_threshold: Annotated[float | None, WithJsonSchema({'default': 0.1, 'description': 'scene_change_threshold 默认值为 0.1。scene_change_threshold 必须大于 0 且必须小于 1。scene_change_threshold 仅在 snapshot_type 为 SceneChange 时生效。scene_change_threshold 越小，场景变化检测越敏感，可能产生更多截图。', 'maximum': 1, 'minimum': 0, 'type': 'number'})] = Field(None, json_schema_extra={'default': 0.1}),
+        snapshot_limit: Annotated[int | None, WithJsonSchema({'description': 'snapshot_limit 最小值为 1，最大值为 1000。实际输出的截图数可能小于 snapshot_limit。snapshot_limit 仅在 snapshot_type 为 TimeInterval 或 SceneChange 时生效。enable_sprite 为 true 时，snapshot_limit 表示雪碧图大图数量上限，小图数量上限为 snapshot_limit*sprite_rows*sprite_cols。', 'maximum': 1000, 'minimum': 1, 'type': 'integer'})] = Field(None),
+        snapshot_type: Annotated[str | None, WithJsonSchema({'default': 'TimeInterval', 'description': 'snapshot_type 决定抽帧的具体方式，默认为 TimeInterval，支持 TimeInterval、SpecifiedTime、SpecifiedFrames 和 SceneChange 四个字面值。TimeInterval 表示按时间间隔抽帧，并需配合 time_interval。SpecifiedTime 表示按指定时间点抽帧，并需配合 specified_time。SpecifiedFrames 表示按指定帧号抽帧，并需配合 specified_frames。SceneChange 表示按场景变化抽帧，并需配合 scene_change_threshold。', 'enum': ['TimeInterval', 'SpecifiedTime', 'SpecifiedFrames', 'SceneChange'], 'type': 'string'})] = Field(None, json_schema_extra={'default': 'TimeInterval'}),
+        specified_frames: Annotated[list[Any] | None, WithJsonSchema({'description': 'specified_frames 当前仅支持 0 表示视频首帧、-1 表示视频尾帧，最多支持 2 个值。', 'items': {'enum': [0, -1], 'type': 'integer'}, 'maxItems': 2, 'minItems': 1, 'type': 'array'})] = Field(None),
+        specified_time: Annotated[list[Any] | None, WithJsonSchema({'description': 'specified_time 中时间点的单位为秒，支持最多 3 位小数，最多支持 1000 个时间点。', 'items': {'minimum': 0, 'type': 'number'}, 'maxItems': 1000, 'minItems': 1, 'type': 'array'})] = Field(None),
+        sprite_cols: Annotated[int | None, WithJsonSchema({'default': 10, 'description': 'sprite_cols 表示雪碧图在 X 轴水平方向的小图数量，默认值为 10，最小值为 1，最大值为 100。sprite_cols 仅在 enable_sprite 为 true 时生效。过大的雪碧图行列数可能导致任务失败，雪碧图建议单边不超过 16384 像素。', 'maximum': 100, 'minimum': 1, 'type': 'integer'})] = Field(None, json_schema_extra={'default': 10}),
+        sprite_rows: Annotated[int | None, WithJsonSchema({'default': 10, 'description': 'sprite_rows 表示雪碧图在 Y 轴垂直方向的小图数量，默认值为 10，最小值为 1，最大值为 100。sprite_rows 仅在 enable_sprite 为 true 时生效。过大的雪碧图行列数可能导致任务失败，雪碧图建议单边不超过 16384 像素。', 'maximum': 100, 'minimum': 1, 'type': 'integer'})] = Field(None, json_schema_extra={'default': 10}),
+        time_interval: Annotated[float | None, WithJsonSchema({'default': 1, 'description': 'time_interval 默认值为 1，单位为秒，支持最多 3 位小数，必须大于 0.001。time_interval 仅在 snapshot_type 为 TimeInterval 时生效。', 'minimum': 0.001, 'type': 'number'})] = Field(None, json_schema_extra={'default': 1}),
+    ) -> dict:
+        try:
+            result = get_client().call('extract_frames', **{
+                key: item for key, item in {'video_url': video_url, 'callback_args': callback_args, 'callback_url': callback_url, 'client_token': client_token, 'enable_sprite': enable_sprite, 'queue_id': queue_id, 'scale_long': scale_long, 'scale_short': scale_short, 'scene_change_threshold': scene_change_threshold, 'snapshot_limit': snapshot_limit, 'snapshot_type': snapshot_type, 'specified_frames': specified_frames, 'specified_time': specified_time, 'sprite_cols': sprite_cols, 'sprite_rows': sprite_rows, 'time_interval': time_interval}.items()
+                if item is not None
+            })
+            return async_task_response(result)
+        except Exception as exc:
+            return error_response(_structured_error(exc))
+
+    @mcp.tool(name='extract_video_invisible_watermark', description='从已嵌入暗水印的视频中解析并还原隐藏的数字信息；如果同一视频被多次嵌入暗水印，也能够提取出所有水印信息。')
+    async def extract_video_invisible_watermark(
+        video_url: Annotated[str, WithJsonSchema({'description': '待提取暗水印的视频 URL，必选。支持公网 HTTP/HTTPS URL、火山引擎视频点播 vod:// 和火山引擎对象存储 tos:// 三种输入协议；支持 mp4、mov、mkv、flv、ts、avi、wmv 等主流视频格式；分辨率最高支持 4K。', 'format': 'media-to-vid', 'type': 'string'})] = Field(...),
+        callback_url: Annotated[str | None, WithJsonSchema({'description': '用于接收该任务结果回调的 URL 地址；提供后优先级高于全局回调地址；地址必须以 http:// 或 https:// 开头。 仅在用户明确提供该值时传递；不得由 Agent 生成、推断或补写。', 'type': 'string'})] = Field(None),
+        queue_id: Annotated[str | None, WithJsonSchema({'description': '任务提交的目标队列 ID；不传时默认使用系统自动创建的队列 ID。可将不同业务或优先级的任务提交到不同队列，以按队列对应的项目进行分账。队列可创建和管理，系统会自动分配队列 ID。 仅在用户明确提供该值时传递；不得由 Agent 生成、推断或补写。', 'type': 'string'})] = Field(None),
+    ) -> dict:
+        try:
+            result = get_client().call('extract_video_invisible_watermark', **{
+                key: item for key, item in {'video_url': video_url, 'callback_url': callback_url, 'queue_id': queue_id}.items()
+                if item is not None
+            })
+            return async_task_response(result)
+        except Exception as exc:
+            return error_response(_structured_error(exc))
+
+    @mcp.tool(name='face_blur_video', description='视频人脸打码可自动精准识别视频画面中的人脸区域，并对所有人脸进行模糊或马赛克处理，适用于需要保护人物五官隐私的场景。')
+    async def face_blur_video(
+        video_url: Annotated[str, WithJsonSchema({'description': '待打码的视频 URL，支持公网 HTTP/HTTPS URL、火山引擎视频点播 vod:// 和对象存储 tos:// 三种输入协议；支持 mp4、flv、ts、avi、mov、wmv、mkv 等主流视频格式；分辨率最高支持 4K，推荐使用 1080P 以获得最佳处理效果；帧率需在 25~60 范围内；视频时长不得超过 10 分钟。', 'format': 'media-to-vid', 'type': 'string'})] = Field(...),
+        callback_args: Annotated[str | None, WithJsonSchema({'description': '自定义回调参数；任务完成时会通过事件回调原样返回，用于关联业务；字段长度最大为 512 字节。 仅在用户明确提供该值时传递；不得由 Agent 生成、推断或补写。', 'type': 'string'})] = Field(None),
+        callback_url: Annotated[str | None, WithJsonSchema({'description': '用于接收该任务结果回调的 URL 地址；提供后优先级高于全局回调地址；地址必须以 http:// 或 https:// 开头。 仅在用户明确提供该值时传递；不得由 Agent 生成、推断或补写。', 'type': 'string'})] = Field(None),
+        client_token: Annotated[str | None, WithJsonSchema({'description': '用户请求凭证，用于幂等控制；大小写敏感，长度不超过 64 个 ASCII 可打印字符。 默认不传。用户明确指定时原样使用；用户明确要求重试时，同一逻辑请求的重试链必须复用同一 token。已有 token 时必须复用原值；此前请求未带 token 时，可从本次重试开始创建一次并持续复用，但该 token 不对此前请求提供追溯幂等。业务参数变化视为新请求，不得复用旧 token。不得为每次尝试生成不同值。调用端运行时不判断重试意图，也不自动生成 token。', 'type': 'string'})] = Field(None),
+        face_box_expand: Annotated[float | None, WithJsonSchema({'default': 0.2, 'description': '人脸边界框扩展比例，范围大于 0.0 且不超过 1.0，默认值为 0.2。系统将根据该比例在检测到的人脸区域基础上向外扩展打码范围。', 'maximum': 1.0, 'minimum': 0.0, 'type': 'number'})] = Field(None, json_schema_extra={'default': 0.2}),
+        face_confidence: Annotated[float | None, WithJsonSchema({'default': 0.35, 'description': '人脸检测置信度阈值，范围 0.1 至 1.0，默认值为 0.35。低于此阈值的检测结果将被丢弃。', 'maximum': 1.0, 'minimum': 0.1, 'type': 'number'})] = Field(None, json_schema_extra={'default': 0.35}),
+        mask_mode: Annotated[str | None, WithJsonSchema({'default': 'mosaic', 'description': '人脸打码方式：mosaic 表示马赛克，为默认值；blur 表示高斯模糊。', 'enum': ['mosaic', 'blur'], 'type': 'string'})] = Field(None, json_schema_extra={'default': 'mosaic'}),
+        mask_strength: Annotated[str | None, WithJsonSchema({'default': 'medium', 'description': '人脸打码强度：low 表示低强度；medium 表示中强度，为默认值；high 表示高强度。', 'enum': ['low', 'medium', 'high'], 'type': 'string'})] = Field(None, json_schema_extra={'default': 'medium'}),
+        media_output_destination: Annotated[str | None, WithJsonSchema({'description': '指定处理产物的目标存储位置；支持将处理产物存储至火山引擎视频点播（VOD）空间或对象存储（TOS）桶。存储至 VOD 时设为 `vod://<您的空间名>`，存储至 TOS 时设为 `tos://<您的桶名>`。设置后，任务结果中的 `url` 相关字段返回 `vod://` 或 `tos://` 格式的资源地址，不再返回临时下载地址。首次使用前需按需授权 AI MediaKit 将文件写入您的 VOD 空间或 TOS 桶。 仅在用户明确提供该值时传递；不得由 Agent 生成、推断或补写。', 'type': 'string'})] = Field(None),
+        queue_id: Annotated[str | None, WithJsonSchema({'description': '任务提交的目标队列 ID；不传时默认使用系统自动创建的队列 ID。可将不同业务或优先级的任务提交到不同队列，以按队列对应的项目进行分账。队列可创建和管理，系统会自动分配队列 ID。 仅在用户明确提供该值时传递；不得由 Agent 生成、推断或补写。', 'type': 'string'})] = Field(None),
+        upright_face_only: Annotated[bool | None, WithJsonSchema({'default': True, 'description': '是否只对正向人脸打码。true 仅处理正脸；false 连同侧脸、歪头等非正向人脸也一并打码。不传时默认 true（只处理正向人脸）', 'type': 'boolean', 'x-sites': ['byteplus']})] = Field(None, json_schema_extra={'default': True}),
+    ) -> dict:
+        try:
+            result = get_client().call('face_blur_video', **{
+                key: item for key, item in {'video_url': video_url, 'callback_args': callback_args, 'callback_url': callback_url, 'client_token': client_token, 'face_box_expand': face_box_expand, 'face_confidence': face_confidence, 'mask_mode': mask_mode, 'mask_strength': mask_strength, 'media_output_destination': media_output_destination, 'queue_id': queue_id, 'upright_face_only': upright_face_only}.items()
+                if item is not None
+            })
+            return async_task_response(result)
+        except Exception as exc:
+            return error_response(_structured_error(exc))
+
+    @mcp.tool(name='face_swap_video', description='将用户提供的目标人脸融合替换到视频中的人物上，输出高质量换脸视频，主要适用于生成式视频脱敏需要换脸的场景。')
+    async def face_swap_video(
+        face_mappings: Annotated[list[Any], WithJsonSchema({'description': '人脸映射列表。当前仅支持单人换脸，传入一项即可。', 'items': {'properties': {'target_face_url': {'description': '目标人脸图片 URL，支持 jpeg、png；支持公网 HTTP/HTTPS URL、火山引擎对象存储 tos:// 两种输入协议。建议分辨率为 256×256～1080×1080；要求为清晰可见、无遮挡的正脸；不支持动漫人脸。', 'format': 'media-to-url', 'type': 'string'}}, 'required': ['target_face_url'], 'type': 'object'}, 'maxItems': 1, 'minItems': 1, 'type': 'array'})] = Field(...),
+        video_url: Annotated[str, WithJsonSchema({'description': '待换脸的视频源 URL，当前仅支持 MP4；支持公网 HTTP/HTTPS URL、火山引擎视频点播 vod:// 和火山引擎对象存储 tos:// 三种输入协议。时长不得超过 10 分钟（600 秒）；分辨率不得超过 1080P。', 'format': 'media-to-url', 'type': 'string'})] = Field(...),
+        callback_args: Annotated[str | None, WithJsonSchema({'description': '自定义回调参数；任务完成时会通过事件回调原样返回，用于关联业务；字段长度最大为 512 字节。 仅在用户明确提供该值时传递；不得由 Agent 生成、推断或补写。', 'type': 'string'})] = Field(None),
+        callback_url: Annotated[str | None, WithJsonSchema({'description': '用于接收该任务结果回调的 URL 地址；提供后优先级高于全局回调地址；地址必须以 http:// 或 https:// 开头。 仅在用户明确提供该值时传递；不得由 Agent 生成、推断或补写。', 'type': 'string'})] = Field(None),
+        client_token: Annotated[str | None, WithJsonSchema({'description': '用户请求凭证，用于幂等控制；大小写敏感，长度不超过 64 个 ASCII 可打印字符。 默认不传。用户明确指定时原样使用；用户明确要求重试时，同一逻辑请求的重试链必须复用同一 token。已有 token 时必须复用原值；此前请求未带 token 时，可从本次重试开始创建一次并持续复用，但该 token 不对此前请求提供追溯幂等。业务参数变化视为新请求，不得复用旧 token。不得为每次尝试生成不同值。调用端运行时不判断重试意图，也不自动生成 token。', 'type': 'string'})] = Field(None),
+        media_output_destination: Annotated[str | None, WithJsonSchema({'description': '指定处理产物的目标存储位置；支持将处理产物存储至火山引擎视频点播（VOD）空间或对象存储（TOS）桶。存储至 VOD 时设为 `vod://<您的空间名>`，存储至 TOS 时设为 `tos://<您的桶名>`。设置后，任务结果中的 `url` 相关字段返回 `vod://` 或 `tos://` 格式的资源地址，不再返回临时下载地址。首次使用前需按需授权 AI MediaKit 将文件写入您的 VOD 空间或 TOS 桶。 仅在用户明确提供该值时传递；不得由 Agent 生成、推断或补写。', 'type': 'string'})] = Field(None),
+        queue_id: Annotated[str | None, WithJsonSchema({'description': '任务提交的目标队列 ID；不传时默认使用系统自动创建的队列 ID。可将不同业务或优先级的任务提交到不同队列，以按队列对应的项目进行分账。队列可创建和管理，系统会自动分配队列 ID。 仅在用户明确提供该值时传递；不得由 Agent 生成、推断或补写。', 'type': 'string'})] = Field(None),
+    ) -> dict:
+        try:
+            result = get_client().call('face_swap_video', **{
+                key: item for key, item in {'face_mappings': face_mappings, 'video_url': video_url, 'callback_args': callback_args, 'callback_url': callback_url, 'client_token': client_token, 'media_output_destination': media_output_destination, 'queue_id': queue_id}.items()
+                if item is not None
+            })
+            return async_task_response(result)
+        except Exception as exc:
+            return error_response(_structured_error(exc))
+
+    @mcp.tool(name='generate_highlights_microdrama', description='可用于短剧高光智剪，基于输入剧集的角色和剧情故事线理解提取高光片段，并按时长、产出个数、顺剪或跳剪等要求生成高光混剪、单集预告等视频。')
+    async def generate_highlights_microdrama(
+        video_urls: Annotated[list[Any], WithJsonSchema({'description': '待处理的短剧原片视频 URL 列表。支持公网 HTTP/HTTPS URL、来源于火山引擎视频点播 vod:// 和火山引擎对象存储 tos:// 三种输入协议；支持 mp4、flv、ts、avi、mov、wmv、mkv 等主流视频格式；输入分辨率最高支持 1080p。所有输入文件的累计总时长不得超过 45 分钟。输入素材必须同时包含视频流和音频流，视频画面下半部分必须包含清晰居中的中文字幕，音频轨道中必须包含清晰可识别的中文对话文本。', 'items': {'description': '视频 URL，支持 http:// 或 https:// 格式', 'format': 'media-to-vid', 'type': 'string'}, 'maxItems': 100, 'minItems': 1, 'type': 'array'})] = Field(...),
+        callback_args: Annotated[str | None, WithJsonSchema({'description': '自定义回调参数；任务完成时会通过事件回调原样返回，用于关联业务；字段长度最大为 512 字节。 仅在用户明确提供该值时传递；不得由 Agent 生成、推断或补写。', 'type': 'string'})] = Field(None),
+        callback_url: Annotated[str | None, WithJsonSchema({'description': '用于接收该任务结果回调的 URL 地址；提供后优先级高于全局回调地址；地址必须以 http:// 或 https:// 开头。 仅在用户明确提供该值时传递；不得由 Agent 生成、推断或补写。', 'type': 'string'})] = Field(None),
+        client_token: Annotated[str | None, WithJsonSchema({'description': '用户请求凭证，用于幂等控制；大小写敏感，长度不超过 64 个 ASCII 可打印字符。 默认不传。用户明确指定时原样使用；用户明确要求重试时，同一逻辑请求的重试链必须复用同一 token。已有 token 时必须复用原值；此前请求未带 token 时，可从本次重试开始创建一次并持续复用，但该 token 不对此前请求提供追溯幂等。业务参数变化视为新请求，不得复用旧 token。不得为每次尝试生成不同值。调用端运行时不判断重试意图，也不自动生成 token。', 'type': 'string'})] = Field(None),
+        edit_param: Annotated[dict[str, Any] | None, WithJsonSchema({'description': '高光视频剪辑配置用于控制最终输出视频的视觉风格；留空时默认使用基础剪辑模式。enable_generate_video 为 false 时，该配置将被忽略。', 'properties': {'mode': {'default': 'BasicEdit', 'description': '成片剪辑模式决定是否使用视觉模板，默认为 BasicEdit；支持 BasicEdit 和 TemplateEdit。BasicEdit 表示基础剪辑，不添加额外视觉元素；TemplateEdit 表示模板剪辑，使用指定的短剧三要素视觉模板。', 'enum': ['BasicEdit', 'TemplateEdit'], 'type': 'string'}, 'template_edit': {'description': '短剧模板剪辑参数不是无条件必选；当 mode 为 TemplateEdit 时必须填写。', 'properties': {'hint': {'description': '短剧提示语将显示在画面左侧或右侧，长度不得超过 20 个字符。', 'maxLength': 20, 'type': 'string'}, 'template': {'default': '热门短剧1', 'description': '短剧三要素视觉模板名称决定剧名、角标、提示语的样式和位置，默认为热门短剧1；支持 热门短剧1、热门短剧2、热门短剧3、热门短剧4、热门短剧5。', 'enum': ['热门短剧1', '热门短剧2', '热门短剧3', '热门短剧4', '热门短剧5'], 'type': 'string'}, 'title': {'description': '短剧名称将显示在视频画面中，长度不得超过 22 个字符。', 'maxLength': 22, 'type': 'string'}}, 'type': 'object'}}, 'required': ['mode'], 'type': 'object'})] = Field(None),
+        enable_generate_video: Annotated[bool | None, WithJsonSchema({'default': True, 'description': '是否生成高光混剪视频，默认为 true。true 时生成并输出高光混剪视频；false 时不生成高光混剪视频，传入的 edit_param 将被忽略。', 'type': 'boolean'})] = Field(None, json_schema_extra={'default': True}),
+        enable_return_poster: Annotated[bool | None, WithJsonSchema({'default': False, 'description': '是否在任务结果中返回混剪视频的封面图 URL，默认为 false。true 时返回混剪视频的封面图 URL；false 时不返回封面图。', 'type': 'boolean'})] = Field(None, json_schema_extra={'default': False}),
+        enable_segment_tag: Annotated[bool | None, WithJsonSchema({'description': '是否返回高光片段和分镜标签，默认为 false。true 时在 result.mixvideo_info.clips 与 result.storyboard_info 中额外返回 tags 字段；false 时不返回 tags 字段。', 'type': 'boolean'})] = Field(None),
+        highlight_cuts_param: Annotated[dict[str, Any] | None, WithJsonSchema({'description': '高光智剪参数配置用于控制最终输出视频的时长与个数；留空时默认使用热门短剧1模板。', 'properties': {'cut_mode': {'default': 'Mixed', 'description': '剪辑模式默认为 Mixed；支持 Mixed 和 Sequential。Mixed 表示混剪，打乱高光片段的原始顺序；Sequential 表示顺剪，保持高光片段的原始时间顺序。', 'enum': ['Mixed', 'Sequential'], 'type': 'string'}, 'enable_storyboard': {'default': False, 'description': '控制是否在任务结果中输出详细的分镜信息 storyboard_info，默认为 false。', 'type': 'boolean'}, 'highlight_ending_prompt': {'description': '高光混剪结尾钩子选取偏好，仅在 cut_mode 为 Mixed 的混剪模式下生效。', 'type': 'string'}, 'highlight_segment_prompt': {'description': '高光片段选取偏好，仅在 cut_mode 为 Mixed 的混剪模式下生效。', 'type': 'string'}, 'highlight_start_prompt': {'description': '高光混剪开头起播点选取偏好，仅在 cut_mode 为 Mixed 的混剪模式下生效。', 'type': 'string'}, 'max_duration': {'default': 180, 'description': '期望输出高光视频的最大时长，默认为 180。', 'type': 'number'}, 'max_number': {'default': 6, 'description': '最多输出的高光视频数量，默认为 6。', 'type': 'integer'}, 'min_duration': {'default': 30, 'description': '期望输出高光视频的最小时长，默认为 30。', 'type': 'number'}, 'user_preferred_segments': {'description': '用户期望优先选用的原片内容或片段，支持填写多个，仅在 cut_mode 为 Mixed 的混剪模式下生效。', 'items': {'description': '优先片段：仅含 episode 表示整集优先；含 start_time/end_time 表示该集指定时间区间优先', 'properties': {'end_time': {'description': '优先片段在该输入视频中的结束时间，单位为秒。', 'type': 'number'}, 'episode': {'description': '优先选用的输入视频序号，从 0 开始计数；仅含该序号表示整集优先。', 'minimum': 0, 'type': 'integer'}, 'start_time': {'description': '优先片段在该输入视频中的起始时间，单位为秒；与 end_time 一并提供时，表示该集指定时间区间优先。', 'type': 'number'}}, 'required': ['episode'], 'type': 'object'}, 'type': 'array'}}, 'type': 'object'})] = Field(None),
+        media_output_destination: Annotated[str | None, WithJsonSchema({'description': '指定处理产物的目标存储位置；支持将处理产物存储至火山引擎视频点播（VOD）空间或对象存储（TOS）桶。存储至 VOD 时设为 `vod://<您的空间名>`，存储至 TOS 时设为 `tos://<您的桶名>`。设置后，任务结果中的 `url` 相关字段返回 `vod://` 或 `tos://` 格式的资源地址，不再返回临时下载地址。首次使用前需按需授权 AI MediaKit 将文件写入您的 VOD 空间或 TOS 桶。 仅在用户明确提供该值时传递；不得由 Agent 生成、推断或补写。', 'type': 'string'})] = Field(None),
+        mode: Annotated[str | None, WithJsonSchema({'default': 'StorylineCuts', 'description': '当前版本固定为 StorylineCuts。', 'enum': ['StorylineCuts'], 'type': 'string'})] = Field(None, json_schema_extra={'default': 'StorylineCuts'}),
+        opening_hook_param: Annotated[dict[str, Any] | None, WithJsonSchema({'description': '精彩前置参数用于控制是否在视频开头添加一个极具吸引力的钩子片段来留住观众；留空时默认在视频开头添加精彩前置片段。', 'properties': {'enable_opening_hook': {'default': True, 'description': '是否启用精彩前置开场钩子，默认为 true。', 'type': 'boolean'}, 'max_duration': {'default': 15, 'description': '开场钩子片段的最大时长，默认为 15。', 'type': 'number'}, 'min_clip_duration': {'default': 5, 'description': '构成开场钩子的单个高光片段的最小持续时长，默认为 5。', 'type': 'number'}, 'min_duration': {'default': 5, 'description': '开场钩子片段的最小时长，默认为 5。', 'type': 'number'}, 'min_score': {'default': 3, 'description': '构成开场钩子的单个高光片段所需达到的最低高光分，范围为 [1, 5]，默认为 3。', 'type': 'number'}, 'opening_hook_prompt': {'description': '精彩前置片段选取标准，用自然语言描述开头钩子的筛选偏好。', 'type': 'string'}}, 'type': 'object'})] = Field(None),
+        queue_id: Annotated[str | None, WithJsonSchema({'description': '任务提交的目标队列 ID；不传时默认使用系统自动创建的队列 ID。可将不同业务或优先级的任务提交到不同队列，以按队列对应的项目进行分账。队列可创建和管理，系统会自动分配队列 ID。 仅在用户明确提供该值时传递；不得由 Agent 生成、推断或补写。', 'type': 'string'})] = Field(None),
+        video_ending_mode: Annotated[str | None, WithJsonSchema({'description': '视频结尾选取模式默认为 ReuseMainEnding；支持 ReuseMainEnding 和 SmartSelect。ReuseMainEnding 时优先复用正片剧集结尾；SmartSelect 时使用智能选取模式。', 'enum': ['ReuseMainEnding', 'SmartSelect'], 'type': 'string'})] = Field(None),
+    ) -> dict:
+        try:
+            result = get_client().call('generate_highlights_microdrama', **{
+                key: item for key, item in {'video_urls': video_urls, 'callback_args': callback_args, 'callback_url': callback_url, 'client_token': client_token, 'edit_param': edit_param, 'enable_generate_video': enable_generate_video, 'enable_return_poster': enable_return_poster, 'enable_segment_tag': enable_segment_tag, 'highlight_cuts_param': highlight_cuts_param, 'media_output_destination': media_output_destination, 'mode': mode, 'opening_hook_param': opening_hook_param, 'queue_id': queue_id, 'video_ending_mode': video_ending_mode}.items()
+                if item is not None
+            })
+            return async_task_response(result)
+        except Exception as exc:
+            return error_response(_structured_error(exc))
+
+    @mcp.tool(name='generate_highlights_minigame', description='支持识别小游戏录屏视频中的核心玩法与高光事件，例如连击、通关、极限操作，并快速生成用于买量推广的视频素材。可选提供游戏名称、玩法描述和高光定义，辅助更精准地识别精彩内容。')
+    async def generate_highlights_minigame(
+        video_urls: Annotated[list[Any], WithJsonSchema({'description': '待处理小游戏视频 URL 列表。单次任务仅支持输入 1 个视频文件；支持公网 HTTP/HTTPS、视频点播 vod:// 和对象存储 tos:// 三种输入协议；支持 mp4、flv、ts、avi、mov、wmv、mkv 等主流视频格式；输入文件时长不得超过 10 分钟；输入分辨率最高支持 1080p。', 'items': {'description': '支持对象存储 tos://、视频点播 vod:// 和公网 HTTP/HTTPS URL 输入协议；支持 mp4、flv、ts、avi、mov、wmv、mkv 等主流视频格式；输入文件的时长不得超过 10 分钟；输入分辨率最高支持 1080p。', 'format': 'media-to-vid', 'type': 'string'}, 'maxItems': 1, 'minItems': 1, 'type': 'array'})] = Field(...),
+        callback_args: Annotated[str | None, WithJsonSchema({'description': '自定义回调参数；任务完成时会通过事件回调原样返回，用于关联业务；字段长度最大为 512 字节。 仅在用户明确提供该值时传递；不得由 Agent 生成、推断或补写。', 'type': 'string'})] = Field(None),
+        callback_url: Annotated[str | None, WithJsonSchema({'description': '用于接收该任务结果回调的 URL 地址；提供后优先级高于全局回调地址；地址必须以 http:// 或 https:// 开头。 仅在用户明确提供该值时传递；不得由 Agent 生成、推断或补写。', 'type': 'string'})] = Field(None),
+        client_token: Annotated[str | None, WithJsonSchema({'description': '用户请求凭证，用于幂等控制；大小写敏感，长度不超过 64 个 ASCII 可打印字符。 默认不传。用户明确指定时原样使用；用户明确要求重试时，同一逻辑请求的重试链必须复用同一 token。已有 token 时必须复用原值；此前请求未带 token 时，可从本次重试开始创建一次并持续复用，但该 token 不对此前请求提供追溯幂等。业务参数变化视为新请求，不得复用旧 token。不得为每次尝试生成不同值。调用端运行时不判断重试意图，也不自动生成 token。', 'type': 'string'})] = Field(None),
+        enable_generate_video: Annotated[bool | None, WithJsonSchema({'default': True, 'description': '控制是否生成高光混剪视频，默认 true。true 时生成并输出高光混剪视频；false 时不生成高光混剪视频。', 'type': 'boolean'})] = Field(None, json_schema_extra={'default': True}),
+        media_output_destination: Annotated[str | None, WithJsonSchema({'description': '指定处理产物的目标存储位置；支持将处理产物存储至火山引擎视频点播（VOD）空间或对象存储（TOS）桶。存储至 VOD 时设为 `vod://<您的空间名>`，存储至 TOS 时设为 `tos://<您的桶名>`。设置后，任务结果中的 `url` 相关字段返回 `vod://` 或 `tos://` 格式的资源地址，不再返回临时下载地址。首次使用前需按需授权 AI MediaKit 将文件写入您的 VOD 空间或 TOS 桶。 仅在用户明确提供该值时传递；不得由 Agent 生成、推断或补写。', 'type': 'string'})] = Field(None),
+        minigame_info: Annotated[dict[str, Any] | None, WithJsonSchema({'description': '可选的小游戏描述信息，建议填写以辅助模型更精准地识别高光内容。', 'properties': {'highlight_definition': {'description': '游戏高光时刻或精彩瞬间定义，例如一次消除多个方块或躲避所有障碍物通关。', 'maxLength': 5000, 'type': 'string'}, 'name': {'description': '游戏名称，用于标识游戏内容。', 'maxLength': 5000, 'type': 'string'}, 'play_definition': {'description': '游戏玩法规则或核心特点描述。', 'maxLength': 5000, 'type': 'string'}}, 'type': 'object'})] = Field(None),
+        mode: Annotated[str | None, WithJsonSchema({'default': 'HighlightExtract', 'description': '高光提取模式，当前版本固定为 HighlightExtract。', 'enum': ['HighlightExtract'], 'type': 'string'})] = Field(None, json_schema_extra={'default': 'HighlightExtract'}),
+        queue_id: Annotated[str | None, WithJsonSchema({'description': '任务提交的目标队列 ID；不传时默认使用系统自动创建的队列 ID。可将不同业务或优先级的任务提交到不同队列，以按队列对应的项目进行分账。队列可创建和管理，系统会自动分配队列 ID。 仅在用户明确提供该值时传递；不得由 Agent 生成、推断或补写。', 'type': 'string'})] = Field(None),
+    ) -> dict:
+        try:
+            result = get_client().call('generate_highlights_minigame', **{
+                key: item for key, item in {'video_urls': video_urls, 'callback_args': callback_args, 'callback_url': callback_url, 'client_token': client_token, 'enable_generate_video': enable_generate_video, 'media_output_destination': media_output_destination, 'minigame_info': minigame_info, 'mode': mode, 'queue_id': queue_id}.items()
+                if item is not None
+            })
+            return async_task_response(result)
+        except Exception as exc:
+            return error_response(_structured_error(exc))
+
+    @mcp.tool(name='generate_highlights_movie', description='支持面向电影、电视剧等长视频内容，按剧情故事线识别高光并拆分成多段指定时长的高光片段，用于影视合集分发的短视频素材；算法会识别并去除景色铺垫、缓慢运镜、片头片尾曲等低密度信息；每段拆条带有高光前置开场与结尾钩子设计。')
+    async def generate_highlights_movie(
+        video_url: Annotated[str, WithJsonSchema({'description': 'video_url 是待处理的影视视频源 URL；支持公网 HTTP/HTTPS URL、vod:// 和 tos:// 三种输入协议；支持 mp4、flv、ts、avi、mov、wmv、mkv 等主流视频格式；单次任务仅支持单个视频文件；输入视频最高支持 1080p 分辨率，时长不得超过 180 分钟，必须同时包含视频流和音频流；输入更适合电影，也适用于电视剧等长视频内容，不建议用于纯综艺、纪录片、广告或纯 BGM 视频；建议音频轨道包含清晰可识别的中文对话文本，以帮助算法准确理解剧情逻辑。', 'format': 'media-to-vid', 'type': 'string'})] = Field(...),
+        callback_args: Annotated[str | None, WithJsonSchema({'description': '自定义回调参数；任务完成时会通过事件回调原样返回，用于关联业务；字段长度最大为 512 字节。 仅在用户明确提供该值时传递；不得由 Agent 生成、推断或补写。', 'type': 'string'})] = Field(None),
+        callback_url: Annotated[str | None, WithJsonSchema({'description': '用于接收该任务结果回调的 URL 地址；提供后优先级高于全局回调地址；地址必须以 http:// 或 https:// 开头。 仅在用户明确提供该值时传递；不得由 Agent 生成、推断或补写。', 'type': 'string'})] = Field(None),
+        client_token: Annotated[str | None, WithJsonSchema({'description': '用户请求凭证，用于幂等控制；大小写敏感，长度不超过 64 个 ASCII 可打印字符。 默认不传。用户明确指定时原样使用；用户明确要求重试时，同一逻辑请求的重试链必须复用同一 token。已有 token 时必须复用原值；此前请求未带 token 时，可从本次重试开始创建一次并持续复用，但该 token 不对此前请求提供追溯幂等。业务参数变化视为新请求，不得复用旧 token。不得为每次尝试生成不同值。调用端运行时不判断重试意图，也不自动生成 token。', 'type': 'string'})] = Field(None),
+        enable_generate_video: Annotated[bool | None, WithJsonSchema({'default': True, 'description': 'enable_generate_video 默认值为 true；为 true 时生成拆条视频文件，并在结果中返回 video_urls；为 false 时仅输出时间戳、评分、标题等片段元信息，不生成视频文件，可用于自定义二次剪辑。', 'type': 'boolean'})] = Field(None, json_schema_extra={'default': True}),
+        highlight_cuts_param: Annotated[dict[str, Any] | None, WithJsonSchema({'description': 'highlight_cuts_param 控制每段拆条的目标时长范围以及是否返回详细片段时间线信息；留空时默认生成 90\\-180 秒的拆条片段。', 'properties': {'enable_detailed_info': {'default': False, 'description': 'enable_detailed_info 默认值为 false；控制是否在 clips 中输出每段拆条的片段类型、评分及原始视频和拆条视频中的起止时间等详细信息。', 'type': 'boolean'}, 'max_duration': {'default': 180, 'description': 'max_duration 表示单个拆条片段的最大时长，单位为秒；默认值为 180 秒；范围为 1 到 600；建议不超过 180 秒（3 分钟）以贴合短视频平台分发节奏。', 'maximum': 600, 'minimum': 1, 'type': 'number'}, 'min_duration': {'default': 90, 'description': 'min_duration 表示单个拆条片段的最短时长，单位为秒；默认值为 90 秒；范围为 1 到 600。', 'maximum': 600, 'minimum': 1, 'type': 'number'}}, 'type': 'object'})] = Field(None),
+        media_output_destination: Annotated[str | None, WithJsonSchema({'description': '指定处理产物的目标存储位置；支持将处理产物存储至火山引擎视频点播（VOD）空间或对象存储（TOS）桶。存储至 VOD 时设为 `vod://<您的空间名>`，存储至 TOS 时设为 `tos://<您的桶名>`。设置后，任务结果中的 `url` 相关字段返回 `vod://` 或 `tos://` 格式的资源地址，不再返回临时下载地址。首次使用前需按需授权 AI MediaKit 将文件写入您的 VOD 空间或 TOS 桶。 仅在用户明确提供该值时传递；不得由 Agent 生成、推断或补写。', 'type': 'string'})] = Field(None),
+        opening_hook_param: Annotated[dict[str, Any] | None, WithJsonSchema({'description': 'opening_hook_param 控制是否在每个拆条片段开头拼接最精彩的钩子片段；留空时默认添加 5\\-15 秒的高光前置。', 'properties': {'is_enabled': {'default': True, 'description': 'is_enabled 默认值为 true；为 true 时系统自动提取最精彩片段置于拆条视频开头；为 false 时按原始剧情顺序输出拆条视频。', 'type': 'boolean'}, 'max_duration': {'default': 15, 'description': 'opening_hook_param.max_duration 默认值为 15 秒，范围为 0 到 60。', 'maximum': 60, 'minimum': 0, 'type': 'number'}, 'min_clip_duration': {'default': 5, 'description': 'min_clip_duration 是构成高光前置的单个片段最短时长，用于避免碎片过多造成频闪；默认值为 5；范围为 0 到 60。', 'maximum': 60, 'minimum': 0, 'type': 'number'}, 'min_duration': {'default': 5, 'description': 'opening_hook_param.min_duration 默认值为 5 秒，范围为 0 到 60。', 'maximum': 60, 'minimum': 0, 'type': 'number'}, 'min_score': {'default': 4, 'description': 'min_score 是筛选高光前置片段的最低评分，数值越高表示筛选标准越严格；默认值为 4；范围为 0 到 5。', 'maximum': 5, 'minimum': 0, 'type': 'number'}}, 'type': 'object'})] = Field(None),
+        queue_id: Annotated[str | None, WithJsonSchema({'description': '任务提交的目标队列 ID；不传时默认使用系统自动创建的队列 ID。可将不同业务或优先级的任务提交到不同队列，以按队列对应的项目进行分账。队列可创建和管理，系统会自动分配队列 ID。 仅在用户明确提供该值时传递；不得由 Agent 生成、推断或补写。', 'type': 'string'})] = Field(None),
+    ) -> dict:
+        try:
+            result = get_client().call('generate_highlights_movie', **{
+                key: item for key, item in {'video_url': video_url, 'callback_args': callback_args, 'callback_url': callback_url, 'client_token': client_token, 'enable_generate_video': enable_generate_video, 'highlight_cuts_param': highlight_cuts_param, 'media_output_destination': media_output_destination, 'opening_hook_param': opening_hook_param, 'queue_id': queue_id}.items()
+                if item is not None
+            })
+            return async_task_response(result)
+        except Exception as exc:
+            return error_response(_structured_error(exc))
+
+    @mcp.tool(name='martencode_video', description='极智超清在转码时智能分析视频的场景、动作、内容和纹理，选择最优编码参数，以相对较低码率输出主观画质更优的视频，降低带宽成本并改善用户视觉体验。')
+    async def martencode_video(
+        container_format: Annotated[str, WithJsonSchema({'default': 'MP4', 'description': '输出视频的封装格式，支持 MP4、FLV、MPEGTS，默认 MP4。', 'enum': ['MP4', 'FLV', 'MPEGTS'], 'type': 'string'})] = Field(...),
+        video: Annotated[dict[str, Any], WithJsonSchema({'description': '视频转码参数配置。', 'properties': {'bitrate_crf': {'default': 25, 'description': '码率 CRF 参数可省略，仅在 video.bitrate_mode=crf 时生效，是 crf 模式主要质量控制器；支持 0 至 51，默认 25；数值越小，画质越高且文件体积越大，0 表示无损。', 'maximum': 51, 'minimum': 0, 'type': 'number'}, 'bitrate_kbps': {'default': 2000, 'description': '视频码率目标值，单位 Kbps，支持 10 至 50000，默认 2000；abr 模式下是平均码率目标，cbr 模式下是恒定码率目标，crf 模式下是最大码率限制。', 'maximum': 50000, 'minimum': 10, 'type': 'integer'}, 'bitrate_mode': {'default': 'crf', 'description': '码率控制模式，支持 crf、abr、cbr，默认 crf。crf 模式尽量保持整体视觉质量在 video.bitrate_crf 设定水平，同时确保瞬时码率不超过 video.bitrate_kbps，推荐大多数场景使用；abr 模式使输出整体平均码率接近 video.bitrate_kbps，适用于需要把文件大小控制在特定范围的场景；cbr 模式尝试让视频流每一秒保持在 video.bitrate_kbps 设定码率，画质随复杂度波动而码率稳定，适用于对网络传输稳定性要求极高的流媒体场景。', 'enum': ['crf', 'abr', 'cbr'], 'type': 'string'}, 'codec': {'default': 'h264', 'description': '视频编码格式，支持 h264、h265，默认 h264。', 'enum': ['h264', 'h265'], 'type': 'string'}, 'fps': {'description': '目标帧率可省略，支持 1 至 240；未设置时输出完全遵循原视频帧率。设置后会激活 video.fps_mode；vfr 下表示最大帧率，cfr 下表示恒定帧率。', 'maximum': 240, 'minimum': 1, 'type': 'integer'}, 'fps_mode': {'default': 'vfr', 'description': '帧率模式可省略，支持 vfr、cfr，默认 vfr。仅在设置 video.fps 后生效；未提供 video.fps 时遵循源帧率并忽略 video.fps_mode。vfr 模式把 video.fps 作为最高帧率，源帧率较低时保留，较高时降低到设定值，避免不必要的帧率过度提升；cfr 模式把 video.fps 作为强制输出帧率，无论源帧率如何都转换为该恒定帧率。', 'enum': ['vfr', 'cfr'], 'type': 'string'}, 'is_hdr_to_sdr': {'default': True, 'description': '可省略，控制是否将 HDR 视频转换为 SDR，默认 true；false 时保留 HDR。', 'type': 'boolean'}, 'scale_height': {'description': '目标高度，单位 px，可省略，支持 0 至 4320；仅在 video.scale_type=2 时生效，只传宽或高之一时，另一边按比例缩放。', 'maximum': 4320, 'minimum': 0, 'type': 'integer'}, 'scale_long': {'description': '目标长边，单位 px，可省略，支持 0 至 4320；仅在 video.scale_type=1 时生效，只传短边或长边之一时，另一边按比例缩放。', 'maximum': 4320, 'minimum': 0, 'type': 'integer'}, 'scale_mode': {'default': 0, 'description': '伸缩模式可省略，支持 0、1、2，默认 0，仅在 video.scale_type 为 1 或 2 时生效。0 不上采：源片比目标大时缩小，比目标小时保持原尺寸；1 拉伸上采，强制拉伸到目标宽高，可能导致画面变形；2 补黑边上采，等比缩放到目标框内，不足部分用黑边填充。', 'enum': [0, 1, 2], 'type': 'integer'}, 'scale_short': {'description': '目标短边，单位 px，可省略，支持 0 至 4320；仅在 video.scale_type=1 时生效，只传短边或长边之一时，另一边按比例缩放。', 'maximum': 4320, 'minimum': 0, 'type': 'integer'}, 'scale_type': {'default': 0, 'description': '伸缩限制可省略，支持 0、1、2，默认 0。0 为跟随片源模式，不进行任何缩放，支持最高 8K 分辨率，video.scale_mode、video.scale_width、video.scale_height、video.scale_short、video.scale_long 均无效；1 为长短边限制模式，激活 video.scale_short 和 video.scale_long，可设置长边或短边，另一边按原比例缩放，支持最高 4K 分辨率；2 为宽高限制模式，激活 video.scale_width 和 video.scale_height，可设置宽度或高度，另一边按原比例缩放，支持最高 4K 分辨率。', 'enum': [0, 1, 2], 'type': 'integer'}, 'scale_width': {'description': '目标宽度，单位 px，可省略，支持 0 至 4320；仅在 video.scale_type=2 时生效，只传宽或高之一时，另一边按比例缩放。', 'maximum': 4320, 'minimum': 0, 'type': 'integer'}}, 'required': ['codec', 'bitrate_mode', 'bitrate_kbps'], 'type': 'object'})] = Field(...),
+        video_url: Annotated[str, WithJsonSchema({'description': '待转码视频的 URL，支持公网 HTTP/HTTPS URL、视频点播 vod:// 和对象存储 tos:// 三种输入协议；支持 mp4、mov、mkv、flv、ts、avi、wmv 等主流视频格式。', 'format': 'media-to-vid', 'type': 'string'})] = Field(...),
+        audio: Annotated[dict[str, Any] | None, WithJsonSchema({'description': '音频转码参数配置可省略；未传 audio 时，音频使用默认参数转码：编码格式为 aac，其余参数跟随源文件。', 'properties': {'bitrate_kbps': {'default': 128, 'description': '音频码率，单位 Kbps，支持 10 至 500，默认 128；未设置时输出音频码率与原始音频一致。', 'maximum': 500, 'minimum': 10, 'type': 'integer'}, 'bitrate_mode': {'default': 'cbr', 'description': '音频码率控制模式，支持 cbr、cae，默认 cbr。cbr 仅在 video.codec=h264 时支持，会尝试使音频流每一秒保持在 audio.bitrate_kbps 设定码率，适合对带宽稳定性要求高的流式传输场景；cae 仅在 audio.codec=aac 时支持，会根据音频复杂度动态调整瞬时码率，并确保整个文件平均码率接近 audio.bitrate_kbps 目标值。', 'enum': ['cbr', 'cae'], 'type': 'string'}, 'channels': {'default': 2, 'description': '声道数可省略，支持 1、2，默认 2；1 表示单声道，2 表示双声道。', 'enum': [1, 2], 'type': 'integer'}, 'codec': {'default': 'aac', 'description': '音频编码格式，支持 aac，默认 aac。', 'enum': ['aac'], 'type': 'string'}, 'sample_rate': {'default': 44100, 'description': '音频采样率，单位 Hz，支持 8000、11025、12000、16000、22050、24000、32000、44100、48000、64000、88200、96000，默认 44100。', 'enum': [8000, 11025, 12000, 16000, 22050, 24000, 32000, 44100, 48000, 64000, 88200, 96000], 'type': 'integer'}, 'volume_integrated_loudness': {'default': -12, 'description': '音频整体感知音量，单位 LUFS，可省略，支持 -70 至 -5，默认 -12。', 'maximum': -5, 'minimum': -70, 'type': 'number'}, 'volume_loudness_range': {'default': 7, 'description': '响度范围用于调节最响亮和最安静部分差异，单位 LU，可省略，支持 1 至 20，默认 7；在 audio.volume_method=2Pass 时生效。', 'maximum': 20, 'minimum': 1, 'type': 'number'}, 'volume_method': {'description': '音量均衡算法可省略；未设置时不处理音量。2Pass 启用两阶段响度分析与处理，且三个响度参数生效。', 'enum': ['2Pass'], 'type': 'string'}, 'volume_true_peak': {'default': 0, 'description': '音频最高上限用于防止削波失真，单位 dBTP，可省略，支持 -9 至 0，默认 0。', 'maximum': 0, 'minimum': -9, 'type': 'number'}}, 'required': ['codec', 'sample_rate', 'bitrate_mode', 'bitrate_kbps'], 'type': 'object', 'x-skip-default-populate-on-missing-object': True})] = Field(None),
+        callback_args: Annotated[str | None, WithJsonSchema({'description': '自定义回调参数；任务完成时会通过事件回调原样返回，用于关联业务；字段长度最大为 512 字节。 仅在用户明确提供该值时传递；不得由 Agent 生成、推断或补写。', 'type': 'string'})] = Field(None),
+        callback_url: Annotated[str | None, WithJsonSchema({'description': '用于接收该任务结果回调的 URL 地址；提供后优先级高于全局回调地址；地址必须以 http:// 或 https:// 开头。 仅在用户明确提供该值时传递；不得由 Agent 生成、推断或补写。', 'type': 'string'})] = Field(None),
+        client_token: Annotated[str | None, WithJsonSchema({'description': '用户请求凭证，用于幂等控制；大小写敏感，长度不超过 64 个 ASCII 可打印字符。 默认不传。用户明确指定时原样使用；用户明确要求重试时，同一逻辑请求的重试链必须复用同一 token。已有 token 时必须复用原值；此前请求未带 token 时，可从本次重试开始创建一次并持续复用，但该 token 不对此前请求提供追溯幂等。业务参数变化视为新请求，不得复用旧 token。不得为每次尝试生成不同值。调用端运行时不判断重试意图，也不自动生成 token。', 'type': 'string'})] = Field(None),
+        media_output_destination: Annotated[str | None, WithJsonSchema({'description': '指定处理产物的目标存储位置；支持将处理产物存储至火山引擎视频点播（VOD）空间或对象存储（TOS）桶。存储至 VOD 时设为 `vod://<您的空间名>`，存储至 TOS 时设为 `tos://<您的桶名>`。设置后，任务结果中的 `url` 相关字段返回 `vod://` 或 `tos://` 格式的资源地址，不再返回临时下载地址。首次使用前需按需授权 AI MediaKit 将文件写入您的 VOD 空间或 TOS 桶。 仅在用户明确提供该值时传递；不得由 Agent 生成、推断或补写。', 'type': 'string'})] = Field(None),
+        metadata_add_tags: Annotated[list[Any] | None, WithJsonSchema({'description': '可省略，为输出视频新增由 key 和 value 组成的元信息标签；新增标签与保留标签同名时覆盖源文件值；对 MPEGTS 封装格式无效。', 'items': {'properties': {'key': {'description': '标签键。', 'type': 'string'}, 'value': {'description': '标签值。', 'type': 'string'}}, 'type': 'object'}, 'type': 'array'})] = Field(None),
+        metadata_keep_tags: Annotated[list[Any] | None, WithJsonSchema({'description': '可省略，指定从源视频保留的元信息标签键列表；默认转码会丢弃大部分元信息，例如标题和艺术家；对 MPEGTS 封装格式无效。', 'items': {'type': 'string'}, 'type': 'array'})] = Field(None),
+        queue_id: Annotated[str | None, WithJsonSchema({'description': '任务提交的目标队列 ID；不传时默认使用系统自动创建的队列 ID。可将不同业务或优先级的任务提交到不同队列，以按队列对应的项目进行分账。队列可创建和管理，系统会自动分配队列 ID。 仅在用户明确提供该值时传递；不得由 Agent 生成、推断或补写。', 'type': 'string'})] = Field(None),
+    ) -> dict:
+        try:
+            result = get_client().call('martencode_video', **{
+                key: item for key, item in {'container_format': container_format, 'video': video, 'video_url': video_url, 'audio': audio, 'callback_args': callback_args, 'callback_url': callback_url, 'client_token': client_token, 'media_output_destination': media_output_destination, 'metadata_add_tags': metadata_add_tags, 'metadata_keep_tags': metadata_keep_tags, 'queue_id': queue_id}.items()
+                if item is not None
+            })
+            return async_task_response(result)
+        except Exception as exc:
+            return error_response(_structured_error(exc))
+
+    @mcp.tool(name='matte_greenscreen_video', description='可对绿幕或纯色背景的视频进行抠图，自动识别并保留主体，最终生成背景透明或纯色背景的视频。')
+    async def matte_greenscreen_video(
+        video_url: Annotated[str, WithJsonSchema({'description': '待抠图的视频 URL；支持公网 HTTP/HTTPS URL、视频点播 vod:// 和对象存储 tos:// 三种输入协议；支持 mp4、flv、ts、avi、mov、mkv、wmv 等主流视频格式。', 'format': 'media-to-vid', 'type': 'string'})] = Field(...),
+        background_color: Annotated[str | None, WithJsonSchema({'description': '输出视频的背景颜色；支持 black、white、green，默认为黑色；仅当 format 为 MP4 时生效。', 'enum': ['black', 'white', 'green'], 'type': 'string'})] = Field(None),
+        callback_args: Annotated[str | None, WithJsonSchema({'description': '自定义回调参数；任务完成时会通过事件回调原样返回，用于关联业务；字段长度最大为 512 字节。 仅在用户明确提供该值时传递；不得由 Agent 生成、推断或补写。', 'type': 'string'})] = Field(None),
+        callback_url: Annotated[str | None, WithJsonSchema({'description': '用于接收该任务结果回调的 URL 地址；提供后优先级高于全局回调地址；地址必须以 http:// 或 https:// 开头。 仅在用户明确提供该值时传递；不得由 Agent 生成、推断或补写。', 'type': 'string'})] = Field(None),
+        client_token: Annotated[str | None, WithJsonSchema({'description': '用户请求凭证，用于幂等控制；大小写敏感，长度不超过 64 个 ASCII 可打印字符。 默认不传。用户明确指定时原样使用；用户明确要求重试时，同一逻辑请求的重试链必须复用同一 token。已有 token 时必须复用原值；此前请求未带 token 时，可从本次重试开始创建一次并持续复用，但该 token 不对此前请求提供追溯幂等。业务参数变化视为新请求，不得复用旧 token。不得为每次尝试生成不同值。调用端运行时不判断重试意图，也不自动生成 token。', 'type': 'string'})] = Field(None),
+        format: Annotated[str | None, WithJsonSchema({'default': 'WEBM', 'description': '输出视频的格式；支持 WEBM、MOV、MP4，默认是 WEBM；WEBM 和 MOV 输出透明背景，支持 Alpha 透明通道；MP4 输出纯色背景。', 'enum': ['MOV', 'WEBM', 'MP4'], 'type': 'string'})] = Field(None, json_schema_extra={'default': 'WEBM'}),
+        media_output_destination: Annotated[str | None, WithJsonSchema({'description': '指定处理产物的目标存储位置；支持将处理产物存储至火山引擎视频点播（VOD）空间或对象存储（TOS）桶。存储至 VOD 时设为 `vod://<您的空间名>`，存储至 TOS 时设为 `tos://<您的桶名>`。设置后，任务结果中的 `url` 相关字段返回 `vod://` 或 `tos://` 格式的资源地址，不再返回临时下载地址。首次使用前需按需授权 AI MediaKit 将文件写入您的 VOD 空间或 TOS 桶。 仅在用户明确提供该值时传递；不得由 Agent 生成、推断或补写。', 'type': 'string'})] = Field(None),
+        queue_id: Annotated[str | None, WithJsonSchema({'description': '任务提交的目标队列 ID；不传时默认使用系统自动创建的队列 ID。可将不同业务或优先级的任务提交到不同队列，以按队列对应的项目进行分账。队列可创建和管理，系统会自动分配队列 ID。 仅在用户明确提供该值时传递；不得由 Agent 生成、推断或补写。', 'type': 'string'})] = Field(None),
+    ) -> dict:
+        try:
+            result = get_client().call('matte_greenscreen_video', **{
+                key: item for key, item in {'video_url': video_url, 'background_color': background_color, 'callback_args': callback_args, 'callback_url': callback_url, 'client_token': client_token, 'format': format, 'media_output_destination': media_output_destination, 'queue_id': queue_id}.items()
+                if item is not None
+            })
+            return async_task_response(result)
+        except Exception as exc:
+            return error_response(_structured_error(exc))
+
+    @mcp.tool(name='matte_portrait_video', description='自动识别视频中的人物主体，移除原始背景，并生成背景透明或纯色背景的视频文件，适用于背景替换等后期处理场景。')
+    async def matte_portrait_video(
+        video_url: Annotated[str, WithJsonSchema({'description': '指定待抠图的视频 URL，支持 mp4、flv、ts、avi、mov、mkv、wmv 等主流视频格式；支持公网 HTTP/HTTPS URL、视频点播 vod:// 和对象存储 tos:// 三种输入协议。', 'format': 'media-to-vid', 'type': 'string'})] = Field(...),
+        background_color: Annotated[str | None, WithJsonSchema({'description': '输出视频的背景颜色；black 表示黑色，white 表示白色，green 表示绿色，默认为绿色；仅当 format 为 MP4 时生效。', 'enum': ['black', 'white', 'green'], 'type': 'string'})] = Field(None),
+        callback_args: Annotated[str | None, WithJsonSchema({'description': '自定义回调参数；任务完成时会通过事件回调原样返回，用于关联业务；字段长度最大为 512 字节。 仅在用户明确提供该值时传递；不得由 Agent 生成、推断或补写。', 'type': 'string'})] = Field(None),
+        callback_url: Annotated[str | None, WithJsonSchema({'description': '用于接收该任务结果回调的 URL 地址；提供后优先级高于全局回调地址；地址必须以 http:// 或 https:// 开头。 仅在用户明确提供该值时传递；不得由 Agent 生成、推断或补写。', 'type': 'string'})] = Field(None),
+        client_token: Annotated[str | None, WithJsonSchema({'description': '用户请求凭证，用于幂等控制；大小写敏感，长度不超过 64 个 ASCII 可打印字符。 默认不传。用户明确指定时原样使用；用户明确要求重试时，同一逻辑请求的重试链必须复用同一 token。已有 token 时必须复用原值；此前请求未带 token 时，可从本次重试开始创建一次并持续复用，但该 token 不对此前请求提供追溯幂等。业务参数变化视为新请求，不得复用旧 token。不得为每次尝试生成不同值。调用端运行时不判断重试意图，也不自动生成 token。', 'type': 'string'})] = Field(None),
+        format: Annotated[str | None, WithJsonSchema({'default': 'WEBM', 'description': '输出视频的格式，默认为 WEBM。MP4 输出 MP4 格式和纯色背景，并可选用 background_color 指定背景颜色。MOV 输出 QuickTime Movie 格式和透明背景，支持 Alpha 透明通道。WEBM 输出 WebM 格式和透明背景，支持 Alpha 透明通道。', 'enum': ['MOV', 'WEBM', 'MP4'], 'type': 'string'})] = Field(None, json_schema_extra={'default': 'WEBM'}),
+        media_output_destination: Annotated[str | None, WithJsonSchema({'description': '指定处理产物的目标存储位置；支持将处理产物存储至火山引擎视频点播（VOD）空间或对象存储（TOS）桶。存储至 VOD 时设为 `vod://<您的空间名>`，存储至 TOS 时设为 `tos://<您的桶名>`。设置后，任务结果中的 `url` 相关字段返回 `vod://` 或 `tos://` 格式的资源地址，不再返回临时下载地址。首次使用前需按需授权 AI MediaKit 将文件写入您的 VOD 空间或 TOS 桶。 仅在用户明确提供该值时传递；不得由 Agent 生成、推断或补写。', 'type': 'string'})] = Field(None),
+        queue_id: Annotated[str | None, WithJsonSchema({'description': '任务提交的目标队列 ID；不传时默认使用系统自动创建的队列 ID。可将不同业务或优先级的任务提交到不同队列，以按队列对应的项目进行分账。队列可创建和管理，系统会自动分配队列 ID。 仅在用户明确提供该值时传递；不得由 Agent 生成、推断或补写。', 'type': 'string'})] = Field(None),
+    ) -> dict:
+        try:
+            result = get_client().call('matte_portrait_video', **{
+                key: item for key, item in {'video_url': video_url, 'background_color': background_color, 'callback_args': callback_args, 'callback_url': callback_url, 'client_token': client_token, 'format': format, 'media_output_destination': media_output_destination, 'queue_id': queue_id}.items()
+                if item is not None
+            })
+            return async_task_response(result)
+        except Exception as exc:
+            return error_response(_structured_error(exc))
+
+    @mcp.tool(name='probe_video_metadata', description='探测输入的视频 URL，输出标准化的媒资元信息。')
+    async def probe_video_metadata(
+        video_url: Annotated[str, WithJsonSchema({'description': '待探测的视频 URL。支持 mp4、flv、ts、avi、mov、wmv、mkv 等主流视频格式。支持公网 HTTP/HTTPS URL、火山引擎视频点播和火山引擎对象存储三种输入协议。', 'format': 'media-to-vid', 'type': 'string'})] = Field(...),
+        callback_url: Annotated[str | None, WithJsonSchema({'description': '用于接收该任务结果回调的 URL 地址；提供后优先级高于全局回调地址；地址必须以 http:// 或 https:// 开头。 仅在用户明确提供该值时传递；不得由 Agent 生成、推断或补写。', 'type': 'string'})] = Field(None),
+        queue_id: Annotated[str | None, WithJsonSchema({'description': '任务提交的目标队列 ID；不传时默认使用系统自动创建的队列 ID。可将不同业务或优先级的任务提交到不同队列，以按队列对应的项目进行分账。队列可创建和管理，系统会自动分配队列 ID。 仅在用户明确提供该值时传递；不得由 Agent 生成、推断或补写。', 'type': 'string'})] = Field(None),
+    ) -> dict:
+        try:
+            result = get_client().call('probe_video_metadata', **{
+                key: item for key, item in {'video_url': video_url, 'callback_url': callback_url, 'queue_id': queue_id}.items()
+                if item is not None
+            })
+            return async_task_response(result)
+        except Exception as exc:
+            return error_response(_structured_error(exc))
+
+    @mcp.tool(name='remux_video', description='视频转封装用于调整视频容器格式，仅修改容器格式，不会重新编解码音视频码流，适用于点播分发适配、流媒体切片打包与多端兼容等场景。')
+    async def remux_video(
+        container_format: Annotated[str, WithJsonSchema({'default': 'MP4', 'description': '目标封装格式，支持 MP4、FLV、MPEGTS，默认值为 MP4。', 'enum': ['MP4', 'FLV', 'MPEGTS'], 'type': 'string'})] = Field(...),
+        video_url: Annotated[str, WithJsonSchema({'description': '待处理视频的 URL，支持公网 HTTP/HTTPS URL、火山引擎视频点播 vod:// 和火山引擎对象存储 tos:// 三种输入协议。', 'format': 'media-to-vid', 'type': 'string'})] = Field(...),
+        callback_args: Annotated[str | None, WithJsonSchema({'description': '自定义回调参数；任务完成时会通过事件回调原样返回，用于关联业务；字段长度最大为 512 字节。 仅在用户明确提供该值时传递；不得由 Agent 生成、推断或补写。', 'type': 'string'})] = Field(None),
+        callback_url: Annotated[str | None, WithJsonSchema({'description': '用于接收该任务结果回调的 URL 地址；提供后优先级高于全局回调地址；地址必须以 http:// 或 https:// 开头。 仅在用户明确提供该值时传递；不得由 Agent 生成、推断或补写。', 'type': 'string'})] = Field(None),
+        client_token: Annotated[str | None, WithJsonSchema({'description': '用户请求凭证，用于幂等控制；大小写敏感，长度不超过 64 个 ASCII 可打印字符。 默认不传。用户明确指定时原样使用；用户明确要求重试时，同一逻辑请求的重试链必须复用同一 token。已有 token 时必须复用原值；此前请求未带 token 时，可从本次重试开始创建一次并持续复用，但该 token 不对此前请求提供追溯幂等。业务参数变化视为新请求，不得复用旧 token。不得为每次尝试生成不同值。调用端运行时不判断重试意图，也不自动生成 token。', 'type': 'string'})] = Field(None),
+        media_output_destination: Annotated[str | None, WithJsonSchema({'description': '指定处理产物的目标存储位置；支持将处理产物存储至火山引擎视频点播（VOD）空间或对象存储（TOS）桶。存储至 VOD 时设为 `vod://<您的空间名>`，存储至 TOS 时设为 `tos://<您的桶名>`。设置后，任务结果中的 `url` 相关字段返回 `vod://` 或 `tos://` 格式的资源地址，不再返回临时下载地址。首次使用前需按需授权 AI MediaKit 将文件写入您的 VOD 空间或 TOS 桶。 仅在用户明确提供该值时传递；不得由 Agent 生成、推断或补写。', 'type': 'string'})] = Field(None),
+        metadata_add_tags: Annotated[list[Any] | None, WithJsonSchema({'description': '可选填写需要为输出视频新增的元信息标签列表，每个标签由 key 和 value 组成；对 MPEGTS 封装格式无效；新增标签与被保留标签同名时，会覆盖源文件的值。', 'items': {'properties': {'key': {'description': '标签键；每个标签由 key 和 value 组成。', 'type': 'string'}, 'value': {'description': '标签值；每个标签由 key 和 value 组成。', 'type': 'string'}}, 'type': 'object'}, 'type': 'array'})] = Field(None),
+        metadata_keep_tags: Annotated[list[Any] | None, WithJsonSchema({'description': '可选填写需要从源视频保留的元信息标签列表，用于指定需要保留的标签键（Key）；默认情况下转码过程会丢弃大部分元信息（如标题、艺术家等）；对 MPEGTS 封装格式无效。', 'items': {'type': 'string'}, 'type': 'array'})] = Field(None),
+        queue_id: Annotated[str | None, WithJsonSchema({'description': '任务提交的目标队列 ID；不传时默认使用系统自动创建的队列 ID。可将不同业务或优先级的任务提交到不同队列，以按队列对应的项目进行分账。队列可创建和管理，系统会自动分配队列 ID。 仅在用户明确提供该值时传递；不得由 Agent 生成、推断或补写。', 'type': 'string'})] = Field(None),
+    ) -> dict:
+        try:
+            result = get_client().call('remux_video', **{
+                key: item for key, item in {'container_format': container_format, 'video_url': video_url, 'callback_args': callback_args, 'callback_url': callback_url, 'client_token': client_token, 'media_output_destination': media_output_destination, 'metadata_add_tags': metadata_add_tags, 'metadata_keep_tags': metadata_keep_tags, 'queue_id': queue_id}.items()
+                if item is not None
+            })
+            return async_task_response(result)
+        except Exception as exc:
+            return error_response(_structured_error(exc))
+
+    @mcp.tool(name='segment_scenes', description='依据视频的转场和画面内容变化自动切分多个场景片段，输出每个场景片段的时间轴信息与对应的独立视频文件。')
+    async def segment_scenes(
+        video_url: Annotated[str, WithJsonSchema({'description': 'video_url 是待处理的视频 URL。视频来源支持公网 HTTP/HTTPS URL、火山引擎视频点播 vod:// 和火山引擎对象存储 tos:// 三种输入协议。支持 mp4、flv、ts、avi、mov、wmv、mkv 等主流视频格式。单个视频时长必须不超过 2 小时。', 'format': 'media-to-vid', 'type': 'string'})] = Field(...),
+        callback_args: Annotated[str | None, WithJsonSchema({'description': '自定义回调参数；任务完成时会通过事件回调原样返回，用于关联业务；字段长度最大为 512 字节。 仅在用户明确提供该值时传递；不得由 Agent 生成、推断或补写。', 'type': 'string'})] = Field(None),
+        callback_url: Annotated[str | None, WithJsonSchema({'description': '用于接收该任务结果回调的 URL 地址；提供后优先级高于全局回调地址；地址必须以 http:// 或 https:// 开头。 仅在用户明确提供该值时传递；不得由 Agent 生成、推断或补写。', 'type': 'string'})] = Field(None),
+        client_token: Annotated[str | None, WithJsonSchema({'description': '用户请求凭证，用于幂等控制；大小写敏感，长度不超过 64 个 ASCII 可打印字符。 默认不传。用户明确指定时原样使用；用户明确要求重试时，同一逻辑请求的重试链必须复用同一 token。已有 token 时必须复用原值；此前请求未带 token 时，可从本次重试开始创建一次并持续复用，但该 token 不对此前请求提供追溯幂等。业务参数变化视为新请求，不得复用旧 token。不得为每次尝试生成不同值。调用端运行时不判断重试意图，也不自动生成 token。', 'type': 'string'})] = Field(None),
+        enable_clip_fade: Annotated[bool | None, WithJsonSchema({'default': False, 'description': 'enable_clip_fade 控制是否将检测到的淡入或淡出片段作为独立切片输出。enable_clip_fade 的默认值为 false。enable_clip_fade 为 true 且视频存在明显淡入或淡出过渡时，会将其分割为独立切片。enable_clip_fade 为 false 时不独立输出淡入或淡出片段，而将其视为前后场景的一部分并合并到相邻切片。', 'type': 'boolean'})] = Field(None, json_schema_extra={'default': False}),
+        max_duration: Annotated[float | None, WithJsonSchema({'description': 'max_duration 表示单个切片的最大时长，单位为秒。max_duration 的默认值为 30 秒。max_duration 必须大于或等于 min_duration。大于 max_duration 的片段将被强制切分。', 'minimum': 0, 'type': 'number'})] = Field(None),
+        min_duration: Annotated[float | None, WithJsonSchema({'description': 'min_duration 表示单个切片的最小时长，单位为秒。min_duration 的默认值为 3 秒。小于 min_duration 的片段将被合并。min_duration 必须小于或等于 max_duration。', 'minimum': 0, 'type': 'number'})] = Field(None),
+        queue_id: Annotated[str | None, WithJsonSchema({'description': '任务提交的目标队列 ID；不传时默认使用系统自动创建的队列 ID。可将不同业务或优先级的任务提交到不同队列，以按队列对应的项目进行分账。队列可创建和管理，系统会自动分配队列 ID。 仅在用户明确提供该值时传递；不得由 Agent 生成、推断或补写。', 'type': 'string'})] = Field(None),
+        return_segment_videos: Annotated[bool | None, WithJsonSchema({'default': True, 'description': 'return_segment_videos 的默认值为 true。return_segment_videos 为 true 时生成切片文件，并在 result.segments[].segment_video_url 返回各切片下载链接。return_segment_videos 为 false 时不生成切片文件，仅返回 start_time 和 end_time 切片时间轴，不返回 segment_video_url。false 可用于只需获取场景时间码并由业务侧自行处理切片的场景，可降低任务耗时。', 'type': 'boolean'})] = Field(None, json_schema_extra={'default': True}),
+        segment_threshold: Annotated[float | None, WithJsonSchema({'description': 'segment_threshold 是场景切分的敏感度阈值，最小值为 0，必须小于 100。取值越低，算法对场景变化越敏感，切分出的片段越多；取值越高，算法越倾向将微小变化视为同一场景，切分出的片段越少。同时设置 min_duration、max_duration 和 segment_threshold 时，系统采用两阶段逻辑以满足全部约束：第一阶段根据 segment_threshold 和 min_duration 进行切分；第一阶段后如有切片时长超过 max_duration，系统忽略 segment_threshold 再次切分，确保最终时长不超过 max_duration。', 'maximum': 100, 'minimum': 0, 'type': 'number'})] = Field(None),
+    ) -> dict:
+        try:
+            result = get_client().call('segment_scenes', **{
+                key: item for key, item in {'video_url': video_url, 'callback_args': callback_args, 'callback_url': callback_url, 'client_token': client_token, 'enable_clip_fade': enable_clip_fade, 'max_duration': max_duration, 'min_duration': min_duration, 'queue_id': queue_id, 'return_segment_videos': return_segment_videos, 'segment_threshold': segment_threshold}.items()
+                if item is not None
+            })
+            return async_task_response(result)
+        except Exception as exc:
+            return error_response(_structured_error(exc))
+
+    @mcp.tool(name='semantic_segment', description='综合分析视频的画面、语音和叙事结构，通过镜头切换、语音停顿检测等策略，在保证语义完整、避免将单句从中间切断的前提下，将长视频智能地切分为多个独立的素材片段。')
+    async def semantic_segment(
+        video_url: Annotated[str, WithJsonSchema({'description': '待处理的视频 URL；支持公网 HTTP/HTTPS URL、火山引擎视频点播 (vod://) 和火山引擎对象存储 (tos://) 三种输入协议；支持 mp4、flv、ts、avi、mov、wmv、mkv 等主流视频格式；单个视频时长不得超过 3 小时。', 'format': 'media-to-url', 'pattern': '^(http|https|mediakit|vod|tos)://', 'type': 'string'})] = Field(...),
+        callback_args: Annotated[str | None, WithJsonSchema({'description': '自定义回调参数；任务完成时会通过事件回调原样返回，用于关联业务；字段长度最大为 512 字节。 仅在用户明确提供该值时传递；不得由 Agent 生成、推断或补写。', 'type': 'string'})] = Field(None),
+        callback_url: Annotated[str | None, WithJsonSchema({'description': '用于接收该任务结果回调的 URL 地址；提供后优先级高于全局回调地址；地址必须以 http:// 或 https:// 开头。 仅在用户明确提供该值时传递；不得由 Agent 生成、推断或补写。', 'type': 'string'})] = Field(None),
+        client_token: Annotated[str | None, WithJsonSchema({'description': '用户请求凭证，用于幂等控制；大小写敏感，长度不超过 64 个 ASCII 可打印字符。 默认不传。用户明确指定时原样使用；用户明确要求重试时，同一逻辑请求的重试链必须复用同一 token。已有 token 时必须复用原值；此前请求未带 token 时，可从本次重试开始创建一次并持续复用，但该 token 不对此前请求提供追溯幂等。业务参数变化视为新请求，不得复用旧 token。不得为每次尝试生成不同值。调用端运行时不判断重试意图，也不自动生成 token。', 'type': 'string'})] = Field(None),
+        max_duration: Annotated[float | None, WithJsonSchema({'default': 30, 'description': '单个切片的目标最大时长，单位为秒；默认值为 30，最小值为 1。超过该时长的片段将触发强制切分，保证片段不会过长；必须大于或等于 min_duration。', 'minimum': 1, 'type': 'number'})] = Field(None, json_schema_extra={'default': 30}),
+        max_shift_tolerance: Annotated[float | None, WithJsonSchema({'default': 0, 'description': '切点偏移容忍度，单位为秒；默认值为 0，最小值为 0。当该值大于 0 时，会在切点前后该范围内寻找更贴近语义的位置，如句末、停顿。该值越大，切点越贴合语义，但切片实际时长相对 min_duration 或 max_duration 的抖动也越大；必须小于或等于 min_duration。', 'minimum': 0, 'type': 'number'})] = Field(None, json_schema_extra={'default': 0}),
+        media_output_destination: Annotated[str | None, WithJsonSchema({'description': '指定处理产物的目标存储位置；支持将处理产物存储至对象存储（TOS）桶，格式为 `tos://<您的桶名>`。设置后，任务结果中的 `url` 相关字段返回 `tos://` 格式的资源地址，不再返回临时下载地址。首次使用前需授权 AI MediaKit 将文件写入您的 TOS 桶。 仅在用户明确提供该值时传递；不得由 Agent 生成、推断或补写。', 'type': 'string'})] = Field(None),
+        min_duration: Annotated[float | None, WithJsonSchema({'default': 3, 'description': '单个切片的目标最小时长，单位为秒；默认值为 3，最小值为 1。小于该时长的片段会与相邻切片合并，前提是合并后不超过 max_duration，以避免产生过短碎片；必须小于或等于 max_duration。', 'minimum': 1, 'type': 'number'})] = Field(None, json_schema_extra={'default': 3}),
+        queue_id: Annotated[str | None, WithJsonSchema({'description': '任务提交的目标队列 ID；不传时默认使用系统自动创建的队列 ID。可将不同业务或优先级的任务提交到不同队列，以按队列对应的项目进行分账。队列可创建和管理，系统会自动分配队列 ID。 仅在用户明确提供该值时传递；不得由 Agent 生成、推断或补写。', 'type': 'string'})] = Field(None),
+    ) -> dict:
+        try:
+            result = get_client().call('semantic_segment', **{
+                key: item for key, item in {'video_url': video_url, 'callback_args': callback_args, 'callback_url': callback_url, 'client_token': client_token, 'max_duration': max_duration, 'max_shift_tolerance': max_shift_tolerance, 'media_output_destination': media_output_destination, 'min_duration': min_duration, 'queue_id': queue_id}.items()
+                if item is not None
+            })
+            return async_task_response(result)
+        except Exception as exc:
+            return error_response(_structured_error(exc))
+
+    @mcp.tool(name='transcode_video', description='视频转码将视频码流转换为另一视频码流，可涉及编码格式、分辨率、码率、I 帧间隔和封装格式转换，用于适应不同业务场景、播放终端和网络环境。')
+    async def transcode_video(
+        container_format: Annotated[str, WithJsonSchema({'default': 'MP4', 'description': '输出封装格式支持 MP4、FLV、MPEGTS，默认是 MP4。', 'enum': ['MP4', 'FLV', 'MPEGTS'], 'type': 'string'})] = Field(...),
+        video: Annotated[dict[str, Any], WithJsonSchema({'description': '视频参数，必填', 'properties': {'bitrate_crf': {'default': 25, 'description': 'bitrate_crf 仅在 bitrate_mode=crf 时生效；值越小画质越高、体积越大，0 表示无损。bitrate_crf 范围 [0, 51]。', 'maximum': 51, 'minimum': 0, 'type': 'number'}, 'bitrate_kbps': {'default': 2000, 'description': 'video.bitrate_kbps 在 crf、abr、cbr 模式下分别表示最大码率限制、平均码率目标、恒定码率目标。', 'maximum': 50000, 'minimum': 10, 'type': 'integer'}, 'bitrate_mode': {'default': 'crf', 'description': 'crf 推荐用于大多数场景，尽量保持 bitrate_crf 指定的视觉质量，并以 bitrate_kbps 限制瞬时码率。abr 调整码率使整体平均码率接近 bitrate_kbps，适合将文件大小控制在特定范围。cbr 尝试让视频流每秒严格保持 bitrate_kbps 设定码率，适合要求网络传输稳定的流媒体场景。', 'enum': ['crf', 'abr', 'cbr'], 'type': 'string'}, 'codec': {'default': 'h264', 'description': '视频编码格式支持 h264 和 h265，默认是 h264。', 'enum': ['h264', 'h265'], 'type': 'string'}, 'fps': {'description': 'fps 范围 [1, 240]；vfr 下是最大帧率，cfr 下是恒定帧率。', 'maximum': 240, 'minimum': 1, 'type': 'integer'}, 'fps_mode': {'default': 'vfr', 'description': '只有设置 fps 后 fps_mode 才生效；未提供 fps 时遵循原视频帧率并忽略 fps_mode。cfr 将 fps 作为强制恒定输出帧率。vfr 将 fps 作为最高帧率；源帧率较低时保留，较高时降低到 fps。', 'enum': ['vfr', 'cfr'], 'type': 'string'}, 'is_hdr_to_sdr': {'default': True, 'description': 'true 将 HDR 转换为 SDR；false 保留 HDR。', 'type': 'boolean'}, 'scale_height': {'description': 'scale_height 单位为 px，范围 [0, 4320]，仅在 scale_type=2 时生效；只传宽或高之一时另一边按比例缩放。', 'maximum': 4320, 'minimum': 0, 'type': 'integer'}, 'scale_long': {'description': 'scale_long 单位为 px，范围 [0, 4320]，仅在 scale_type=1 时生效；只传短边或长边之一时另一边按比例缩放。', 'maximum': 4320, 'minimum': 0, 'type': 'integer'}, 'scale_mode': {'default': 0, 'description': 'scale_mode 仅在 scale_type 为 1 或 2 时生效。0 不上采：源片大于目标时缩小，小于目标时保持原尺寸。1 强制拉伸到目标宽高，可能导致画面变形。2 等比缩放到目标框内并用黑边填充不足部分。', 'enum': [0, 1, 2], 'type': 'integer'}, 'scale_short': {'description': 'scale_short 单位为 px，范围 [0, 4320]，仅在 scale_type=1 时生效；只传短边或长边之一时另一边按比例缩放。', 'maximum': 4320, 'minimum': 0, 'type': 'integer'}, 'scale_type': {'default': 0, 'description': 'scale_type=0 跟随片源且不缩放，相关尺寸参数无效，最高支持 8K。scale_type=1 激活 scale_short 和 scale_long，另一边按原比例缩放，最高支持 4K。scale_type=2 激活 scale_width 和 scale_height，另一边按原比例缩放，最高支持 4K。视频缩放模式默认是 0。', 'enum': [0, 1, 2], 'type': 'integer'}, 'scale_width': {'description': 'scale_width 单位为 px，范围 [0, 4320]，仅在 scale_type=2 时生效；只传宽或高之一时另一边按比例缩放。', 'maximum': 4320, 'minimum': 0, 'type': 'integer'}}, 'required': ['codec', 'bitrate_mode', 'bitrate_kbps'], 'type': 'object'})] = Field(...),
+        video_url: Annotated[str, WithJsonSchema({'description': '待转码视频支持 mp4、mov、mkv、flv、ts、avi、wmv 等主流视频格式；支持公网 HTTP/HTTPS URL、vod:// 和 tos:// 三种来源协议。', 'format': 'media-to-vid', 'type': 'string'})] = Field(...),
+        audio: Annotated[dict[str, Any] | None, WithJsonSchema({'description': '不传 audio 时，音频使用 aac 编码，其他参数跟随源文件。', 'properties': {'bitrate_kbps': {'default': 128, 'description': '音频码率单位 Kbps，范围 [10, 500]，默认 128；不设置时跟随原始音频码率。', 'maximum': 500, 'minimum': 10, 'type': 'integer'}, 'bitrate_mode': {'default': 'cbr', 'description': 'cae 仅在 audio.codec=aac 时支持，按内容复杂度调整瞬时码率并使平均码率接近 bitrate_kbps。cbr 是默认恒定码率模式，仅在 video.codec=h264 时支持，用于带宽稳定性要求高的流式传输。', 'enum': ['cbr', 'cae'], 'type': 'string'}, 'channels': {'default': 2, 'description': '音频声道数支持 1（单声道）和 2（双声道），默认是 2。', 'enum': [1, 2], 'type': 'integer'}, 'codec': {'default': 'aac', 'description': '音频编码当前仅支持 aac，默认也是 aac。', 'enum': ['aac'], 'type': 'string'}, 'sample_rate': {'default': 44100, 'description': 'aac 支持采样率 8000、11025、12000、16000、22050、24000、32000、44100、48000、64000、88200、96000 Hz，默认 44100 Hz。', 'enum': [8000, 11025, 12000, 16000, 22050, 24000, 32000, 44100, 48000, 64000, 88200, 96000], 'type': 'integer'}, 'volume_integrated_loudness': {'default': -12, 'description': '响度值设置，用于在音量均衡模式下调整音频的整体响度水平。范围为 [-70, -5]，默认值为 -12。当 Method 参数为 2Pass时，该参数必填。', 'maximum': -5, 'minimum': -70, 'type': 'number'}, 'volume_loudness_range': {'default': 7, 'description': '响度范围单位 LU，范围 [1, 20]，默认 7；volume_method=2Pass 时生效。', 'maximum': 20, 'minimum': 1, 'type': 'number'}, 'volume_method': {'description': 'volume_method=2Pass 可启用两阶段响度分析与处理，使三个响度参数生效；不设置时不处理音量。', 'enum': ['2Pass'], 'type': 'string'}, 'volume_true_peak': {'default': 0, 'description': '音量峰值，用于在音量均衡模式下设置音频的最大峰值。范围为 [-9, 0]，默认值为 0。当 Method 参数为 2Pass时，该参数必填。', 'maximum': 0, 'minimum': -9, 'type': 'number'}}, 'required': ['codec', 'sample_rate', 'bitrate_mode', 'bitrate_kbps'], 'type': 'object', 'x-skip-default-populate-on-missing-object': True})] = Field(None),
+        callback_args: Annotated[str | None, WithJsonSchema({'description': '自定义回调参数；任务完成时会通过事件回调原样返回，用于关联业务；字段长度最大为 512 字节。 仅在用户明确提供该值时传递；不得由 Agent 生成、推断或补写。', 'type': 'string'})] = Field(None),
+        callback_url: Annotated[str | None, WithJsonSchema({'description': '用于接收该任务结果回调的 URL 地址；提供后优先级高于全局回调地址；地址必须以 http:// 或 https:// 开头。 仅在用户明确提供该值时传递；不得由 Agent 生成、推断或补写。', 'type': 'string'})] = Field(None),
+        client_token: Annotated[str | None, WithJsonSchema({'description': '用户请求凭证，用于幂等控制；大小写敏感，长度不超过 64 个 ASCII 可打印字符。 默认不传。用户明确指定时原样使用；用户明确要求重试时，同一逻辑请求的重试链必须复用同一 token。已有 token 时必须复用原值；此前请求未带 token 时，可从本次重试开始创建一次并持续复用，但该 token 不对此前请求提供追溯幂等。业务参数变化视为新请求，不得复用旧 token。不得为每次尝试生成不同值。调用端运行时不判断重试意图，也不自动生成 token。', 'type': 'string'})] = Field(None),
+        media_output_destination: Annotated[str | None, WithJsonSchema({'description': '指定处理产物的目标存储位置；支持将处理产物存储至对象存储（TOS）桶，格式为 `tos://<您的桶名>`。设置后，任务结果中的 `url` 相关字段返回 `tos://` 格式的资源地址，不再返回临时下载地址。首次使用前需授权 AI MediaKit 将文件写入您的 TOS 桶。 仅在用户明确提供该值时传递；不得由 Agent 生成、推断或补写。', 'type': 'string'})] = Field(None),
+        metadata_add_tags: Annotated[list[Any] | None, WithJsonSchema({'description': '新增元信息标签与保留标签同名时，新设置覆盖源文件值。metadata_add_tags 对 MPEGTS 封装格式无效。', 'items': {'properties': {'key': {'description': '标签键。', 'type': 'string'}, 'value': {'description': '标签值。', 'type': 'string'}}, 'type': 'object'}, 'type': 'array'})] = Field(None),
+        metadata_keep_tags: Annotated[list[Any] | None, WithJsonSchema({'description': '可指定从源视频保留的元信息标签键；默认转码会丢弃大部分元信息。metadata_keep_tags 对 MPEGTS 封装格式无效。', 'items': {'type': 'string'}, 'type': 'array'})] = Field(None),
+        queue_id: Annotated[str | None, WithJsonSchema({'description': '任务提交的目标队列 ID；不传时默认使用系统自动创建的队列 ID。可将不同业务或优先级的任务提交到不同队列，以按队列对应的项目进行分账。队列可创建和管理，系统会自动分配队列 ID。 仅在用户明确提供该值时传递；不得由 Agent 生成、推断或补写。', 'type': 'string'})] = Field(None),
+    ) -> dict:
+        try:
+            result = get_client().call('transcode_video', **{
+                key: item for key, item in {'container_format': container_format, 'video': video, 'video_url': video_url, 'audio': audio, 'callback_args': callback_args, 'callback_url': callback_url, 'client_token': client_token, 'media_output_destination': media_output_destination, 'metadata_add_tags': metadata_add_tags, 'metadata_keep_tags': metadata_keep_tags, 'queue_id': queue_id}.items()
+                if item is not None
+            })
+            return async_task_response(result)
+        except Exception as exc:
+            return error_response(_structured_error(exc))
+
+    @mcp.tool(name='video_ocr', description='用于视频字幕识别（OCR），识别输入视频画面中的字幕信息，输出带时间戳的结构化文本数据。')
+    async def video_ocr(
+        video_url: Annotated[str, WithJsonSchema({'description': '待识别的视频 URL。支持公网 HTTP/HTTPS URL、火山引擎视频点播 vod:// 和火山引擎对象存储 tos:// 三种输入协议；支持 mp4、flv、ts、avi、mov、wmv、mkv 等主流视频格式；输入视频分辨率支持 240p 到 4k，单文件视频时长不得超过 10 分钟。', 'format': 'media-to-vid', 'type': 'string'})] = Field(...),
+        callback_args: Annotated[str | None, WithJsonSchema({'description': '自定义回调参数；任务完成时会通过事件回调原样返回，用于关联业务；字段长度最大为 512 字节。 仅在用户明确提供该值时传递；不得由 Agent 生成、推断或补写。', 'type': 'string'})] = Field(None),
+        callback_url: Annotated[str | None, WithJsonSchema({'description': '用于接收该任务结果回调的 URL 地址；提供后优先级高于全局回调地址；地址必须以 http:// 或 https:// 开头。 仅在用户明确提供该值时传递；不得由 Agent 生成、推断或补写。', 'type': 'string'})] = Field(None),
+        client_token: Annotated[str | None, WithJsonSchema({'description': '用户请求凭证，用于幂等控制；大小写敏感，长度不超过 64 个 ASCII 可打印字符。 默认不传。用户明确指定时原样使用；用户明确要求重试时，同一逻辑请求的重试链必须复用同一 token。已有 token 时必须复用原值；此前请求未带 token 时，可从本次重试开始创建一次并持续复用，但该 token 不对此前请求提供追溯幂等。业务参数变化视为新请求，不得复用旧 token。不得为每次尝试生成不同值。调用端运行时不判断重试意图，也不自动生成 token。', 'type': 'string'})] = Field(None),
+        mode: Annotated[str | None, WithJsonSchema({'default': 'Subtitle', 'description': '工作模式。支持 Subtitle 或 Detailed，默认为 Subtitle。Subtitle 模式仅识别视频画面中符合字幕特征的文本，适用于快速提取视频对白、生成字幕稿等场景；Detailed 模式识别画面中更详细的文本信息，包括字幕、水印、台标、标题等；Detailed 模式的返回结果会额外包含 text_label 和 text_location 字段。', 'enum': ['Subtitle', 'Detailed'], 'type': 'string'})] = Field(None, json_schema_extra={'default': 'Subtitle'}),
+        queue_id: Annotated[str | None, WithJsonSchema({'description': '任务提交的目标队列 ID；不传时默认使用系统自动创建的队列 ID。可将不同业务或优先级的任务提交到不同队列，以按队列对应的项目进行分账。队列可创建和管理，系统会自动分配队列 ID。 仅在用户明确提供该值时传递；不得由 Agent 生成、推断或补写。', 'type': 'string'})] = Field(None),
+    ) -> dict:
+        try:
+            result = get_client().call('video_ocr', **{
+                key: item for key, item in {'video_url': video_url, 'callback_args': callback_args, 'callback_url': callback_url, 'client_token': client_token, 'mode': mode, 'queue_id': queue_id}.items()
+                if item is not None
+            })
+            return async_task_response(result)
+        except Exception as exc:
+            return error_response(_structured_error(exc))
+
+    @mcp.tool(name='video_understand_router', description='基于视觉大模型，对输入的视频 URL 列表进行通用视频内容分析，输出视频级别的结构化理解结果，适用于内容审核、视频检索、标签生成等场景。')
+    async def video_understand_router(
+        prompt: Annotated[str, WithJsonSchema({'description': 'prompt 是用于指导大模型对视频内容进行分析的自然语言描述，最小长度为 1。', 'minLength': 1, 'type': 'string'})] = Field(...),
+        video_urls: Annotated[list[Any], WithJsonSchema({'description': 'video_urls 是待处理的视频 URL 列表，支持公网 HTTP/HTTPS URL、火山引擎视频点播 vod:// 和火山引擎对象存储 tos:// 三种输入协议；支持 mp4、flv、ts、avi、mov、wmv、mkv 等主流视频格式；单次任务最多支持传入 10 个视频文件。', 'items': {'description': 'video_urls 中单个视频时长不超过 2 小时。', 'format': 'media-to-url', 'type': 'string'}, 'maxItems': 10, 'minItems': 1, 'type': 'array'})] = Field(...),
+        callback_args: Annotated[str | None, WithJsonSchema({'description': '自定义回调参数；任务完成时会通过事件回调原样返回，用于关联业务；字段长度最大为 512 字节。 仅在用户明确提供该值时传递；不得由 Agent 生成、推断或补写。', 'type': 'string'})] = Field(None),
+        callback_url: Annotated[str | None, WithJsonSchema({'description': '用于接收该任务结果回调的 URL 地址；提供后优先级高于全局回调地址；地址必须以 http:// 或 https:// 开头。 仅在用户明确提供该值时传递；不得由 Agent 生成、推断或补写。', 'type': 'string'})] = Field(None),
+        client_token: Annotated[str | None, WithJsonSchema({'description': '用户请求凭证，用于幂等控制；大小写敏感，长度不超过 64 个 ASCII 可打印字符。 默认不传。用户明确指定时原样使用；用户明确要求重试时，同一逻辑请求的重试链必须复用同一 token。已有 token 时必须复用原值；此前请求未带 token 时，可从本次重试开始创建一次并持续复用，但该 token 不对此前请求提供追溯幂等。业务参数变化视为新请求，不得复用旧 token。不得为每次尝试生成不同值。调用端运行时不判断重试意图，也不自动生成 token。', 'type': 'string'})] = Field(None),
+        level: Annotated[str | None, WithJsonSchema({'default': 'Economy', 'description': 'level 是分析档位，决定任务的默认抽帧策略与模型选择，以在成本、速度和质量之间取得平衡；支持 Economy、Balanced、Quality，默认 Economy。Economy 是速度优先的经济档位，适合大批量、对结果详细程度要求较低的内容标注；Balanced 是速度与质量兼顾的均衡档位，适合常规内容审核与检索场景；Quality 是结果优先的质量档位，适合需要更精细语义理解的场景。', 'enum': ['Economy', 'Balanced', 'Quality'], 'type': 'string'})] = Field(None, json_schema_extra={'default': 'Economy'}),
+        manual_option: Annotated[dict[str, Any] | None, WithJsonSchema({'description': 'manual_option 是手动模式相关参数；未传 manual_option 时表示完全使用 level 档位策略，不进行手动覆盖。', 'properties': {'fps': {'default': 1.0, 'description': 'manual_option.fps 是抽帧帧率，设置后会按照指定帧率进行均匀抽帧；最小 0.2，最大 5.0，默认 1.0。', 'maximum': 5.0, 'minimum': 0.2, 'type': 'number'}, 'max_snapshot_number': {'default': 0, 'description': 'manual_option.max_snapshot_number 是最大抽帧帧数，最小 0，最大 1000，默认 0；显式设置时会覆盖档位策略；设为 0 时由 level 档位决定截图数量。', 'maximum': 1000, 'type': 'integer'}, 'need_audio': {'default': False, 'description': 'manual_option.need_audio 表示是否开启或关闭音频分析，支持 true 和 false，默认 false。为 true 时开启音频分析，系统将选用支持音视频多模态的模型，并分析音频内容。为 false 时关闭音频分析，仅分析视频画面；即使 manual_option.need_audio 为 false 或未提供，如果 prompt 中包含“声音”、“音乐”等音频相关关键词，也可能自动触发音频分析。', 'type': 'boolean'}}, 'type': 'object', 'x-skip-default-populate-on-missing-object': True})] = Field(None),
+        prefer_endpoints: Annotated[list[Any] | None, WithJsonSchema({'description': 'prefer_endpoints 是优先使用的推理接入点 ID（Endpoint ID）列表，最多 10 个；系统将从 prefer_endpoints 指定的推理接入点中结合策略选择最终模型；prefer_endpoints 的优先级高于 prefer_models。', 'items': {'description': '指定使用的自定义推理点', 'type': 'string'}, 'maxItems': 10, 'minItems': 1, 'type': 'array'})] = Field(None),
+        prefer_models: Annotated[list[Any] | None, WithJsonSchema({'description': 'prefer_models 是优先使用的模型 ID（Model ID）列表，最多 10 个；系统将从 prefer_models 指定的模型中结合策略选择最终模型。', 'items': {'description': '指定使用的模型', 'type': 'string'}, 'maxItems': 10, 'minItems': 1, 'type': 'array'})] = Field(None),
+        queue_id: Annotated[str | None, WithJsonSchema({'description': '任务提交的目标队列 ID；不传时默认使用系统自动创建的队列 ID。可将不同业务或优先级的任务提交到不同队列，以按队列对应的项目进行分账。队列可创建和管理，系统会自动分配队列 ID。 仅在用户明确提供该值时传递；不得由 Agent 生成、推断或补写。', 'type': 'string'})] = Field(None),
+        scene: Annotated[str | None, WithJsonSchema({'description': 'scene 是分析场景，用于系统优化处理策略；指定 scene 后，系统会自动决策使用该场景的最佳策略；不传时表示通用场景。editing 表示创作剪辑场景，模型会侧重于理解并输出带有精确时间戳的详细分镜信息，适用于分镜理解、智能剪辑、二次 AIGC 创作等下游任务。', 'enum': ['editing'], 'type': 'string'})] = Field(None),
+    ) -> dict:
+        try:
+            result = get_client().call('video_understand_router', **{
+                key: item for key, item in {'prompt': prompt, 'video_urls': video_urls, 'callback_args': callback_args, 'callback_url': callback_url, 'client_token': client_token, 'level': level, 'manual_option': manual_option, 'prefer_endpoints': prefer_endpoints, 'prefer_models': prefer_models, 'queue_id': queue_id, 'scene': scene}.items()
+                if item is not None
+            })
+            return async_task_response(result)
+        except Exception as exc:
+            return error_response(_structured_error(exc))
+

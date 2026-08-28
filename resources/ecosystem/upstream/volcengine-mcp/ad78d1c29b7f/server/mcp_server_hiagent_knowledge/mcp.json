@@ -1,0 +1,20 @@
+{
+  "mcpServers": {
+    "hiagent-knowledge": {
+      "command": "uvx",
+      "args": [
+        "--from",
+        "git+https://github.com/volcengine/mcp-server#subdirectory=server/mcp_server_hiagent_knowledge",
+        "mcp-server-hiagent-knowledge"
+      ],
+      "env": {
+        "HIAGENT_TOP_HOST": "http://your-top-host:30040",
+        "HIAGENT_ACCESS_KEY_ID": "your-access-key",
+        "HIAGENT_SECRET_ACCESS_KEY": "your-secret-key",
+        "HIAGENT_ACCOUNT_ID": "1000000000",
+        "HIAGENT_REGION": "cn-north-1",
+        "FASTMCP_CHECK_FOR_UPDATES": "off"
+      }
+    }
+  }
+}

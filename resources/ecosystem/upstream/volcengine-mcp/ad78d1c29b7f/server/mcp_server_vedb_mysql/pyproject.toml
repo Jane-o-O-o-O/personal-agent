@@ -1,0 +1,20 @@
+[project]
+name = "mcp-server-vedb-mysql"
+version = "1.1.0"
+description = "MCP server for VeDB MySQL"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+dependencies = [
+    "mcp[cli]>=1.21.0",
+    "volcengine-python-sdk>=4.0.31",
+    "aiohttp>=3.11.14",
+    "deprecated>=1.2.18",
+]
+
+[project.scripts]
+mcp-server-vedbm = "mcp_server_vedb_mysql.server:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

@@ -1,0 +1,315 @@
+# Redis MCP Server
+> 火山引擎 Redis 是由火山引擎提供的全托管内存缓存服务，兼容开源 Redis。它支持实例管理、账号和权限管理、连接管理、参数配置、备份恢复、监控告警、日志分析、数据安全、高可用性和可扩展性等关键功能。
+
+---
+
+
+| 项目 | 详情                                      |
+| ---- |-----------------------------------------|
+| 版本 | v1.0.0                                  |
+| 描述 | 火山引擎 Redis 是一款全托管的高性能内存数据库服务，兼容开源 Redis |
+| 分类 | 数据库                                     |
+| 标签 | Redis, NoSQL, 非关系型数据库, 缓存数据库，KV键值数据库    |
+
+---
+
+## 支持的Tools
+
+### 1. `describe_regions`
+- **详细描述**：查询缓存数据库 Redis 版可用的地域资源列表。
+- **触发示例**：`查看当前redis可用的region列表表`
+
+### 2. `describe_zones`
+- **详细描述**：查询缓存数据库 Redis 版在指定地域下的可用区资源列表。
+- **触发示例**：`"查询region cn-beijing下的可用区列表"`
+
+### 3. `describe_vpcs`
+- **详细描述**：查询满足指定条件的VPC。
+- **触发示例**：`"查询当前账号下的vpc列表，最多展示10个"`
+
+### 4. `describe_subnets`
+- **详细描述**：查询满足指定条件的子网。
+- **触发示例**：`"查看vpc id vpc-rs22ruc4sgzkvxxxxxxxxxx 下的子网网段信息"`
+
+### 5. `describe_db_instances`
+- **详细描述**：查看用户的 Redis 实例列表，支持分页查询。
+- **触发示例**：`"列出我最近创建的5个redis实例"`
+
+### 6. `describe_db_instance_detail`
+- **详细描述**：根据指定 Redis 实例 ID 查看实例详情。
+- **触发示例**：`"查看实例ID 为 redis-cnlf57snuxxxxxxxx 的详细信息"`
+
+### 7. `describe_db_instance_specs`
+- **详细描述**：查询 Redis 支持的实例规格列表。
+- **触发示例**：`"查看redis支持的实例规格表"`
+
+### 8. `describe_slow_logs`
+- **详细描述**：查询目标 Redis 实例在指定时间内的慢日志详情。
+- **触发示例**：`"查看实例 redis-cnlf57snuxxxxxxxx 半个小时内的慢日志信息"`
+
+### 9. `describe_hot_keys`
+- **详细描述**：查询目标 Redis 实例在指定时间段内的热 Key 详情。
+- **触发示例**：`"查看实例 redis-cnlf57snuxxxxxxxx 半个小时内的热Key信息"`
+
+### 10. `describe_big_keys`
+- **详细描述**：查询目标 Redis 实例在指定时间段内的大 Key 详情。
+- **触发示例**：`"查看实例 redis-cnlf57snuxxxxxxxx 半个小时内的大Key信息"`
+
+### 11. `describe_backups`
+- **详细描述**：查询目标 Redis 实例的备份集列表。
+- **触发示例**：`"查看实例 redis-cnlf57snuxxxxxxxx 的备份信息"`
+
+### 12. `describe_db_instance_params`
+- **详细描述**：查询目标 Redis 实例支持的参数列表。
+- **触发示例**：`"查看实例 redis-cnlf57snuxxxxxxxx 的参数列表"`
+
+### 13. `describe_parameter_groups`
+- **详细描述**：查询当前账号和地域下的参数模板的基本信息。
+- **触发示例**：`"查看有哪些可用的参数模板"`
+
+### 14. `describe_parameter_group_detail`
+- **详细描述**：查询目标参数列表的详细信息。
+- **触发示例**：`"参数模板 DefaultParamGroupId-5.0 的详细信息"`
+
+### 15. `describe_allow_lists`
+- **详细描述**：查询当前账号下在指定地域的 IP 白名单列表。
+- **触发示例**：`"查看我的白名单列表"`
+
+### 16. `describe_allow_list_detail`
+- **详细描述**：查询目标白名单的详细信息，包括 IP 地址和绑定的实例详情。
+- **触发示例**：`"查看白名单 acl-cnlf114hwh3qtxxxxxx 的详细信息"`
+
+### 17. `list_db_account`
+- **详细描述**：查询 Redis 实例中的账号信息，包括账号名称、账号角色等。
+- **触发示例**：`"帮我查看下实例 redis-cnlf57snuxxxxxxxx 的账号信息"`
+
+### 18. `create_db_instance`
+- **详细描述**：创建 Redis 实例。
+- **触发示例**：`"帮我在cn-beijing region创建一个名字为redis-mcp-server的1GB的主备实例"`
+
+### 19. `modify_db_instance_params`
+- **详细描述**：修改目标 Redis 实例的参数配置。
+- **触发示例**：`"打开实例 redis-cnlf57snuxxxxxxxx 的aof开关"`
+
+### 20. `create_db_account`
+- **详细描述**：为目标 Redis 实例创建账号。
+- **触发示例**：`"为实例 redis-cnlf57snuxxxxxxxx创建一个名为mcptest的账号，并授予读写权限"`
+
+### 21. `create_allow_list`
+- **详细描述**：创建一个新的 IP 白名单。
+- **触发示例**：`"创建一个名为mcptest的白名单，网段为127.0.0.1,192.168.1.0/24"`
+
+### 22. `associate_allow_list`
+- **详细描述**：将目标 Redis 实例绑定到指定 IP 白名单。
+- **触发示例**：`"将白名单 acl-cnlf61xhhfrgxxxxx 关联单实例redis-cnlf57snuxxxxxxxx"`
+
+### 23. `disassociate_allow_list`
+- **详细描述**：创建一个新的 IP 白名单。
+- **触发示例**：`"将实例redis-cnlf57snuxxxxxxxx从白名单 acl-cnlf61xhhfrgxxxxx 解绑"`
+
+### 24. `describe_db_instance_shards`
+- **详细描述**：查询目标 Redis 实例的分片信息。
+- **触发示例**：`"查看实例 redis-cnlf57snuxxxxxxxx 的分片详情"`
+
+### 25. `describe_node_ids`
+- **详细描述**：查询目标 Redis 实例的节点 ID 列表。
+- **触发示例**：`"查看实例 redis-cnlf57snuxxxxxxxx 的节点 ID 列表"`
+
+### 26. `modify_db_instance_name`
+- **详细描述**：修改目标 Redis 实例的名称。
+- **触发示例**：`"将实例 redis-cnlf57snuxxxxxxxx 重命名为 new-instance-name"`
+
+### 27. `describe_tags_by_resource`
+- **详细描述**：查询绑定到目标 Redis 实例的标签信息。
+- **触发示例**：`"查看实例 redis-cnlf57snuxxxxxxxx 的标签信息"`
+
+### 28. `describe_backup_plan`
+- **详细描述**：查询目标 Redis 实例的备份计划。
+- **触发示例**：`"查看实例 redis-cnlf57snuxxxxxxxx 的备份计划"`
+
+### 29. `describe_pitr_time_window`
+- **详细描述**：查询目标 Redis 实例的 PITR（时间点恢复）时间窗口。
+- **触发示例**：`"查看实例 redis-cnlf57snuxxxxxxxx 的 PITR 时间窗口"`
+
+### 30. `describe_backup_point_download_urls`
+- **详细描述**：查询目标 Redis 实例备份点的下载链接。
+- **触发示例**：`"获取实例 redis-cnlf57snuxxxxxxxx 备份ID为 b-cnlf7khq9vpzazekat176mzxxxxxxx 的下载链接"`
+
+### 31. `describe_cross_region_backup_policy`
+- **详细描述**：查询目标 Redis 实例的跨地域备份策略。
+- **触发示例**：`"查看实例 redis-cnlf57snuxxxxxxxx 的跨地域备份策略"`
+
+### 32. `describe_cross_region_backups`
+- **详细描述**：查询目标 Redis 实例的跨地域备份。
+- **触发示例**：`"查看实例 redis-cnlf57snuxxxxxxxx 的跨地域备份"`
+
+### 33. `create_parameter_group`
+- **详细描述**：创建新的参数模板。
+- **触发示例**：`"创建一个名为 custom-group 的 Redis 5.0 参数模板, 设置maxmemory-policy参数为volatile-lfu"`
+
+### 34. `create_db_endpoint_public_address`
+- **详细描述**：为目标 Redis 实例的访问端点创建公网地址。
+- **触发示例**：`"为实例 redis-cnlf57snuxxxxxxxx 创建公网地址"`
+
+### 35. `describe_db_instance_bandwidth_per_shard`
+- **详细描述**：查询目标 Redis 实例每个分片的带宽信息。
+- **触发示例**：`"查看实例 redis-cnlf57snuxxxxxxxx 每个分片的带宽"`
+
+### 36. `describe_db_instance_acl_commands`
+- **详细描述**：查询目标 Redis 实例支持的 ACL 命令。
+- **触发示例**：`"查看实例 redis-cnlf57snuxxxxxxxx 支持的 ACL 命令"`
+
+### 37. `describe_db_instance_acl_categories`
+- **详细描述**：查询目标 Redis 实例支持的 ACL 命令分类。
+- **触发示例**：`"查看实例 redis-cnlf57snuxxxxxxxx 支持的 ACL 命令分类"`
+
+### 38. `describe_planned_events`
+- **详细描述**：查询目标 Redis 实例的计划内事件。
+- **触发示例**：`"查看实例 redis-cnlf57snuxxxxxxxx 的计划内事件"`
+
+### 39. `describe_key_scan_jobs`
+- **详细描述**：查询目标 Redis 实例的键扫描任务。
+- **触发示例**：`"查看实例 redis-cnlf57snuxxxxxxxx 的键扫描任务"`
+
+### 40. `describe_eip_addresses`
+- **详细描述**：查询满足指定条件的弹性公网 IP 地址。
+- **触发示例**：`"查看当前账号下的弹性公网 IP 地址"`
+
+---
+
+## 服务开通链接
+[点击前往火山引擎 Redis 服务开通页面](https://console.volcengine.com/db/redis)
+
+---
+
+## 鉴权方式
+Redis MCP 现已支持以下几种火山引擎凭证方式：
+
+### 1. 静态 AK/SK
+
+在火山引擎管理控制台获取访问密钥 ID、秘密访问密钥和区域后，配置：
+
+- `VOLCENGINE_REGION`
+- `VOLCENGINE_ACCESS_KEY`
+- `VOLCENGINE_SECRET_KEY`
+
+### 2. AK/SK + SessionToken
+
+如果你使用的是临时凭证，还需要额外设置以下环境变量：
+
+- `VOLCENGINE_SESSION_TOKEN`
+
+该方式适用于本地 `stdio` 模式，或通过环境变量注入临时凭证的场景。
+
+### 3. 通过 `Authorization` Header 传递 STS 临时凭证
+
+对于基于 HTTP 的 MCP 调用方式（例如 `streamable-http`），Redis MCP 支持通过请求头传递临时凭证：
+
+```http
+Authorization: Bearer <base64(json)>
+```
+
+解码后的 JSON 内容应包含：
+
+```json
+{
+  "AccessKeyId": "",
+  "SecretAccessKey": "",
+  "SessionToken": "",
+  "CurrentTime": "2026-05-28T10:00:00+08:00",
+  "ExpiredTime": "2026-05-28T11:00:00+08:00",
+  "Region": "cn-beijing"
+}
+```
+
+说明：
+
+- 使用 STS 时需要提供 `SessionToken`。
+- `Region` 可以放在 Header 对应的 JSON 中，也可以继续通过 `VOLCENGINE_REGION` 或请求参数传入。
+- 如果同时提供 Header 凭证和环境变量凭证，请求头中的凭证优先级更高。
+- 如果 JSON 中带有 `CurrentTime` 和 `ExpiredTime`，服务端会校验 STS 是否已过期。
+- `Authorization` Header 主要面向 `streamable-http` 这类 HTTP 传输方式。
+- 对于 `stdio` 这类非 HTTP 传输方式，更推荐通过环境变量传递 `VOLCENGINE_ACCESS_KEY`、`VOLCENGINE_SECRET_KEY` 和 `VOLCENGINE_SESSION_TOKEN`。
+
+---
+
+## 部署
+火山引擎Redis 服务接入地址：https://www.volcengine.com/docs/6293/65743
+
+### 示例 1：静态 AK/SK（stdio）
+
+```json
+{
+  "mcpServers": {
+    "redis": {
+      "command": "uvx",
+      "args": [
+        "--from",
+        "git+https://github.com/volcengine/mcp-server.git#subdirectory=server/mcp_server_redis",
+        "mcp-server-redis"
+      ],
+      "env": {
+        "VOLCENGINE_REGION": "火山引擎资源region",
+        "VOLCENGINE_ACCESS_KEY": "火山引擎账号ACCESS_KEY",
+        "VOLCENGINE_SECRET_KEY": "火山引擎账号SECRET_KEY"
+      }
+    }
+  }
+}
+```
+
+### 示例 2：通过环境变量传递临时凭证（stdio）
+
+```json
+{
+  "mcpServers": {
+    "redis": {
+      "command": "uvx",
+      "args": [
+        "--from",
+        "git+https://github.com/volcengine/mcp-server.git#subdirectory=server/mcp_server_redis",
+        "mcp-server-redis"
+      ],
+      "env": {
+        "VOLCENGINE_REGION": "cn-beijing",
+        "VOLCENGINE_ACCESS_KEY": "",
+        "VOLCENGINE_SECRET_KEY": "",
+        "VOLCENGINE_SESSION_TOKEN": ""
+      }
+    }
+  }
+}
+```
+
+### 示例 3：通过 `Authorization` Header 传递 STS（适用于 `streamable-http` 等 HTTP 传输方式）
+
+如果你的 MCP Client 是通过 HTTP 调用 Redis MCP，可以把上面的 JSON 先做 Base64 编码，再按以下格式放入请求头：
+
+```http
+Authorization: Bearer <base64(json)>
+```
+
+服务端会在当前请求内动态提取并使用：
+
+- `AccessKeyId`
+- `SecretAccessKey`
+- `SessionToken`
+- 可选的 `Region`
+
+然后基于这些临时凭证初始化底层 Redis 与 VPC SDK Client。
+
+## 验证方式
+
+仓库中提供了端到端验证脚本：`server/mcp_server_redis/tests/verify_sts_flow.py`。
+
+运行方式：
+
+```bash
+uv run --project server/mcp_server_redis python server/mcp_server_redis/tests/verify_sts_flow.py --region cn-beijing
+```
+
+当前支持的Region: ["cn-beijing", "cn-guangzhou", "cn-shanghai", "cn-hongkong", "ap-southeast-1", "ap-southeast-3"]
+
+## License
+
+volcengine/mcp-server is licensed under the [MIT License](https://github.com/volcengine/mcp-server/blob/main/LICENSE).

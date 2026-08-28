@@ -1,0 +1,19 @@
+[project]
+name = "mcp-server-rds-mysql"
+version = "0.1.1"
+description = "MCP server for RDS MySQL"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "mcp[cli]>=1.10.0",
+    "volcengine-python-sdk>=3.0.1",
+    "aiohttp>=3.11.14",
+    "deprecated>=1.2.18",
+]
+
+[project.scripts]
+mcp-server-rds-mysql = "mcp_server_rds_mysql.server:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

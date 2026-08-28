@@ -1,0 +1,27 @@
+[project]
+name = "mcp-server-ebs"
+version = "0.1.0"
+description = "MCP server for EBS Service"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+dependencies = [
+    "httpx>=0.28.1",
+    "mcp>=1.10.0",
+    "python-dotenv>=1.0.1",
+    "volcengine==1.0.175",
+    "volcengine-python-sdk>=3.0.1",
+    "aiohttp>=3.11.14",
+    "deprecated>=1.2.18",
+]
+
+[project.scripts]
+mcp-server-ebs = "mcp_server_ebs.server:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.metadata]
+allow-direct-references = true
+

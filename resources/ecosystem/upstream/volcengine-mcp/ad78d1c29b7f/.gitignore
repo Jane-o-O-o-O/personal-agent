@@ -1,0 +1,9 @@
+*config.yaml
+__pycache__/
+.idea
+.DS_Store
+.venv/
+*.egg-info/
+.env
+.vscode/
+.history/

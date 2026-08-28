@@ -1,0 +1,95 @@
+name: Publish Python packages
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "server/**/pyproject.toml"
+  push:
+    branches:
+      - main
+    paths:
+      - "server/**/pyproject.toml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-python-packages
+  cancel-in-progress: false
+
+jobs:
+  detect-version-changes:
+    runs-on: ubuntu-latest
+    outputs:
+      packages: ${{ steps.detect.outputs.packages }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Detect package version changes
+        id: detect
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          packages="$(python .github/scripts/changed_python_packages.py "$BASE_SHA" "$HEAD_SHA")"
+          echo "packages=$packages" >> "$GITHUB_OUTPUT"
+
+  build-and-publish:
+    needs: detect-version-changes
+    if: needs.detect-version-changes.outputs.packages != '[]'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        package: ${{ fromJSON(needs.detect-version-changes.outputs.packages) }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Show package information
+        env:
+          PACKAGE_NAME: ${{ matrix.package.name }}
+          PACKAGE_VERSION: ${{ matrix.package.version }}
+          PACKAGE_DIRECTORY: ${{ matrix.package.directory }}
+          RUN_MODE: ${{ github.event_name == 'pull_request' && 'pull request check' || 'main branch publish' }}
+        run: |
+          echo "Package: $PACKAGE_NAME"
+          echo "Version: $PACKAGE_VERSION"
+          echo "Directory: $PACKAGE_DIRECTORY"
+          echo "Mode: $RUN_MODE"
+
+      - name: Install build tools
+        run: python -m pip install --upgrade build twine
+
+      - name: Build ${{ matrix.package.name }} ${{ matrix.package.version }}
+        working-directory: ${{ matrix.package.directory }}
+        run: python -m build --outdir "$RUNNER_TEMP/dist" .
+
+      - name: Check distribution
+        run: python -m twine check "$RUNNER_TEMP"/dist/*
+
+      - name: Confirm pull request dry run
+        if: github.event_name == 'pull_request'
+        run: echo "Build checks passed; upload is skipped for pull requests."
+
+      - name: Publish to PyPI
+        if: github.event_name == 'push'
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
+        run: python -m twine upload --non-interactive "$RUNNER_TEMP"/dist/*
