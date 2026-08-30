@@ -1,0 +1,28 @@
+[package]
+name = "wecom-fs"
+version = "0.1.0"
+edition = "2024"
+description = "Sandbox filesystem capability for the WeCom CLI: path resolution and access control"
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[dependencies]
+cap-std = "4"
+rand = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+wecom-error = { path = "../wecom-error", version = "0.1.0" }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_Storage_FileSystem",
+] }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

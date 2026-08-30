@@ -1,0 +1,75 @@
+[package]
+name = "wecom-cli"
+version.workspace = true
+edition = "2024"
+description = "The official CLI for WeCom"
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[[bin]]
+name = "wecom-cli"
+path = "src/main.rs"
+
+[features]
+default = ["call-chain"]
+call-chain = ["dep:libc", "dep:windows-sys"]
+custom-endpoint = ["wecom/custom-endpoint"]
+skip-auth-check = []
+
+[dependencies]
+aes-gcm = "0.11"
+anyhow = { workspace = true }
+base64 = "0.23"
+clap = "4.6"
+cliclack = "0.5"
+dirs = "6.0.0"
+dotenvy = "0.15.7"
+hex = "0.4"
+image = { version = "0.25", default-features = false, features = ["png"] }
+indexmap = { workspace = true }
+keyring = "4"
+open = "5"
+qr2term = "0.3"
+qrcode = "0.14"
+rand = "0.10"
+reqwest = { workspace = true }
+serde = { version = "1", features = ["derive"] }
+serde_json = { workspace = true }
+serde_repr = "0.1"
+sha2 = "0.11"
+tempfile = { workspace = true }
+time = { version = "0.3", features = ["formatting", "macros"] }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-appender = "0.2"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json", "local-time"] }
+wecom = { workspace = true }
+wecom-error = { workspace = true }
+wecom-fs = { workspace = true }
+wecom-transport = { workspace = true }
+
+# 进程父链（trace::chain）平台依赖：macOS 用 libc 的 proc_pidinfo，
+# Windows 用 windows-sys 的 Toolhelp32；Linux 读 /proc 无需额外依赖。
+[target.'cfg(target_os = "macos")'.dependencies]
+libc = { version = "0.2", optional = true }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Diagnostics_ToolHelp"], optional = true }
+
+[dev-dependencies]
+aes-gcm = "0.11"
+assert_cmd = "2"
+assert-json-diff = "2"
+base64 = "0.23"
+mockito = "1"
+predicates = "3"
+serde_json = { workspace = true }
+tempfile = { workspace = true }
+tokio = { workspace = true }
+wecom = { workspace = true }
+wiremock = "0.6"
+
+[[test]]
+name = "e2e"
+path = "test-e2e/run.rs"

@@ -1,0 +1,51 @@
+# Disallow ambient (path-based) filesystem access outside `sandbox/paths.rs`.
+#
+# The sandbox enforces containment by pinning a `cap_std::fs::Dir` handle and
+# doing every operation relative to it (`sandbox/io.rs`).  A path-based
+# `std::fs` call bypasses that handle and is therefore a second, unchecked
+# access path — exactly what this list prevents.
+#
+# The legitimate exceptions, each annotated per function with a `SAFETY:` note:
+# `sandbox/paths.rs` reasons about paths *before* a handle exists (canonicalize,
+# existence probes), and `sandbox/io.rs::acquire` materialises the directory it
+# is about to pin.  Test modules carry the same allow on the `mod tests` item
+# (fixtures may set up files directly).
+#
+# Note: `cap_std::fs::*` is never on this list — handle-relative I/O is the
+# sanctioned path.
+
+disallowed-methods = [
+    # ── Byte-moving I/O: must go through a pinned `Dir` handle ──
+    { path = "std::fs::File::open", reason = "Use sandbox::io::open_file (pinned Dir handle)." },
+    { path = "std::fs::File::create", reason = "Use sandbox::io::create_file (pinned Dir handle)." },
+    { path = "std::fs::OpenOptions::new", reason = "Use cap_std::fs::OpenOptions via a pinned Dir handle." },
+    { path = "std::fs::read", reason = "Use sandbox::io::open_file (pinned Dir handle)." },
+    { path = "std::fs::read_to_string", reason = "Use sandbox::io::open_file (pinned Dir handle)." },
+    { path = "std::fs::write", reason = "Use sandbox::io::atomic_write (pinned Dir handle)." },
+    { path = "std::fs::copy", reason = "No sandboxed equivalent; copy through open handles." },
+    { path = "std::fs::rename", reason = "Use Dir::rename on a pinned handle." },
+    { path = "std::fs::remove_file", reason = "Use sandbox::io::remove_file (pinned Dir handle)." },
+    { path = "std::fs::remove_dir", reason = "Not supported by the sandbox; remove files individually via sandbox::io::remove_file." },
+    { path = "std::fs::remove_dir_all", reason = "Not supported by the sandbox; remove files individually via sandbox::io::remove_file." },
+    { path = "std::fs::read_dir", reason = "Use sandbox::io::list_dir (pinned Dir handle)." },
+    { path = "std::fs::hard_link", reason = "Not supported by the sandbox." },
+    { path = "std::fs::soft_link", reason = "Not supported by the sandbox." },
+    # allow-invalid: the path does not resolve on non-Unix targets (Windows clippy/check).
+    { path = "std::os::unix::fs::symlink", reason = "Not supported by the sandbox.", allow-invalid = true },
+    { path = "std::fs::set_permissions", reason = "Set the mode when opening through a pinned Dir handle." },
+
+    # ── Path reasoning: allowed only in sandbox/paths.rs ──
+    { path = "std::fs::metadata", reason = "Stat the opened fd, or use the sandbox::paths probes." },
+    { path = "std::fs::symlink_metadata", reason = "Use sandbox::paths, or stat the opened fd." },
+    { path = "std::fs::create_dir", reason = "Use sandbox::paths::create_dir_all, or Dir::create_dir_all." },
+    { path = "std::fs::create_dir_all", reason = "Use sandbox::paths::create_dir_all, or Dir::create_dir_all." },
+    { path = "std::fs::DirBuilder::new", reason = "Use sandbox::paths::create_dir_all." },
+    { path = "std::path::Path::canonicalize", reason = "Use sandbox::paths::resolve_real_path." },
+    { path = "std::path::Path::exists", reason = "Use sandbox::paths::exists." },
+    { path = "std::path::Path::try_exists", reason = "Use sandbox::paths::exists." },
+    { path = "std::path::Path::is_dir", reason = "Use sandbox::paths::is_dir." },
+    { path = "std::path::Path::is_file", reason = "Use sandbox::paths::exists / is_dir." },
+    { path = "std::path::Path::metadata", reason = "Stat the opened fd, or use the sandbox::paths probes." },
+    { path = "std::path::Path::symlink_metadata", reason = "Use sandbox::paths, or stat the opened fd." },
+    { path = "std::path::Path::read_dir", reason = "Use sandbox::io::list_dir (pinned Dir handle)." },
+]

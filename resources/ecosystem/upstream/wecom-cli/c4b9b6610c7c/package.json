@@ -1,0 +1,57 @@
+{
+  "name": "@wecom/cli",
+  "version": "1.3.4",
+  "description": "The official CLI for WeCom",
+  "keywords": [
+    "wecom-cli"
+  ],
+  "homepage": "https://github.com/WecomTeam/wecom-cli#readme",
+  "bugs": {
+    "url": "https://github.com/WecomTeam/wecom-cli/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/WecomTeam/wecom-cli.git"
+  },
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "wecom-cli": "./bin/wecom.js"
+  },
+  "files": [
+    "bin",
+    "README.md"
+  ],
+  "scripts": {
+    "check": "cargo check --workspace --all-targets",
+    "fmt": "git ls-files '*.rs' | xargs rustfmt +nightly",
+    "fmt:check": "git ls-files '*.rs' | xargs rustfmt +nightly --check",
+    "lint": "cargo clippy --workspace --all-targets --features custom-endpoint -- -D warnings",
+    "lint:all": "cargo hack clippy --workspace --all-targets --feature-powerset -- -D warnings",
+    "prepare": "lefthook install",
+    "test": "pnpm test:default && pnpm test:skip-auth-check",
+    "test:default": "cargo test --workspace --all-targets --features custom-endpoint",
+    "test:skip-auth-check": "cargo test --workspace --all-targets --features custom-endpoint,skip-auth-check",
+    "test:doc": "cargo test --workspace --doc"
+  },
+  "devDependencies": {
+    "@changesets/cli": "^2.30.0",
+    "@commitlint/cli": "^20.5.0",
+    "@commitlint/config-conventional": "^20.5.0",
+    "@eslint/js": "^10.0.1",
+    "@tsconfig/node-lts": "^24.0.0",
+    "@types/node": "^25.5.0",
+    "eslint": "^10.1.0",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-prettier": "^5.5.5",
+    "globals": "^17.4.0",
+    "lefthook": "^2.1.4",
+    "prettier": "^3.8.1",
+    "typescript": "^5.8.3",
+    "typescript-eslint": "^8.57.2"
+  },
+  "packageManager": "pnpm@12.3.4",
+  "engines": {
+    "node": ">=18"
+  }
+}

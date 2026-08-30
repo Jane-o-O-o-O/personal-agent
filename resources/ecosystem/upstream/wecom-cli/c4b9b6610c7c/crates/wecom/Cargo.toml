@@ -1,0 +1,55 @@
+[package]
+name = "wecom"
+version.workspace = true
+edition = "2024"
+description = "Core library behind the WeCom CLI: schema-driven command tree, discovery and directives"
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[features]
+custom-endpoint = []
+
+[lib]
+name = "wecom"
+path = "src/lib.rs"
+
+[dependencies]
+anstyle = "1"
+base64 = "0.23"
+bytes = "1"
+clap = { version = "4.6.5", features = ["derive", "string"] }
+dirs = "6.0.0"
+futures = "0.3.33"
+indexmap = { workspace = true }
+jsonrepair-rs = { version = "0.2", features = ["serde"] }
+rand = { workspace = true }
+reqwest = { version = "0.13.4", default-features = false, features = ["json", "multipart", "stream", "rustls"] }
+schemars = "1"
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_with = { workspace = true }
+thiserror = "2.0.19"
+tokio = { version = "1.53.1", features = ["rt", "time", "sync", "fs", "macros", "rt-multi-thread"] }
+tokio-util = { version = "0.7", features = ["io"] }
+tracing = { workspace = true }
+tracing-subscriber = { version = "0.3", default-features = false, features = ["registry"] }
+wecom-error = { path = "../wecom-error", version = "0.1.0" }
+wecom-fs = { path = "../wecom-fs" }
+wecom-transport = { workspace = true }
+
+[dev-dependencies]
+assert-json-diff = "2"
+filetime = "0.2"
+http = "1"
+mockito = "1"
+tempfile = { workspace = true }
+tracing-subscriber = { version = "0.3", features = ["json", "registry", "fmt"] }
+wiremock = "0.6"
+
+[build-dependencies]
+time = { version = "0.3", features = ["formatting"] }
+
+[[test]]
+name = "e2e"
+path = "test-e2e/run.rs"

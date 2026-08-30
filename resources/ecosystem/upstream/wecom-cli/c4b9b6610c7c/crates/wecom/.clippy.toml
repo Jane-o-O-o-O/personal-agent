@@ -1,0 +1,36 @@
+# Disallow direct `std::fs` operations to prevent sandbox bypass.
+#
+# All file I/O in the `wecom` crate MUST go through `Fs` methods.
+# Legitimate exceptions (e.g. the sandbox implementation itself, config loading
+# before sandbox construction) are annotated with
+# `#[allow(clippy::disallowed_methods)]`.
+#
+# This is the primary defence against accidental sandbox escapes introduced by
+# future code changes.
+
+disallowed-methods = [
+    { path = "std::fs::read_to_string", reason = "Use Fs::read_to_string to enforce sandbox. If this is a legitimate bypass, add #[allow(clippy::disallowed_methods)] with a safety comment." },
+    { path = "std::fs::write", reason = "Use Fs::atomic_write to enforce sandbox." },
+    { path = "std::fs::remove_file", reason = "Use Fs::remove_file to enforce sandbox." },
+    { path = "std::fs::remove_dir_all", reason = "Fs has no recursive deletion; remove files individually via Fs::remove_file to enforce sandbox." },
+    { path = "std::fs::metadata", reason = "Use Fs::metadata to enforce sandbox." },
+    { path = "std::fs::read_dir", reason = "Use Fs::list_dir to enforce sandbox." },
+    { path = "std::fs::File::open", reason = "Use Fs read methods to enforce sandbox." },
+    { path = "std::fs::File::create", reason = "Use Fs::create_file to enforce sandbox." },
+    { path = "std::fs::OpenOptions::new", reason = "Use Fs methods to enforce sandbox." },
+    { path = "std::fs::read", reason = "Use Fs::read_to_string or open methods to enforce sandbox." },
+    { path = "std::fs::copy", reason = "Use Fs methods for file operations to enforce sandbox." },
+    { path = "std::fs::rename", reason = "Use Fs methods for file operations to enforce sandbox." },
+
+    # ── Path reasoning: must go through the Fs capability ──
+    # Mirrors crates/wecom-fs/.clippy.toml — a path-based probe is an
+    # unchecked second access path alongside the Fs capability.
+    { path = "std::path::Path::canonicalize", reason = "Use Fs::resolve to enforce sandbox." },
+    { path = "std::path::Path::exists", reason = "Probe through the Fs capability; a legitimate bypass needs #[allow(clippy::disallowed_methods)] with a SAFETY note." },
+    { path = "std::path::Path::try_exists", reason = "Probe through the Fs capability; a legitimate bypass needs #[allow(clippy::disallowed_methods)] with a SAFETY note." },
+    { path = "std::path::Path::is_dir", reason = "Probe through the Fs capability; a legitimate bypass needs #[allow(clippy::disallowed_methods)] with a SAFETY note." },
+    { path = "std::path::Path::is_file", reason = "Probe through the Fs capability; a legitimate bypass needs #[allow(clippy::disallowed_methods)] with a SAFETY note." },
+    { path = "std::path::Path::metadata", reason = "Use Fs::metadata to enforce sandbox." },
+    { path = "std::path::Path::symlink_metadata", reason = "Use Fs::metadata to enforce sandbox." },
+    { path = "std::path::Path::read_dir", reason = "Use Fs::list_dir to enforce sandbox." },
+]

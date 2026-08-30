@@ -1,0 +1,19 @@
+# Disallow direct `std::fs` operations — mirrors the wecom crate policy.
+#
+# Legitimate exceptions (e.g. logging, pre-sandbox credential loading) are
+# annotated with `#[allow(clippy::disallowed_methods)]`.
+
+disallowed-methods = [
+    { path = "std::fs::read_to_string", reason = "Use Fs::read_to_string to enforce sandbox. If this is a legitimate bypass, add #[allow(clippy::disallowed_methods)] with a safety comment." },
+    { path = "std::fs::write", reason = "Use Fs::atomic_write to enforce sandbox." },
+    { path = "std::fs::remove_file", reason = "Use Fs::remove_file to enforce sandbox." },
+    { path = "std::fs::remove_dir_all", reason = "Fs has no recursive deletion; remove files individually via Fs::remove_file to enforce sandbox." },
+    { path = "std::fs::metadata", reason = "Use Fs::metadata to enforce sandbox." },
+    { path = "std::fs::read_dir", reason = "Use Fs::list_files to enforce sandbox." },
+    { path = "std::fs::File::open", reason = "Use Fs read methods to enforce sandbox." },
+    { path = "std::fs::File::create", reason = "Use Fs::create_file to enforce sandbox." },
+    { path = "std::fs::OpenOptions::new", reason = "Use Fs methods to enforce sandbox." },
+    { path = "std::fs::read", reason = "Use Fs::read_to_string or open methods to enforce sandbox." },
+    { path = "std::fs::copy", reason = "Use Fs methods for file operations to enforce sandbox." },
+    { path = "std::fs::rename", reason = "Use Fs methods for file operations to enforce sandbox." },
+]

@@ -1,0 +1,38 @@
+[package]
+name = "wecom-transport"
+version.workspace = true
+edition = "2024"
+description = "Transport layer for the WeCom CLI: HTTP backend, endpoint catalog and long-task polling"
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[dependencies]
+bytes = "1"
+futures-core = "0.3"
+futures-util = { version = "0.3", default-features = false, features = ["alloc"] }
+http-body = "1"
+indexmap = { workspace = true }
+reqwest = { version = "0.13.4", default-features = false, features = ["json", "multipart", "stream", "rustls"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_repr = "0.1"
+serde_with = { workspace = true }
+thiserror = "2.0.19"
+tokio = { workspace = true }
+tokio-stream = "0.1"
+tracing = { workspace = true }
+tracing-subscriber = { version = "0.3", default-features = false, features = ["registry", "std"] }
+wecom-error = { path = "../wecom-error", version = "0.1.0" }
+
+[dev-dependencies]
+wiremock = "0.6"
+assert-json-diff = "2"
+tempfile = { workspace = true }
+tokio = { version = "1", features = ["full", "test-util"] }
+libc = "0.2"
+futures-util = "0.3"
+
+[[test]]
+name = "e2e"
+path = "test-e2e/run.rs"

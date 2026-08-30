@@ -1,0 +1,27 @@
+pre-commit:
+  parallel: false
+  commands:
+    fmt:
+      glob: "*.rs"
+      run: git ls-files '*.rs' | xargs rustfmt +nightly --check
+    clippy:
+      glob: "*.rs"
+      run: cargo clippy --workspace --all-targets -- -D warnings
+    eslint:
+      glob: "*.{js,ts}"
+      run: git diff --cached --name-only --diff-filter=d | grep -E '\.(js|ts)$' | xargs -r npx eslint
+
+commit-msg:
+  commands:
+    commitlint:
+      run: npx --no -- commitlint --edit {1}
+
+pre-push:
+  parallel: true
+  commands:
+    test:
+      glob: "*.rs"
+      run: pnpm test
+    check:
+      glob: "*.rs"
+      run: pnpm check
