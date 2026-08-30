@@ -1,0 +1,385 @@
+import { describe, it, expect, vi, beforeEach } from "vitest";
+
+vi.mock("../util/logger.js", () => ({
+  logger: {
+    info: vi.fn(),
+    debug: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+  },
+}));
+
+const { mockQuotePut, mockSendMessageApi } = vi.hoisted(() => ({
+  mockQuotePut: vi.fn(),
+  mockSendMessageApi: vi.fn(),
+}));
+
+vi.mock("../api/api.js", () => ({
+  sendMessage: mockSendMessageApi,
+}));
+
+vi.mock("./quote-store.js", () => ({
+  getQuoteStore: () => ({ put: mockQuotePut }),
+}));
+
+vi.mock("node:crypto", () => ({
+  default: {
+    randomBytes: vi.fn(() => Buffer.from("deadbeef", "hex")),
+  },
+}));
+
+import {
+  sendMessageWeixin,
+  sendMessageItemWeixin,
+  sendImageMessageWeixin,
+  sendVideoMessageWeixin,
+  sendFileMessageWeixin,
+} from "./send.js";
+import { MessageItemType } from "../api/types.js";
+import type { UploadedFileInfo } from "../cdn/upload.js";
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  vi.spyOn(Date, "now").mockReturnValue(1700000000000);
+});
+
+describe("sendMessageWeixin", () => {
+  it("sends without contextToken (no throw)", async () => {
+    mockSendMessageApi.mockResolvedValueOnce(undefined);
+    const result = await sendMessageWeixin({
+      to: "user1",
+      text: "hello",
+      opts: { baseUrl: "https://api.com" },
+    });
+    expect(result.messageId).toBeDefined();
+  });
+
+  it("sends text message successfully", async () => {
+    mockSendMessageApi.mockResolvedValueOnce(undefined);
+    const result = await sendMessageWeixin({
+      to: "user1",
+      text: "hello",
+      opts: { baseUrl: "https://api.com", token: "tok", contextToken: "ctx" },
+    });
+    expect(result.messageId).toBeDefined();
+    expect(mockSendMessageApi).toHaveBeenCalledOnce();
+    const callArgs = mockSendMessageApi.mock.calls[0][0];
+    expect(callArgs.body.msg.to_user_id).toBe("user1");
+    expect(callArgs.body.msg.context_token).toBe("ctx");
+  });
+
+  it("includes run_id when provided", async () => {
+    mockSendMessageApi.mockResolvedValueOnce(undefined);
+    await sendMessageWeixin({
+      to: "user1",
+      text: "hello",
+      opts: { baseUrl: "https://api.com", contextToken: "ctx", runId: "run-1" },
+    });
+    const callArgs = mockSendMessageApi.mock.calls[0][0];
+    expect(callArgs.body.msg.run_id).toBe("run-1");
+  });
+
+  it("sends message with empty text (no item_list)", async () => {
+    mockSendMessageApi.mockResolvedValueOnce(undefined);
+    const result = await sendMessageWeixin({
+      to: "user1",
+      text: "",
+      opts: { baseUrl: "https://api.com", contextToken: "ctx" },
+    });
+    expect(result.messageId).toBeDefined();
+    const callArgs = mockSendMessageApi.mock.calls[0][0];
+    expect(callArgs.body.msg.item_list).toBeUndefined();
+  });
+
+  it("re-throws API errors", async () => {
+    mockSendMessageApi.mockRejectedValueOnce(new Error("api fail"));
+    await expect(
+      sendMessageWeixin({
+        to: "user1",
+        text: "hello",
+        opts: { baseUrl: "https://api.com", contextToken: "ctx" },
+      }),
+    ).rejects.toThrow("api fail");
+  });
+
+  it("stores outbound text under the lossless server ID", async () => {
+    mockSendMessageApi.mockResolvedValueOnce({ message_id: "18446744073709551615" });
+    const result = await sendMessageWeixin({
+      to: "user1",
+      text: "hello",
+      opts: { baseUrl: "https://api.com", accountId: "account1" },
+    });
+    expect(result.serverMessageId).toBe("18446744073709551615");
+    expect(result.messageId).not.toBe(result.serverMessageId);
+    expect(mockQuotePut).toHaveBeenCalledWith(
+      expect.objectContaining({
+        accountId: "account1",
+        conversationId: "user1",
+        messageId: "18446744073709551615",
+        body: "hello",
+        direction: "outbound",
+      }),
+    );
+  });
+
+  it("does not turn a successful send into a failure when caching fails", async () => {
+    mockSendMessageApi.mockResolvedValueOnce({ message_id: "99" });
+    mockQuotePut.mockRejectedValueOnce(new Error("disk full"));
+    await expect(
+      sendMessageWeixin({
+        to: "user1",
+        text: "hello",
+        opts: { baseUrl: "https://api.com", accountId: "account1" },
+      }),
+    ).resolves.toMatchObject({ serverMessageId: "99" });
+  });
+});
+
+describe("sendMessageItemWeixin", () => {
+  it("sends structured message item with run_id", async () => {
+    mockSendMessageApi.mockResolvedValueOnce(undefined);
+    await sendMessageItemWeixin({
+      to: "user1",
+      item: {
+        type: MessageItemType.TOOL_CALL_START,
+        is_completed: false,
+        tool_call_start_item: {
+          tool_name: "read",
+          tool_call_id: "tool:call-1",
+        },
+      },
+      opts: { baseUrl: "https://api.com", contextToken: "ctx", runId: "run-1" },
+    });
+    const callArgs = mockSendMessageApi.mock.calls[0][0];
+    expect(callArgs.body.msg.run_id).toBe("run-1");
+    expect(callArgs.body.msg.item_list).toEqual([
+      {
+        type: MessageItemType.TOOL_CALL_START,
+        is_completed: false,
+        tool_call_start_item: {
+          tool_name: "read",
+          tool_call_id: "tool:call-1",
+        },
+      },
+    ]);
+  });
+
+  it("caches a structured text item and preserves an explicit client ID", async () => {
+    mockSendMessageApi.mockResolvedValueOnce({ message_id: "123" });
+    const result = await sendMessageItemWeixin({
+      to: "user1",
+      item: { type: MessageItemType.TEXT, text_item: { text: "structured text" } },
+      opts: { baseUrl: "https://api.com", accountId: "account1" },
+      clientId: "explicit-client-id",
+    });
+    expect(result).toEqual({ messageId: "explicit-client-id", serverMessageId: "123" });
+    expect(mockQuotePut).toHaveBeenCalledWith(
+      expect.objectContaining({
+        messageId: "123",
+        body: "structured text",
+      }),
+    );
+  });
+
+  it("returns the client ID when a structured item has no server ID", async () => {
+    mockSendMessageApi.mockResolvedValueOnce({});
+    const result = await sendMessageItemWeixin({
+      to: "user1",
+      item: { type: MessageItemType.TEXT, text_item: {} },
+      opts: { baseUrl: "https://api.com" },
+    });
+    expect(result.serverMessageId).toBeUndefined();
+  });
+
+  it("rethrows structured-item API errors", async () => {
+    mockSendMessageApi.mockRejectedValueOnce(new Error("structured fail"));
+    await expect(
+      sendMessageItemWeixin({
+        to: "user1",
+        item: { type: MessageItemType.TEXT, text_item: { text: "hello" } },
+        opts: { baseUrl: "https://api.com" },
+      }),
+    ).rejects.toThrow("structured fail");
+  });
+});
+
+function makeUploadedFileInfo(overrides?: Partial<UploadedFileInfo>): UploadedFileInfo {
+  return {
+    filekey: "fk",
+    downloadEncryptedQueryParam: "param",
+    aeskey: "0123456789abcdef0123456789abcdef",
+    fileSize: 1024,
+    fileSizeCiphertext: 1040,
+    ...overrides,
+  };
+}
+
+describe("sendImageMessageWeixin", () => {
+  it("sends without contextToken (no throw)", async () => {
+    mockSendMessageApi.mockResolvedValueOnce(undefined);
+    const result = await sendImageMessageWeixin({
+      to: "u",
+      text: "",
+      uploaded: makeUploadedFileInfo(),
+      opts: { baseUrl: "https://api.com" },
+    });
+    expect(result.messageId).toBeDefined();
+  });
+
+  it("sends image message with thumbnail", async () => {
+    mockSendMessageApi.mockResolvedValue(undefined);
+    const uploaded = makeUploadedFileInfo({
+      imageWidth: 800,
+      imageHeight: 600,
+      thumb: {
+        filekey: "fk",
+        downloadEncryptedQueryParam: "tp",
+        aeskey: "0123456789abcdef0123456789abcdef",
+        fileSize: 200,
+        fileSizeCiphertext: 208,
+        width: 300,
+        height: 225,
+      },
+    });
+    const result = await sendImageMessageWeixin({
+      to: "user1",
+      text: "caption",
+      uploaded,
+      opts: { baseUrl: "https://api.com", contextToken: "ctx" },
+    });
+    expect(result.messageId).toBeDefined();
+    expect(mockSendMessageApi).toHaveBeenCalledTimes(2);
+  });
+
+  it("includes run_id on media caption and item sends", async () => {
+    mockSendMessageApi.mockResolvedValue(undefined);
+    await sendImageMessageWeixin({
+      to: "user1",
+      text: "caption",
+      uploaded: makeUploadedFileInfo(),
+      opts: { baseUrl: "https://api.com", contextToken: "ctx", runId: "run-media" },
+    });
+    expect(mockSendMessageApi).toHaveBeenCalledTimes(2);
+    expect(mockSendMessageApi.mock.calls[0][0].body.msg.run_id).toBe("run-media");
+    expect(mockSendMessageApi.mock.calls[1][0].body.msg.run_id).toBe("run-media");
+  });
+
+  it("sends image message without caption (single call)", async () => {
+    mockSendMessageApi.mockResolvedValue(undefined);
+    const result = await sendImageMessageWeixin({
+      to: "user1",
+      text: "",
+      uploaded: makeUploadedFileInfo(),
+      opts: { baseUrl: "https://api.com", contextToken: "ctx" },
+    });
+    expect(result.messageId).toBeDefined();
+    expect(mockSendMessageApi).toHaveBeenCalledTimes(1);
+  });
+
+  it("re-throws error from sendMediaItems on API failure", async () => {
+    mockSendMessageApi.mockRejectedValueOnce(new Error("cdn fail"));
+    await expect(
+      sendImageMessageWeixin({
+        to: "user1",
+        text: "",
+        uploaded: makeUploadedFileInfo(),
+        opts: { baseUrl: "https://api.com", contextToken: "ctx" },
+      }),
+    ).rejects.toThrow("cdn fail");
+  });
+
+  it("stores managed metadata for an outbound image", async () => {
+    mockSendMessageApi.mockResolvedValueOnce({ message_id: "image-server-id" });
+    await sendImageMessageWeixin({
+      to: "user1",
+      text: "",
+      uploaded: makeUploadedFileInfo(),
+      opts: { baseUrl: "https://api.com", accountId: "account1" },
+      filePath: "/tmp/photo.png",
+      mediaMime: "image/png",
+    });
+    expect(mockQuotePut).toHaveBeenCalledWith(
+      expect.objectContaining({
+        messageId: "image-server-id",
+        body: "[图片]",
+        sourceMediaPath: "/tmp/photo.png",
+        mediaMime: "image/png",
+        mediaName: "photo.png",
+      }),
+    );
+  });
+});
+
+describe("sendVideoMessageWeixin", () => {
+  it("sends without contextToken (no throw)", async () => {
+    mockSendMessageApi.mockResolvedValueOnce(undefined);
+    const result = await sendVideoMessageWeixin({
+      to: "u",
+      text: "",
+      uploaded: makeUploadedFileInfo(),
+      opts: { baseUrl: "https://api.com" },
+    });
+    expect(result.messageId).toBeDefined();
+  });
+
+  it("sends video message", async () => {
+    mockSendMessageApi.mockResolvedValue(undefined);
+    const result = await sendVideoMessageWeixin({
+      to: "user1",
+      text: "",
+      uploaded: makeUploadedFileInfo({ playLength: 30 }),
+      opts: { baseUrl: "https://api.com", contextToken: "ctx" },
+    });
+    expect(result.messageId).toBeDefined();
+  });
+
+  it("sends video message with thumbnail", async () => {
+    mockSendMessageApi.mockResolvedValue(undefined);
+    const uploaded = makeUploadedFileInfo({
+      playLength: 30,
+      thumb: {
+        filekey: "fk",
+        downloadEncryptedQueryParam: "tp",
+        aeskey: "0123456789abcdef0123456789abcdef",
+        fileSize: 200,
+        fileSizeCiphertext: 208,
+        width: 300,
+        height: 225,
+      },
+    });
+    const result = await sendVideoMessageWeixin({
+      to: "user1",
+      text: "",
+      uploaded,
+      opts: { baseUrl: "https://api.com", contextToken: "ctx" },
+    });
+    expect(result.messageId).toBeDefined();
+  });
+});
+
+describe("sendFileMessageWeixin", () => {
+  it("sends without contextToken (no throw)", async () => {
+    mockSendMessageApi.mockResolvedValueOnce(undefined);
+    const result = await sendFileMessageWeixin({
+      to: "u",
+      text: "",
+      fileName: "file.pdf",
+      uploaded: makeUploadedFileInfo(),
+      opts: { baseUrl: "https://api.com" },
+    });
+    expect(result.messageId).toBeDefined();
+  });
+
+  it("sends file message", async () => {
+    mockSendMessageApi.mockResolvedValue(undefined);
+    const result = await sendFileMessageWeixin({
+      to: "user1",
+      text: "see attached",
+      fileName: "doc.pdf",
+      uploaded: makeUploadedFileInfo(),
+      opts: { baseUrl: "https://api.com", contextToken: "ctx" },
+    });
+    expect(result.messageId).toBeDefined();
+    expect(mockSendMessageApi).toHaveBeenCalledTimes(2);
+  });
+});
