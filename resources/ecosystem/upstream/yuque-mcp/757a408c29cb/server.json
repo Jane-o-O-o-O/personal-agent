@@ -1,0 +1,36 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.yuque/yuque-mcp",
+  "description": "MCP server for Yuque — expose your knowledge base to AI assistants.",
+  "repository": {
+    "url": "https://github.com/yuque/yuque-mcp-server",
+    "source": "github"
+  },
+  "version": "1.0.0",
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "yuque-mcp",
+      "version": "1.0.0",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "YUQUE_TOKEN",
+          "description": "Yuque API token. Use a personal token for your account, or a team token together with YUQUE_HOST for the matching Yuque space.",
+          "isRequired": true,
+          "isSecret": true,
+          "format": "string"
+        },
+        {
+          "name": "YUQUE_HOST",
+          "description": "Yuque site or space host, for example https://www.yuque.com or https://your-space.yuque.com. Required when using a team token from a specific space.",
+          "isRequired": false,
+          "isSecret": false,
+          "format": "string"
+        }
+      ]
+    }
+  ]
+}

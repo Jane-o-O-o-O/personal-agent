@@ -1,0 +1,79 @@
+{
+  "name": "yuque-mcp",
+  "version": "1.0.0",
+  "description": "MCP server for Yuque (语雀) — expose Yuque knowledge base to AI assistants via Model Context Protocol",
+  "mcpName": "io.github.yuque/yuque-mcp",
+  "type": "module",
+  "main": "dist/cli.js",
+  "bin": {
+    "yuque-mcp": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "README.zh-CN.md",
+    "LICENSE",
+    "CHANGELOG.md"
+  ],
+  "scripts": {
+    "build": "tsc && chmod +x dist/cli.js",
+    "check": "npm run lint && npm run format:check && npm run typecheck && npm test && npm run build",
+    "dev": "tsx watch src/cli.ts",
+    "new:tool": "node scripts/new-tool.js",
+    "smoke:dist": "node scripts/smoke-dist-cli.js",
+    "smoke:pack-install": "node scripts/smoke-packed-install.js",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "lint": "eslint src tests",
+    "lint:fix": "eslint src tests --fix",
+    "format": "prettier --write \"src/**/*.ts\" \"tests/**/*.ts\"",
+    "format:check": "prettier --check \"src/**/*.ts\" \"tests/**/*.ts\"",
+    "typecheck": "tsc --noEmit",
+    "changelog": "conventional-changelog -p angular -i CHANGELOG.md -s",
+    "version": "npm run changelog && git add CHANGELOG.md",
+    "release:publish": "git push && git push --tags && npm publish",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "yuque",
+    "mcp",
+    "model-context-protocol",
+    "ai",
+    "llm",
+    "knowledge-base",
+    "claude",
+    "cursor"
+  ],
+  "author": "yuque",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yuque/yuque-mcp-server.git"
+  },
+  "bugs": {
+    "url": "https://github.com/yuque/yuque-mcp-server/issues"
+  },
+  "homepage": "https://github.com/yuque/yuque-mcp-server#readme",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.4",
+    "axios": "^1.7.9",
+    "zod": "^3.24.1",
+    "zod-to-json-schema": "^3.25.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.5",
+    "@typescript-eslint/eslint-plugin": "^8.19.1",
+    "@typescript-eslint/parser": "^8.19.1",
+    "@vitest/coverage-v8": "^4.0.18",
+    "conventional-changelog-cli": "^5.0.0",
+    "eslint": "^9.18.0",
+    "prettier": "^3.4.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^4.0.18"
+  }
+}
