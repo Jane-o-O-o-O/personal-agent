@@ -1,0 +1,10 @@
+{
+  "name": "yuque-ecosystem",
+  "private": true,
+  "scripts": {
+    "check-skills": "node scripts/validate-skills.mjs"
+  },
+  "workspaces": [
+    "website"
+  ]
+}
