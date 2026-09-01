@@ -1,0 +1,2949 @@
+{
+  "urlPrefix": "https://docs.gitcode.com/docs/apis/",
+  "pages": [
+    {
+      "url": "https://docs.gitcode.com/docs/apis/",
+      "path": "docs/apis/index.html",
+      "sha256": "73f814cef9e0a5672fdf24dcef9b9d0aad5bd79d6c9888e7482d4a62178f45b4",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/",
+      "contentType": "text/html",
+      "bytes": 32419
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/%E5%9B%9E%E5%A4%8Dpr%E8%AF%84%E8%AE%BA",
+      "path": "docs/apis/回复pr评论/index.html",
+      "sha256": "cf8a2891ea9675b1aadb5f5cec9c806f2eb192210620aa451d81d3b0381bbcc3",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/%E5%9B%9E%E5%A4%8Dpr%E8%AF%84%E8%AE%BA/",
+      "contentType": "text/html",
+      "bytes": 19531
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/%E8%8E%B7%E5%8F%96%E4%BC%81%E4%B8%9Aissue%E7%8A%B6%E6%80%81",
+      "path": "docs/apis/获取企业issue状态/index.html",
+      "sha256": "a37446e7cddca4c04009a26bd4b5f9379a98075f95f0bc36708e69adf1ac4018",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/%E8%8E%B7%E5%8F%96%E4%BC%81%E4%B8%9Aissue%E7%8A%B6%E6%80%81/",
+      "contentType": "text/html",
+      "bytes": 17403
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/delete-api-v-5-org-org-discuss-number",
+      "path": "docs/apis/delete-api-v-5-org-org-discuss-number/index.html",
+      "sha256": "38408cd6c8a6f8224bb125a1717ef865f6d9523c21b313702826c921c3346474",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/delete-api-v-5-org-org-discuss-number/",
+      "contentType": "text/html",
+      "bytes": 28549
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/delete-api-v-5-org-org-discuss-number-comment-id",
+      "path": "docs/apis/delete-api-v-5-org-org-discuss-number-comment-id/index.html",
+      "sha256": "d432b93346f0a75040472d20490fd0ced727bee42e533bf4c8947f35072562f7",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/delete-api-v-5-org-org-discuss-number-comment-id/",
+      "contentType": "text/html",
+      "bytes": 28990
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/delete-api-v-5-org-owner-kanban-kanban-id-item-list",
+      "path": "docs/apis/delete-api-v-5-org-owner-kanban-kanban-id-item-list/index.html",
+      "sha256": "0e90525d48e24f764f34b1b9413f6478ff12456ebd033ae2efca1a394a48a5ea",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/delete-api-v-5-org-owner-kanban-kanban-id-item-list/",
+      "contentType": "text/html",
+      "bytes": 64152
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/delete-api-v-5-org-owner-kanban-kanban-id-remove-item",
+      "path": "docs/apis/delete-api-v-5-org-owner-kanban-kanban-id-remove-item/index.html",
+      "sha256": "708762a367ab0d4e0c03d36f02cd6647792ebcccf752271a61f732b3f87617ec",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/delete-api-v-5-org-owner-kanban-kanban-id-remove-item/",
+      "contentType": "text/html",
+      "bytes": 18790
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/delete-api-v-5-org-owner-kanban-kanban-id-remove-item-new",
+      "path": "docs/apis/delete-api-v-5-org-owner-kanban-kanban-id-remove-item-new/index.html",
+      "sha256": "b0fb780f3d94e07dd112faeeb8d915741af9e2de66a7be61303f45e2f39d174c",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/delete-api-v-5-org-owner-kanban-kanban-id-remove-item-new/",
+      "contentType": "text/html",
+      "bytes": 30082
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/delete-api-v-5-orgs-org-memberships-username",
+      "path": "docs/apis/delete-api-v-5-orgs-org-memberships-username/index.html",
+      "sha256": "4f64409fd3db2bd1b30a99bbd1aadb99da4eb41436328200facff252fb059e7f",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/delete-api-v-5-orgs-org-memberships-username/",
+      "contentType": "text/html",
+      "bytes": 31954
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/delete-api-v-5-repos-owner-repo",
+      "path": "docs/apis/delete-api-v-5-repos-owner-repo/index.html",
+      "sha256": "e835d8f1bb6bf4b16b6b6c289ae8e7a9a98d56434329eecdb150a1eef63faea2",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/delete-api-v-5-repos-owner-repo/",
+      "contentType": "text/html",
+      "bytes": 36261
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/delete-api-v-5-repos-owner-repo-branches-name",
+      "path": "docs/apis/delete-api-v-5-repos-owner-repo-branches-name/index.html",
+      "sha256": "533b741d87b1a2d509268100cda053a1037be0424e358d0a3a20781a0b55e926",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/delete-api-v-5-repos-owner-repo-branches-name/",
+      "contentType": "text/html",
+      "bytes": 25573
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/delete-api-v-5-repos-owner-repo-branches-wildcard-setting",
+      "path": "docs/apis/delete-api-v-5-repos-owner-repo-branches-wildcard-setting/index.html",
+      "sha256": "7280eece87181905d4383d76e6f5751442fc5cd9f26e0b66037f18ddf56e4456",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/delete-api-v-5-repos-owner-repo-branches-wildcard-setting/",
+      "contentType": "text/html",
+      "bytes": 28563
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/delete-api-v-5-repos-owner-repo-collaborators-username",
+      "path": "docs/apis/delete-api-v-5-repos-owner-repo-collaborators-username/index.html",
+      "sha256": "c30edaac89d289c200567acadcc22efbf4bd11de5290d56a98524548417a1e35",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/delete-api-v-5-repos-owner-repo-collaborators-username/",
+      "contentType": "text/html",
+      "bytes": 28183
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/delete-api-v-5-repos-owner-repo-comments-id",
+      "path": "docs/apis/delete-api-v-5-repos-owner-repo-comments-id/index.html",
+      "sha256": "75a5ac7410789042133c8864ff57c8b64e4ab6c6d12d593cf3d188b67d9a3438",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/delete-api-v-5-repos-owner-repo-comments-id/",
+      "contentType": "text/html",
+      "bytes": 29322
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/delete-api-v-5-repos-owner-repo-contents-path",
+      "path": "docs/apis/delete-api-v-5-repos-owner-repo-contents-path/index.html",
+      "sha256": "2354325ad1bb3cf946834920fe234b887109aae2e4b4d8067e25ec5ff04f5f60",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/delete-api-v-5-repos-owner-repo-contents-path/",
+      "contentType": "text/html",
+      "bytes": 56075
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/delete-api-v-5-repos-owner-repo-discuss-number",
+      "path": "docs/apis/delete-api-v-5-repos-owner-repo-discuss-number/index.html",
+      "sha256": "8ca3eaa7d2df517233a1c5169b0da1fc8028b216ed56968f7d539fcf726c6738",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/delete-api-v-5-repos-owner-repo-discuss-number/",
+      "contentType": "text/html",
+      "bytes": 29019
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/delete-api-v-5-repos-owner-repo-discuss-number-comment",
+      "path": "docs/apis/delete-api-v-5-repos-owner-repo-discuss-number-comment/index.html",
+      "sha256": "ba809405111ee71acd62faaa7a52fcd41c71c188fdb8bed2f5e59720ec8d681d",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/delete-api-v-5-repos-owner-repo-discuss-number-comment/",
+      "contentType": "text/html",
+      "bytes": 13948
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/delete-api-v-5-repos-owner-repo-discuss-number-comment-id",
+      "path": "docs/apis/delete-api-v-5-repos-owner-repo-discuss-number-comment-id/index.html",
+      "sha256": "a5b00350760afab998bc8102e89e4fcad6dfcf99020d943d00a99c837cba26af",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/delete-api-v-5-repos-owner-repo-discuss-number-comment-id/",
+      "contentType": "text/html",
+      "bytes": 29462
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/delete-api-v-5-repos-owner-repo-hooks-id",
+      "path": "docs/apis/delete-api-v-5-repos-owner-repo-hooks-id/index.html",
+      "sha256": "70e88b54c68d6cf855daf7b80ac1a82166aede859c25606a1a9b68a9cf15a936",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/delete-api-v-5-repos-owner-repo-hooks-id/",
+      "contentType": "text/html",
+      "bytes": 27927
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/delete-api-v-5-repos-owner-repo-issues-comments-id",
+      "path": "docs/apis/delete-api-v-5-repos-owner-repo-issues-comments-id/index.html",
+      "sha256": "6118515e4d48dd7b9786bd8c38923ee705a0624f8f546002056c5852c72a7f74",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/delete-api-v-5-repos-owner-repo-issues-comments-id/",
+      "contentType": "text/html",
+      "bytes": 34983
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/delete-api-v-5-repos-owner-repo-issues-number-labels",
+      "path": "docs/apis/delete-api-v-5-repos-owner-repo-issues-number-labels/index.html",
+      "sha256": "1d5ddf0d8f205d181eb8ea7b816a53f48e7a376001fc4ce19564549c4b5667f0",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/delete-api-v-5-repos-owner-repo-issues-number-labels/",
+      "contentType": "text/html",
+      "bytes": 28815
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/delete-api-v-5-repos-owner-repo-issues-number-labels-name",
+      "path": "docs/apis/delete-api-v-5-repos-owner-repo-issues-number-labels-name/index.html",
+      "sha256": "8d33e159f4ddb2e9398c292bf1daa81b27ab2d238632496bd67cbff7011e8cef",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/delete-api-v-5-repos-owner-repo-issues-number-labels-name/",
+      "contentType": "text/html",
+      "bytes": 33966
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/delete-api-v-5-repos-owner-repo-labels-name",
+      "path": "docs/apis/delete-api-v-5-repos-owner-repo-labels-name/index.html",
+      "sha256": "4a9d3f28521e6381e47915460921c43718192b5b88fe98423e892590423b7a43",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/delete-api-v-5-repos-owner-repo-labels-name/",
+      "contentType": "text/html",
+      "bytes": 28711
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/delete-api-v-5-repos-owner-repo-milestones-number",
+      "path": "docs/apis/delete-api-v-5-repos-owner-repo-milestones-number/index.html",
+      "sha256": "4eca9cad4bbfea8e70e5edccf3ffece5336e2dc30856d80d9193a0d08b54b37e",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/delete-api-v-5-repos-owner-repo-milestones-number/",
+      "contentType": "text/html",
+      "bytes": 27868
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/delete-api-v-5-repos-owner-repo-protected-tags-tag-name",
+      "path": "docs/apis/delete-api-v-5-repos-owner-repo-protected-tags-tag-name/index.html",
+      "sha256": "9782ecd89067523f83407fb454ef67c5989d170819e1391592441b917c533477",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/delete-api-v-5-repos-owner-repo-protected-tags-tag-name/",
+      "contentType": "text/html",
+      "bytes": 28539
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/delete-api-v-5-repos-owner-repo-pulls-comments-id",
+      "path": "docs/apis/delete-api-v-5-repos-owner-repo-pulls-comments-id/index.html",
+      "sha256": "609b90767217adf4bec9fc580c700bcec1c56ead5a8368494494347a2df20dd1",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/delete-api-v-5-repos-owner-repo-pulls-comments-id/",
+      "contentType": "text/html",
+      "bytes": 39635
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/delete-api-v-5-repos-owner-repo-pulls-number-approval-reviewers",
+      "path": "docs/apis/delete-api-v-5-repos-owner-repo-pulls-number-approval-reviewers/index.html",
+      "sha256": "dacf3d7abb2933e4b2c4cc8d4c399291b7a9ebe3fe4522a792e5925ba16d9ddb",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/delete-api-v-5-repos-owner-repo-pulls-number-approval-reviewers/",
+      "contentType": "text/html",
+      "bytes": 43673
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/delete-api-v-5-repos-owner-repo-pulls-number-assignees",
+      "path": "docs/apis/delete-api-v-5-repos-owner-repo-pulls-number-assignees/index.html",
+      "sha256": "03efb113f12e7b53d48338a33cd9a7a7a8a17452039d105d4b68387de408ada9",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/delete-api-v-5-repos-owner-repo-pulls-number-assignees/",
+      "contentType": "text/html",
+      "bytes": 38616
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/delete-api-v-5-repos-owner-repo-pulls-number-issues",
+      "path": "docs/apis/delete-api-v-5-repos-owner-repo-pulls-number-issues/index.html",
+      "sha256": "dbd057eab339d94c63a30a6f7728b2da94888388a1194b8b6169334cd1f7c083",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/delete-api-v-5-repos-owner-repo-pulls-number-issues/",
+      "contentType": "text/html",
+      "bytes": 50438
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/delete-api-v-5-repos-owner-repo-pulls-number-labels-name",
+      "path": "docs/apis/delete-api-v-5-repos-owner-repo-pulls-number-labels-name/index.html",
+      "sha256": "7cb5d94694183d698c581c90566ff10a70744bbb4d6aed0f4764b15627d581a8",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/delete-api-v-5-repos-owner-repo-pulls-number-labels-name/",
+      "contentType": "text/html",
+      "bytes": 38718
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/delete-api-v-5-repos-owner-repo-pulls-number-testers",
+      "path": "docs/apis/delete-api-v-5-repos-owner-repo-pulls-number-testers/index.html",
+      "sha256": "9c232d90b9d098f354a6d48d2960279bc71c5a4527521dfe0896a31f8e5a421b",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/delete-api-v-5-repos-owner-repo-pulls-number-testers/",
+      "contentType": "text/html",
+      "bytes": 43569
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/delete-api-v-5-repos-owner-repo-releases-tag-attach-files-attach-file-id",
+      "path": "docs/apis/delete-api-v-5-repos-owner-repo-releases-tag-attach-files-attach-file-id/index.html",
+      "sha256": "8c97f0ac48de8d158dc25c1b09b682d24af5d08f97feab42e587453d5c1aa632",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/delete-api-v-5-repos-owner-repo-releases-tag-attach-files-attach-file-id/",
+      "contentType": "text/html",
+      "bytes": 26464
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/delete-api-v-5-repos-owner-repo-tags-tag-name",
+      "path": "docs/apis/delete-api-v-5-repos-owner-repo-tags-tag-name/index.html",
+      "sha256": "685a7767b3a49e292a40b43218ab0ed0936e3f3fa459355b26176d275e916436",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/delete-api-v-5-repos-owner-repo-tags-tag-name/",
+      "contentType": "text/html",
+      "bytes": 28494
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/delete-api-v-5-user-keys-id",
+      "path": "docs/apis/delete-api-v-5-user-keys-id/index.html",
+      "sha256": "feba58042d3fd2bcf9fbc7025c2d89e744e0a64e3b55b6d20b82b34dc4918bfb",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/delete-api-v-5-user-keys-id/",
+      "contentType": "text/html",
+      "bytes": 30613
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/delete-api-v-5-user-memberships-orgs-org",
+      "path": "docs/apis/delete-api-v-5-user-memberships-orgs-org/index.html",
+      "sha256": "daeae035a791e25dca4becc8e9b598ba3dd87c9caf01d9b33085ca0bb0d4db57",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/delete-api-v-5-user-memberships-orgs-org/",
+      "contentType": "text/html",
+      "bytes": 30015
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/delete-api-v-8-enterprise-enterprise-id-milestones-milestone-id",
+      "path": "docs/apis/delete-api-v-8-enterprise-enterprise-id-milestones-milestone-id/index.html",
+      "sha256": "af5f32a30080f7d3b750466602243edd421c81a28e63a722d28293a06f20d84f",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/delete-api-v-8-enterprise-enterprise-id-milestones-milestone-id/",
+      "contentType": "text/html",
+      "bytes": 29266
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/delete-api-v-8-enterprises-enterprise-members-usernames",
+      "path": "docs/apis/delete-api-v-8-enterprises-enterprise-members-usernames/index.html",
+      "sha256": "2a9e65ac84b56968ac95a2c4d125d1a815e79efe56192c8beced430fbec0f4ce",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/delete-api-v-8-enterprises-enterprise-members-usernames/",
+      "contentType": "text/html",
+      "bytes": 41382
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/delete-api-v-8-enterprises-enterprises-id-label-label-id",
+      "path": "docs/apis/delete-api-v-8-enterprises-enterprises-id-label-label-id/index.html",
+      "sha256": "456ed3c57c3b4d1fc149ea111917fc991187242af3d71431f86d2d39abf46e55",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/delete-api-v-8-enterprises-enterprises-id-label-label-id/",
+      "contentType": "text/html",
+      "bytes": 133292
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/delete-api-v-8-repos-owner-repo-actions-artifacts-artifact-id",
+      "path": "docs/apis/delete-api-v-8-repos-owner-repo-actions-artifacts-artifact-id/index.html",
+      "sha256": "85fa0cc4307dec89a638a1c68dc6e3173ef1417214bdf610c7fc56bf481564aa",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/delete-api-v-8-repos-owner-repo-actions-artifacts-artifact-id/",
+      "contentType": "text/html",
+      "bytes": 31073
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-emails",
+      "path": "docs/apis/get-api-v-5-emails/index.html",
+      "sha256": "24dd95895103c630e8530e6a174b631645c4ab62c4a30bf3b55d547e6e14e8bd",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-emails/",
+      "contentType": "text/html",
+      "bytes": 36435
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-enterprises-enterprise-issue-statuses",
+      "path": "docs/apis/get-api-v-5-enterprises-enterprise-issue-statuses/index.html",
+      "sha256": "5f5ca0a0d7c5aafc1a36858594eef07f0041204dad22fb1efa45afe8ced6d724",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-enterprises-enterprise-issue-statuses/",
+      "contentType": "text/html",
+      "bytes": 34662
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-enterprises-enterprise-issues",
+      "path": "docs/apis/get-api-v-5-enterprises-enterprise-issues/index.html",
+      "sha256": "7480393dadeb5f1651d95a219f6eea183f43257520e2c6519b3ff7a7b2a82ee5",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-enterprises-enterprise-issues/",
+      "contentType": "text/html",
+      "bytes": 107090
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-enterprises-enterprise-issues-issue-id-labels",
+      "path": "docs/apis/get-api-v-5-enterprises-enterprise-issues-issue-id-labels/index.html",
+      "sha256": "72999a1a0877056b678d78a84f61c55c3127ac147955f210798a2fd460df1f96",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-enterprises-enterprise-issues-issue-id-labels/",
+      "contentType": "text/html",
+      "bytes": 39376
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-enterprises-enterprise-issues-number",
+      "path": "docs/apis/get-api-v-5-enterprises-enterprise-issues-number/index.html",
+      "sha256": "e996a9e299ea48bbf01ac5c576371d8ffd80e1fb5b29c41c8c331ea306c357e0",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-enterprises-enterprise-issues-number/",
+      "contentType": "text/html",
+      "bytes": 90629
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-enterprises-enterprise-issues-number-comments",
+      "path": "docs/apis/get-api-v-5-enterprises-enterprise-issues-number-comments/index.html",
+      "sha256": "1f023560abb3eeb5221ab54754fac04da0b686a4012b24b12d21c399b8010dc8",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-enterprises-enterprise-issues-number-comments/",
+      "contentType": "text/html",
+      "bytes": 52017
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-enterprises-enterprise-issues-number-pull-requests",
+      "path": "docs/apis/get-api-v-5-enterprises-enterprise-issues-number-pull-requests/index.html",
+      "sha256": "d9b899d94f21ce11c8ee2b020887cca2e9f9990cd1339ef46be510448426516a",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-enterprises-enterprise-issues-number-pull-requests/",
+      "contentType": "text/html",
+      "bytes": 190306
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-enterprises-enterprise-labels",
+      "path": "docs/apis/get-api-v-5-enterprises-enterprise-labels/index.html",
+      "sha256": "0b878881d9cf83f2c9ca9e43de9d5139773d8b8d70d2dc86c4796e45fc19cd0d",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-enterprises-enterprise-labels/",
+      "contentType": "text/html",
+      "bytes": 35777
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-enterprises-enterprise-members",
+      "path": "docs/apis/get-api-v-5-enterprises-enterprise-members/index.html",
+      "sha256": "1045aeeedf49c09d01499d8f6b8f93737bd1c11342751dbe3f99b07483d70499",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-enterprises-enterprise-members/",
+      "contentType": "text/html",
+      "bytes": 48891
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-enterprises-enterprise-members-username",
+      "path": "docs/apis/get-api-v-5-enterprises-enterprise-members-username/index.html",
+      "sha256": "4762240cd6c4dbcf6e22b0562ca84631f1c0070065594746932d08be1eb4fa30",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-enterprises-enterprise-members-username/",
+      "contentType": "text/html",
+      "bytes": 47035
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-enterprises-enterprise-pull-requests",
+      "path": "docs/apis/get-api-v-5-enterprises-enterprise-pull-requests/index.html",
+      "sha256": "972ec14597a4261424f0003904221ae1c138016b5b3a6435e5d26f23d33837b7",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-enterprises-enterprise-pull-requests/",
+      "contentType": "text/html",
+      "bytes": 97635
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-org-org-customized-roles",
+      "path": "docs/apis/get-api-v-5-org-org-customized-roles/index.html",
+      "sha256": "8ab7f8cbc8f9093a7a676de7d2db18a8e91116ab1c1ffb52849600bab7868e25",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-org-org-customized-roles/",
+      "contentType": "text/html",
+      "bytes": 39311
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-org-org-pull-requests",
+      "path": "docs/apis/get-api-v-5-org-org-pull-requests/index.html",
+      "sha256": "941d1dadc40cc3499ca3205c56e1b8b7d42dbe5708b95d99903d21ffa88af39c",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-org-org-pull-requests/",
+      "contentType": "text/html",
+      "bytes": 88751
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-org-owner-kanban-id-detail",
+      "path": "docs/apis/get-api-v-5-org-owner-kanban-id-detail/index.html",
+      "sha256": "3cd216196598833ac841e0a966a898fba52dcfa6ae679bed6be8c8a6a69cc40e",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-org-owner-kanban-id-detail/",
+      "contentType": "text/html",
+      "bytes": 31263
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-org-owner-kanban-kanban-id-item-list",
+      "path": "docs/apis/get-api-v-5-org-owner-kanban-kanban-id-item-list/index.html",
+      "sha256": "62c73ffb7f8d4e23dc58502ba725988099d31f0a6953f8783d1085ecff5ec218",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-org-owner-kanban-kanban-id-item-list/",
+      "contentType": "text/html",
+      "bytes": 76081
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-org-owner-kanban-list",
+      "path": "docs/apis/get-api-v-5-org-owner-kanban-list/index.html",
+      "sha256": "80a8325954b6efef5f6e888a8fa93cf4bae4e151425f6294da1077e2ad3b103e",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-org-owner-kanban-list/",
+      "contentType": "text/html",
+      "bytes": 37686
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-orgs-org",
+      "path": "docs/apis/get-api-v-5-orgs-org/index.html",
+      "sha256": "bb8836aed1292f584973ba9716849d399a71deb4f0cb34bca6797294495498fe",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-orgs-org/",
+      "contentType": "text/html",
+      "bytes": 44796
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-orgs-org-discuss",
+      "path": "docs/apis/get-api-v-5-orgs-org-discuss/index.html",
+      "sha256": "9085fb56e62bd8416587554e166b217ff6c6e52008fb5e2e14908ae0afa4a583",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-orgs-org-discuss/",
+      "contentType": "text/html",
+      "bytes": 59159
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-orgs-org-discuss-number",
+      "path": "docs/apis/get-api-v-5-orgs-org-discuss-number/index.html",
+      "sha256": "3b1f97a6f9eb4af237db28f070ddb8b225aa6e5bb054e24fc7ee8b07073451cb",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-orgs-org-discuss-number/",
+      "contentType": "text/html",
+      "bytes": 78216
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-orgs-org-discuss-number-comment",
+      "path": "docs/apis/get-api-v-5-orgs-org-discuss-number-comment/index.html",
+      "sha256": "28d7049ebcd08a9b1a26380093d14365bc476e2a23e6e4f7b171f7fbdbe14427",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-orgs-org-discuss-number-comment/",
+      "contentType": "text/html",
+      "bytes": 43785
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-orgs-org-discuss-number-comment-comment-id-reply",
+      "path": "docs/apis/get-api-v-5-orgs-org-discuss-number-comment-comment-id-reply/index.html",
+      "sha256": "693b2ebf7064031b7edb1277075e923cd6be66ece314ad34c122865aeaa13cf7",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-orgs-org-discuss-number-comment-comment-id-reply/",
+      "contentType": "text/html",
+      "bytes": 44979
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-orgs-org-issue-extend-settings",
+      "path": "docs/apis/get-api-v-5-orgs-org-issue-extend-settings/index.html",
+      "sha256": "b99d74baba6b557b59a0b38401fa6bbffe751d85bbff78a05aa2670cdd53efd1",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-orgs-org-issue-extend-settings/",
+      "contentType": "text/html",
+      "bytes": 52117
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-orgs-org-issues",
+      "path": "docs/apis/get-api-v-5-orgs-org-issues/index.html",
+      "sha256": "916fe49733848076d6f9b77021e95678cb81e4d28d48cbbfbeb9638520b38261",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-orgs-org-issues/",
+      "contentType": "text/html",
+      "bytes": 98472
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-orgs-org-members",
+      "path": "docs/apis/get-api-v-5-orgs-org-members/index.html",
+      "sha256": "2ede60dba1b6b7bd412a8ad943a6c4926bac2d3e86c9bef9bd90608af663dfe1",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-orgs-org-members/",
+      "contentType": "text/html",
+      "bytes": 43844
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-orgs-org-members-username",
+      "path": "docs/apis/get-api-v-5-orgs-org-members-username/index.html",
+      "sha256": "73330b714c405eecee353c4dd4d714fa6fd7160e6cc0f65dfa123206479bee3f",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-orgs-org-members-username/",
+      "contentType": "text/html",
+      "bytes": 44320
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-orgs-org-repos",
+      "path": "docs/apis/get-api-v-5-orgs-org-repos/index.html",
+      "sha256": "80a73d55ca80aa7de7d458e29f91c910b3c0af84f534e240efeec5c52e164e06",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-orgs-org-repos/",
+      "contentType": "text/html",
+      "bytes": 83335
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-orgs-owner-followers",
+      "path": "docs/apis/get-api-v-5-orgs-owner-followers/index.html",
+      "sha256": "14fc5fc4324bdb1d2c4868d7cd0863afa1b10c2c43b73459f4ac1d8ae9c5b0ee",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-orgs-owner-followers/",
+      "contentType": "text/html",
+      "bytes": 37883
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-owner-repo-repository-commit-statistics",
+      "path": "docs/apis/get-api-v-5-owner-repo-repository-commit-statistics/index.html",
+      "sha256": "e4ffc2f115cc932cf46c7787261d5112a4bdc46ed1239550afa823dfac3fbc32",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-owner-repo-repository-commit-statistics/",
+      "contentType": "text/html",
+      "bytes": 48638
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-issues-number-operate-logs",
+      "path": "docs/apis/get-api-v-5-repos-owner-issues-number-operate-logs/index.html",
+      "sha256": "2194c932db486fa154bf3590b2c00463d18b0f33afe2146e135d0d978cc4f39c",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-issues-number-operate-logs/",
+      "contentType": "text/html",
+      "bytes": 92952
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo",
+      "path": "docs/apis/get-api-v-5-repos-owner-repo/index.html",
+      "sha256": "405e15438fd1a59aa42d285e0bdf3d0f7a4670d2262310d0f118efdea4e04cad",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo/",
+      "contentType": "text/html",
+      "bytes": 96167
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-branches",
+      "path": "docs/apis/get-api-v-5-repos-owner-repo-branches/index.html",
+      "sha256": "cafb4f347e45e86ef0c4c2dafa8fdc97476571d33ee7eca4e6eef66c370e3a8f",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-branches/",
+      "contentType": "text/html",
+      "bytes": 56961
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-branches-branch",
+      "path": "docs/apis/get-api-v-5-repos-owner-repo-branches-branch/index.html",
+      "sha256": "455580d70c241802201c2a4e3cf6f2d68978d4f2dce5164086e0d2b996001851",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-branches-branch/",
+      "contentType": "text/html",
+      "bytes": 68024
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-clas",
+      "path": "docs/apis/get-api-v-5-repos-owner-repo-clas/index.html",
+      "sha256": "139bfa3c86e49d9b75c78949835fabbfbd6d66b716277b7cfa69f86927db0233",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-clas/",
+      "contentType": "text/html",
+      "bytes": 39393
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-collaborators",
+      "path": "docs/apis/get-api-v-5-repos-owner-repo-collaborators/index.html",
+      "sha256": "7a97ecaabd384796d696f77da0bab0184c7401625efa8792688ac97b65a8df7a",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-collaborators/",
+      "contentType": "text/html",
+      "bytes": 50309
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-collaborators-self-permission",
+      "path": "docs/apis/get-api-v-5-repos-owner-repo-collaborators-self-permission/index.html",
+      "sha256": "dc617e5a64dc00143060bd6312a8ca79c3bafe1531b2cda9fe604384947bbe6a",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-collaborators-self-permission/",
+      "contentType": "text/html",
+      "bytes": 238539
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-collaborators-username",
+      "path": "docs/apis/get-api-v-5-repos-owner-repo-collaborators-username/index.html",
+      "sha256": "48b6392d1f44b85801fa36892dd0dff4ec11dc71168d8cd791e24c6109b731bf",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-collaborators-username/",
+      "contentType": "text/html",
+      "bytes": 30667
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-collaborators-username-permission",
+      "path": "docs/apis/get-api-v-5-repos-owner-repo-collaborators-username-permission/index.html",
+      "sha256": "c37830d7cd9554aafd37206f9680ae4b7205b9e8d656b2d547a79ff74278dfd5",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-collaborators-username-permission/",
+      "contentType": "text/html",
+      "bytes": 44601
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-comments",
+      "path": "docs/apis/get-api-v-5-repos-owner-repo-comments/index.html",
+      "sha256": "f6a8f97583a4fbf3b2f27712b56ee044a73ddcee8ac6c7f579558455d2d38fa9",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-comments/",
+      "contentType": "text/html",
+      "bytes": 42649
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-comments-id",
+      "path": "docs/apis/get-api-v-5-repos-owner-repo-comments-id/index.html",
+      "sha256": "1ead8c70b5415595afb482b177b01ceeba80072f5de65adec16a520920b2ce3d",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-comments-id/",
+      "contentType": "text/html",
+      "bytes": 42300
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-commits",
+      "path": "docs/apis/get-api-v-5-repos-owner-repo-commits/index.html",
+      "sha256": "e834352d1219ed6791c560558aa8d415dbb3d431d2406f2184994ab3475f2755",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-commits/",
+      "contentType": "text/html",
+      "bytes": 82384
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-commits-ref-comments",
+      "path": "docs/apis/get-api-v-5-repos-owner-repo-commits-ref-comments/index.html",
+      "sha256": "b7d541e272ab115926d2378ec6aa33ef01a2ea4f3885af0d9d27f64bfe98d650",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-commits-ref-comments/",
+      "contentType": "text/html",
+      "bytes": 41843
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-commits-sha",
+      "path": "docs/apis/get-api-v-5-repos-owner-repo-commits-sha/index.html",
+      "sha256": "f03ce992b4e4690524dfca38a6f26b2f1a422ee8d62112bc5ba48d10c0e7fe3d",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-commits-sha/",
+      "contentType": "text/html",
+      "bytes": 72508
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-commits-sha-diff",
+      "path": "docs/apis/get-api-v-5-repos-owner-repo-commits-sha-diff/index.html",
+      "sha256": "0ee135647d2957fda648bc9daafe1e16900d556df6b6e796fa1aa9ebe0e48c7f",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-commits-sha-diff/",
+      "contentType": "text/html",
+      "bytes": 29323
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-commits-sha-patch",
+      "path": "docs/apis/get-api-v-5-repos-owner-repo-commits-sha-patch/index.html",
+      "sha256": "3ebb9d564c6056b8932627935372f4ec2b43841c31087d3e34e6ec7482971a96",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-commits-sha-patch/",
+      "contentType": "text/html",
+      "bytes": 29319
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-compare-base-head",
+      "path": "docs/apis/get-api-v-5-repos-owner-repo-compare-base-head/index.html",
+      "sha256": "c59641aaf7c7798df0dc4998c7f67710654d64987503091da7cbc32567b6a27d",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-compare-base-head/",
+      "contentType": "text/html",
+      "bytes": 149015
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-contents-path",
+      "path": "docs/apis/get-api-v-5-repos-owner-repo-contents-path/index.html",
+      "sha256": "19d334c0bb05e1d76a2476410e6615afd321748a234c44a48368f233afe3a21c",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-contents-path/",
+      "contentType": "text/html",
+      "bytes": 52959
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-contributors",
+      "path": "docs/apis/get-api-v-5-repos-owner-repo-contributors/index.html",
+      "sha256": "3b545b76501e2e0ad66686ecfb266173b869b1cee640833c022b5e41f2ae9555",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-contributors/",
+      "contentType": "text/html",
+      "bytes": 41718
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-contributors-statistic",
+      "path": "docs/apis/get-api-v-5-repos-owner-repo-contributors-statistic/index.html",
+      "sha256": "75adcd00593f1f801570f0b00db34cba8b54bd7ee1f6ecdbd8eea9f357938997",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-contributors-statistic/",
+      "contentType": "text/html",
+      "bytes": 61062
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-customized-roles",
+      "path": "docs/apis/get-api-v-5-repos-owner-repo-customized-roles/index.html",
+      "sha256": "adcb27094ea534a52e340ffad8ef1a8a1e92ce875734feef0ba02ff4f16216d8",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-customized-roles/",
+      "contentType": "text/html",
+      "bytes": 48207
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-discuss",
+      "path": "docs/apis/get-api-v-5-repos-owner-repo-discuss/index.html",
+      "sha256": "c68d866b185737afc032c9218d44fb0606c3a7798660db25378227dc0a0565fd",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-discuss/",
+      "contentType": "text/html",
+      "bytes": 59729
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-discuss-number",
+      "path": "docs/apis/get-api-v-5-repos-owner-repo-discuss-number/index.html",
+      "sha256": "3eac03474705af15c0a58520d7d5b0b0f9637bfed481bdc61a9c6d370e33ec61",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-discuss-number/",
+      "contentType": "text/html",
+      "bytes": 78689
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-discuss-number-comment",
+      "path": "docs/apis/get-api-v-5-repos-owner-repo-discuss-number-comment/index.html",
+      "sha256": "c11e0b47d75f7fb7f02fa4c61c85bd46c3162a1e8d3689a252de8abef1b4e372",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-discuss-number-comment/",
+      "contentType": "text/html",
+      "bytes": 44231
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-discuss-number-comment-comment-id-reply",
+      "path": "docs/apis/get-api-v-5-repos-owner-repo-discuss-number-comment-comment-id-reply/index.html",
+      "sha256": "addb16af7d8ed799287120c41d31bf3ea63db4a0991165c844ac6fb90769d513",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-discuss-number-comment-comment-id-reply/",
+      "contentType": "text/html",
+      "bytes": 45470
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-download-statistics",
+      "path": "docs/apis/get-api-v-5-repos-owner-repo-download-statistics/index.html",
+      "sha256": "cff66e32d87d554eda58442a0c8f5d17fe8eac3fd32ae743ba11f9371f667424",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-download-statistics/",
+      "contentType": "text/html",
+      "bytes": 74936
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-events-access-token-your-token",
+      "path": "docs/apis/get-api-v-5-repos-owner-repo-events-access-token-your-token/index.html",
+      "sha256": "07f623da5386a48051b72d13cad3d28c1a9dbc696f93776a429aa8ad6b3cac80",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-events-access-token-your-token/",
+      "contentType": "text/html",
+      "bytes": 62001
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-file-list",
+      "path": "docs/apis/get-api-v-5-repos-owner-repo-file-list/index.html",
+      "sha256": "3c6aa5178f72b730686ffe182ec1951f552c69fa3d3f46744a6f49c9174a5157",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-file-list/",
+      "contentType": "text/html",
+      "bytes": 39998
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-forks",
+      "path": "docs/apis/get-api-v-5-repos-owner-repo-forks/index.html",
+      "sha256": "b649488aa6ac0889caa9126f9d0550c63c5b9b476b4ff84de2982f21ebad96bb",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-forks/",
+      "contentType": "text/html",
+      "bytes": 75690
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-git-blobs-sha",
+      "path": "docs/apis/get-api-v-5-repos-owner-repo-git-blobs-sha/index.html",
+      "sha256": "d8d7d6e87fa6309557d986f41d257955b6d5092b22e1c0e9ce2992ffde27e6ef",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-git-blobs-sha/",
+      "contentType": "text/html",
+      "bytes": 43474
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-git-trees-sha",
+      "path": "docs/apis/get-api-v-5-repos-owner-repo-git-trees-sha/index.html",
+      "sha256": "0608704d2cd54d4376f19c436a95e609bdc514c5d347c95921c36e909aa70a79",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-git-trees-sha/",
+      "contentType": "text/html",
+      "bytes": 47972
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-hooks",
+      "path": "docs/apis/get-api-v-5-repos-owner-repo-hooks/index.html",
+      "sha256": "474fbfcdde09095e6277f718ffb2a9f30eaf84209f715e74ca9ca1c4fbe08266",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-hooks/",
+      "contentType": "text/html",
+      "bytes": 43424
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-hooks-id",
+      "path": "docs/apis/get-api-v-5-repos-owner-repo-hooks-id/index.html",
+      "sha256": "bd768c927307bb64257278dda4ce9ef0564af8431cb0a61e13af0c06524c695a",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-hooks-id/",
+      "contentType": "text/html",
+      "bytes": 42261
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-issues",
+      "path": "docs/apis/get-api-v-5-repos-owner-repo-issues/index.html",
+      "sha256": "8417ddfd0e44519076ee8c95f5e6e8829dead8518908c337eee359a989846eea",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-issues/",
+      "contentType": "text/html",
+      "bytes": 159234
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-issues-comment-comment-id-modify-history",
+      "path": "docs/apis/get-api-v-5-repos-owner-repo-issues-comment-comment-id-modify-history/index.html",
+      "sha256": "a214a388af0752bd5e2b15b56b8f463041e2c1e5f1f2f20c1041f045a4248ce5",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-issues-comment-comment-id-modify-history/",
+      "contentType": "text/html",
+      "bytes": 46753
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-issues-comment-comment-id-user-reactions",
+      "path": "docs/apis/get-api-v-5-repos-owner-repo-issues-comment-comment-id-user-reactions/index.html",
+      "sha256": "d87c76b9886a9826019b0d7f23d3ce84ddd9cc1676494e8c2338fb44d2fbe22e",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-issues-comment-comment-id-user-reactions/",
+      "contentType": "text/html",
+      "bytes": 41165
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-issues-comments",
+      "path": "docs/apis/get-api-v-5-repos-owner-repo-issues-comments/index.html",
+      "sha256": "1657a749d97f94a158b1cad6c9402f39a16af90dbdad15a6798d181774ecf8d2",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-issues-comments/",
+      "contentType": "text/html",
+      "bytes": 61894
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-issues-comments-id",
+      "path": "docs/apis/get-api-v-5-repos-owner-repo-issues-comments-id/index.html",
+      "sha256": "e94409b7e064505be18c1b42a6025680f1be7bec32484de88647208135ba9cc2",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-issues-comments-id/",
+      "contentType": "text/html",
+      "bytes": 52252
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-issues-number",
+      "path": "docs/apis/get-api-v-5-repos-owner-repo-issues-number/index.html",
+      "sha256": "ce6d1cb014a14e3443a32bb36dc04adc2ef85d981e6b349db3901644d9360a60",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-issues-number/",
+      "contentType": "text/html",
+      "bytes": 107553
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-issues-number-comments",
+      "path": "docs/apis/get-api-v-5-repos-owner-repo-issues-number-comments/index.html",
+      "sha256": "d4ea08b7a16a87225cf164e139141e6eacddb87df080ea9d0da606897b2c1d5f",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-issues-number-comments/",
+      "contentType": "text/html",
+      "bytes": 62496
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-issues-number-modify-history",
+      "path": "docs/apis/get-api-v-5-repos-owner-repo-issues-number-modify-history/index.html",
+      "sha256": "d8df851f3a95b3de710f40215e8a68522a89c251da3fb06fdbf84e36596bb34b",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-issues-number-modify-history/",
+      "contentType": "text/html",
+      "bytes": 46688
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-issues-number-pull-requests",
+      "path": "docs/apis/get-api-v-5-repos-owner-repo-issues-number-pull-requests/index.html",
+      "sha256": "071a124bcf0c1dde33026fc9bf982652f960dee7e34fcb444f59eed7f58876e6",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-issues-number-pull-requests/",
+      "contentType": "text/html",
+      "bytes": 91202
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-issues-number-related-branches",
+      "path": "docs/apis/get-api-v-5-repos-owner-repo-issues-number-related-branches/index.html",
+      "sha256": "441f6a418a9cdf7276d595ed7f87e388c982352617af83250d26940d2d2bc4ec",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-issues-number-related-branches/",
+      "contentType": "text/html",
+      "bytes": 34179
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-issues-number-user-reactions",
+      "path": "docs/apis/get-api-v-5-repos-owner-repo-issues-number-user-reactions/index.html",
+      "sha256": "c904763636ba58ceabe6da4989a9115093fbed931afa2cbc207af41854ca0353",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-issues-number-user-reactions/",
+      "contentType": "text/html",
+      "bytes": 41094
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-labels",
+      "path": "docs/apis/get-api-v-5-repos-owner-repo-labels/index.html",
+      "sha256": "ef4a872ab49c79b7c02061b460b0833d1a6bcd0fbc63549251781b55c7cbbe1e",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-labels/",
+      "contentType": "text/html",
+      "bytes": 38110
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-languages",
+      "path": "docs/apis/get-api-v-5-repos-owner-repo-languages/index.html",
+      "sha256": "a59edf6a143b59c32a7551963c6625d390fbf394ee5c9f8d7fbfc9c2d9ce2701",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-languages/",
+      "contentType": "text/html",
+      "bytes": 39702
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-license",
+      "path": "docs/apis/get-api-v-5-repos-owner-repo-license/index.html",
+      "sha256": "fcf20b5bd9a3de88f66bbe4f659def91ab47c993d140ca7095b5b9e846392641",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-license/",
+      "contentType": "text/html",
+      "bytes": 43144
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-milestones",
+      "path": "docs/apis/get-api-v-5-repos-owner-repo-milestones/index.html",
+      "sha256": "9b101807dd479eb44a0ca136a1be3cb55415496281c83a8690e135bea7085d97",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-milestones/",
+      "contentType": "text/html",
+      "bytes": 42327
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-milestones-number",
+      "path": "docs/apis/get-api-v-5-repos-owner-repo-milestones-number/index.html",
+      "sha256": "1130d8954f07b9babb7e2b149da20ffdff57b456a40e022de5d636c56a828753",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-milestones-number/",
+      "contentType": "text/html",
+      "bytes": 40939
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-notifications",
+      "path": "docs/apis/get-api-v-5-repos-owner-repo-notifications/index.html",
+      "sha256": "c0af55c43c2d00b2020c3bf36d158c20547f1e58b5cabc195ae56eceac575bd2",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-notifications/",
+      "contentType": "text/html",
+      "bytes": 45917
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-protect-branches",
+      "path": "docs/apis/get-api-v-5-repos-owner-repo-protect-branches/index.html",
+      "sha256": "410573050e2f035d87fe75991a625afd2d53e676b72fa06c29c39b93e373d8c3",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-protect-branches/",
+      "contentType": "text/html",
+      "bytes": 50736
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-protected-tags",
+      "path": "docs/apis/get-api-v-5-repos-owner-repo-protected-tags/index.html",
+      "sha256": "518247692e1ff375de27dfcb036b6bd67904e3f63e6e19af9c6d41a258953dd7",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-protected-tags/",
+      "contentType": "text/html",
+      "bytes": 33896
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-protected-tags-tag-name",
+      "path": "docs/apis/get-api-v-5-repos-owner-repo-protected-tags-tag-name/index.html",
+      "sha256": "8068e499b3ea4b8d78911f7095b6c3af5d1e82a952423f1f3496cb5607d21e4c",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-protected-tags-tag-name/",
+      "contentType": "text/html",
+      "bytes": 33227
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-pull-request-settings",
+      "path": "docs/apis/get-api-v-5-repos-owner-repo-pull-request-settings/index.html",
+      "sha256": "a5afcaa6e6d08c03372d14a064aaa21cb7eed91309bb7e2180eb3626687d85ed",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-pull-request-settings/",
+      "contentType": "text/html",
+      "bytes": 84870
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-pulls",
+      "path": "docs/apis/get-api-v-5-repos-owner-repo-pulls/index.html",
+      "sha256": "3fa9d218a949b174fa36cd7ac913fbcefc50b9d300b0c8c04beb5cce14fd9900",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-pulls/",
+      "contentType": "text/html",
+      "bytes": 170012
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-pulls-comment-comment-id-modify-history",
+      "path": "docs/apis/get-api-v-5-repos-owner-repo-pulls-comment-comment-id-modify-history/index.html",
+      "sha256": "2ca14145e3b7841a6bf01baca48e4078477c65ed572eadf79057db56c0b9aff2",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-pulls-comment-comment-id-modify-history/",
+      "contentType": "text/html",
+      "bytes": 51595
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-pulls-comment-comment-id-user-reactions",
+      "path": "docs/apis/get-api-v-5-repos-owner-repo-pulls-comment-comment-id-user-reactions/index.html",
+      "sha256": "8b66f025703bfb62af327d6cff44ce02c3db1f5cc48207846185d3b7383be06d",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-pulls-comment-comment-id-user-reactions/",
+      "contentType": "text/html",
+      "bytes": 45899
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-pulls-comments-id",
+      "path": "docs/apis/get-api-v-5-repos-owner-repo-pulls-comments-id/index.html",
+      "sha256": "2b9fcb4883475de6b3c8edb168552f1a70be65a0c67f82dde42f8ea4dace0edd",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-pulls-comments-id/",
+      "contentType": "text/html",
+      "bytes": 65240
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-pulls-number",
+      "path": "docs/apis/get-api-v-5-repos-owner-repo-pulls-number/index.html",
+      "sha256": "bb7b3be9c370325828a8b3d288d0bbefce055672dc0165f8e962d2dc08791a68",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-pulls-number/",
+      "contentType": "text/html",
+      "bytes": 194981
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-pulls-number-comments",
+      "path": "docs/apis/get-api-v-5-repos-owner-repo-pulls-number-comments/index.html",
+      "sha256": "dc8e20f6ca30479e132d0b63f6715b827b613dcbb7272f068d602052cbf350ba",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-pulls-number-comments/",
+      "contentType": "text/html",
+      "bytes": 69441
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-pulls-number-commits",
+      "path": "docs/apis/get-api-v-5-repos-owner-repo-pulls-number-commits/index.html",
+      "sha256": "e97a7876079a91a0ea5e7aa209a4f0f4684f3db0b21a41d4421b4a150936729a",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-pulls-number-commits/",
+      "contentType": "text/html",
+      "bytes": 84834
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-pulls-number-files",
+      "path": "docs/apis/get-api-v-5-repos-owner-repo-pulls-number-files/index.html",
+      "sha256": "e4911f05739ffddc43f58a4c7b4fef25f2e2eb41feab5522c4cca18b7d14bd93",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-pulls-number-files/",
+      "contentType": "text/html",
+      "bytes": 79639
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-pulls-number-files-json",
+      "path": "docs/apis/get-api-v-5-repos-owner-repo-pulls-number-files-json/index.html",
+      "sha256": "c45fa65b07455b8777d673115d901e52641fce6ac7809e50e2c0a592a5157182",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-pulls-number-files-json/",
+      "contentType": "text/html",
+      "bytes": 147769
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-pulls-number-issues",
+      "path": "docs/apis/get-api-v-5-repos-owner-repo-pulls-number-issues/index.html",
+      "sha256": "0e4ae3fc24f504f948cc064c3302d543e9b3ff74ecfe85bb26fb88bb0aae76e7",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-pulls-number-issues/",
+      "contentType": "text/html",
+      "bytes": 61375
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-pulls-number-labels",
+      "path": "docs/apis/get-api-v-5-repos-owner-repo-pulls-number-labels/index.html",
+      "sha256": "9a24da87f66e1649f801e9c1ec766a9cbc861fe3ebdb0fea73357d4873637035",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-pulls-number-labels/",
+      "contentType": "text/html",
+      "bytes": 53668
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-pulls-number-merge",
+      "path": "docs/apis/get-api-v-5-repos-owner-repo-pulls-number-merge/index.html",
+      "sha256": "784a78d4427feec006ca7379ee94aa74c80103eda237da51f30a653c63f24372",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-pulls-number-merge/",
+      "contentType": "text/html",
+      "bytes": 40641
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-pulls-number-modify-history",
+      "path": "docs/apis/get-api-v-5-repos-owner-repo-pulls-number-modify-history/index.html",
+      "sha256": "7127f7104aba94e61a864139d60eab3974a320507389cc1c5835b32b9f179dfc",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-pulls-number-modify-history/",
+      "contentType": "text/html",
+      "bytes": 51431
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-pulls-number-operate-logs",
+      "path": "docs/apis/get-api-v-5-repos-owner-repo-pulls-number-operate-logs/index.html",
+      "sha256": "7199d45f9c5010557459014e1b9345361682f08a6207a961d32132836a1e12e7",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-pulls-number-operate-logs/",
+      "contentType": "text/html",
+      "bytes": 79271
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-pulls-number-option-approval-reviewers",
+      "path": "docs/apis/get-api-v-5-repos-owner-repo-pulls-number-option-approval-reviewers/index.html",
+      "sha256": "e58cc53906d4e5c859449c4cfba2c686f0b3b00a32de2d08052aab24f1696be0",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-pulls-number-option-approval-reviewers/",
+      "contentType": "text/html",
+      "bytes": 42579
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-pulls-number-option-approval-testers",
+      "path": "docs/apis/get-api-v-5-repos-owner-repo-pulls-number-option-approval-testers/index.html",
+      "sha256": "02b17a8aee8e7631d8fe8579d512480181ab25c3ba59e7c903f49c0366182f98",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-pulls-number-option-approval-testers/",
+      "contentType": "text/html",
+      "bytes": 42181
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-pulls-number-user-reactions",
+      "path": "docs/apis/get-api-v-5-repos-owner-repo-pulls-number-user-reactions/index.html",
+      "sha256": "519b126c025070a3be2b104f6ae261da18ec0c48aa1742123f401e5e04a27e06",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-pulls-number-user-reactions/",
+      "contentType": "text/html",
+      "bytes": 45847
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-push-config",
+      "path": "docs/apis/get-api-v-5-repos-owner-repo-push-config/index.html",
+      "sha256": "e3b67ed7b96ff15ab4338ec177d91fab3d9fc1292ddd7c5930755034c8b85f99",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-push-config/",
+      "contentType": "text/html",
+      "bytes": 42051
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-push-remote-mirrors",
+      "path": "docs/apis/get-api-v-5-repos-owner-repo-push-remote-mirrors/index.html",
+      "sha256": "f3d8edad2d640ab0b8d62de8fd41e60cf9b5c7956afa99cf05b5cbedea83dfe1",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-push-remote-mirrors/",
+      "contentType": "text/html",
+      "bytes": 44106
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-raw-path",
+      "path": "docs/apis/get-api-v-5-repos-owner-repo-raw-path/index.html",
+      "sha256": "080fa987bbfa5900b982493a09d5277faa470e2860e9680e4232ff95a677219d",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-raw-path/",
+      "contentType": "text/html",
+      "bytes": 36869
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-releases",
+      "path": "docs/apis/get-api-v-5-repos-owner-repo-releases/index.html",
+      "sha256": "c4d09e58e50988091f568bf2e995564951d980d7f1def71c0d1c070c460eb090",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-releases/",
+      "contentType": "text/html",
+      "bytes": 59452
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-releases-attach-files-file-name-download",
+      "path": "docs/apis/get-api-v-5-repos-owner-repo-releases-attach-files-file-name-download/index.html",
+      "sha256": "e76cbd62dfa8d7def079949cb6d75d71181802f9237f6996bf857df5000e1f24",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-releases-attach-files-file-name-download/",
+      "contentType": "text/html",
+      "bytes": 29225
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-releases-latest",
+      "path": "docs/apis/get-api-v-5-repos-owner-repo-releases-latest/index.html",
+      "sha256": "9c0a1d9d7649334069fcf49f8b7bab4090b7a7da0eb1cc2031ffdd06fc282b21",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-releases-latest/",
+      "contentType": "text/html",
+      "bytes": 58321
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-releases-tag",
+      "path": "docs/apis/get-api-v-5-repos-owner-repo-releases-tag/index.html",
+      "sha256": "461d0e6cae2015036083ca1b5345a393cac0ee92bfa3d957feb5d5fcf43df02f",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-releases-tag/",
+      "contentType": "text/html",
+      "bytes": 44811
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-releases-tag-upload-url",
+      "path": "docs/apis/get-api-v-5-repos-owner-repo-releases-tag-upload-url/index.html",
+      "sha256": "1e8096d653f404c838764219baeb2655b98a6bea93138ce15bd51b50ec4e82a7",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-releases-tag-upload-url/",
+      "contentType": "text/html",
+      "bytes": 34029
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-releases-tags-tag",
+      "path": "docs/apis/get-api-v-5-repos-owner-repo-releases-tags-tag/index.html",
+      "sha256": "35ea39d5ff6d47cb16ab3071d1e84bfd4bc9146441e5843314465334788f5a3c",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-releases-tags-tag/",
+      "contentType": "text/html",
+      "bytes": 58466
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-repo-remote-mirror",
+      "path": "docs/apis/get-api-v-5-repos-owner-repo-repo-remote-mirror/index.html",
+      "sha256": "b938d5e084e9edc9fedf8741f15e89bfc1fbb4cbefa43f226c27e2735ddae426",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-repo-remote-mirror/",
+      "contentType": "text/html",
+      "bytes": 44587
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-repo-settings",
+      "path": "docs/apis/get-api-v-5-repos-owner-repo-repo-settings/index.html",
+      "sha256": "deb2190d596f97119f3d879f8cf0a4e4931c2bc48cc0b76ca66a2da3147c1839",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-repo-settings/",
+      "contentType": "text/html",
+      "bytes": 48278
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-stargazers",
+      "path": "docs/apis/get-api-v-5-repos-owner-repo-stargazers/index.html",
+      "sha256": "e5877f765793dc365c8dfbe804a6dcf8d410586e0db5c7873c87962a9828b4b5",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-stargazers/",
+      "contentType": "text/html",
+      "bytes": 44727
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-subscribers",
+      "path": "docs/apis/get-api-v-5-repos-owner-repo-subscribers/index.html",
+      "sha256": "0ce58601160387ec37211bbac255ce3dd5e49416a8b0bfdd9a30e451196d2076",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-subscribers/",
+      "contentType": "text/html",
+      "bytes": 44727
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-sync-repo",
+      "path": "docs/apis/get-api-v-5-repos-owner-repo-sync-repo/index.html",
+      "sha256": "851acf6b9d80969c0aff3df8f5983e52e6d06cbb74f9f04b55c97099ab871b20",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-sync-repo/",
+      "contentType": "text/html",
+      "bytes": 48444
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-tags",
+      "path": "docs/apis/get-api-v-5-repos-owner-repo-tags/index.html",
+      "sha256": "b91b3be5dc4499750a99718e2b08528f1f5167502e1e4edcaabeb4a22dc8f7be",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-tags/",
+      "contentType": "text/html",
+      "bytes": 41056
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-transition",
+      "path": "docs/apis/get-api-v-5-repos-owner-repo-transition/index.html",
+      "sha256": "eb72cd45c4c7e6a910ca2c025552b55d4ec237bb9c232ca094944502f6262675",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-transition/",
+      "contentType": "text/html",
+      "bytes": 38817
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-search-issues",
+      "path": "docs/apis/get-api-v-5-search-issues/index.html",
+      "sha256": "9a95a11963ef5b7d2efb330330f64cf8ca30b31517f434f38699501830bd95bf",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-search-issues/",
+      "contentType": "text/html",
+      "bytes": 72729
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-search-repositories",
+      "path": "docs/apis/get-api-v-5-search-repositories/index.html",
+      "sha256": "018a309fd80d676c5bcd0a0c20e5286559d3bf4dea79eeaefb9cc0353734fbac",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-search-repositories/",
+      "contentType": "text/html",
+      "bytes": 105786
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-search-users",
+      "path": "docs/apis/get-api-v-5-search-users/index.html",
+      "sha256": "b7763a51b433db0047d4cd3718d0fee0a1a5fd49e87ef6f4ce3e84912befbb10",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-search-users/",
+      "contentType": "text/html",
+      "bytes": 39553
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-user",
+      "path": "docs/apis/get-api-v-5-user/index.html",
+      "sha256": "bcaecb5fc448193d76e2543b16867600b20fbb86cc5b5ad48ca1f0066f05bdff",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-user/",
+      "contentType": "text/html",
+      "bytes": 49380
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-user-issues",
+      "path": "docs/apis/get-api-v-5-user-issues/index.html",
+      "sha256": "a9ec4687ed56f0d98abad6e157c22a0a1a9672b237f7571638f79f9c91245a24",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-user-issues/",
+      "contentType": "text/html",
+      "bytes": 88235
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-user-keys",
+      "path": "docs/apis/get-api-v-5-user-keys/index.html",
+      "sha256": "634030916a6599f8a5bbb8e06eeb06a8207a72be5c94169eb74a868183be7cd9",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-user-keys/",
+      "contentType": "text/html",
+      "bytes": 42132
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-user-keys-id",
+      "path": "docs/apis/get-api-v-5-user-keys-id/index.html",
+      "sha256": "d8de97e0b3a5db2789c4e5f35c8ccb99c54817b8815c19082b53c59111c32d28",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-user-keys-id/",
+      "contentType": "text/html",
+      "bytes": 38535
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-user-memberships-orgs-org",
+      "path": "docs/apis/get-api-v-5-user-memberships-orgs-org/index.html",
+      "sha256": "71ad2b8550a6d28e5913dd27c337fa0294efd2c82004525f8710ff7e6d7741a3",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-user-memberships-orgs-org/",
+      "contentType": "text/html",
+      "bytes": 50793
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-user-namespace",
+      "path": "docs/apis/get-api-v-5-user-namespace/index.html",
+      "sha256": "458b7345eb5b73e8f6b35463f4033b511e830795bdf5cb36791704d87235a53f",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-user-namespace/",
+      "contentType": "text/html",
+      "bytes": 37101
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-user-namespaces",
+      "path": "docs/apis/get-api-v-5-user-namespaces/index.html",
+      "sha256": "0c15ebe4266293dc2a9a3021365b3b9aacc1f563a2d5c2344cf16cf2307b2b27",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-user-namespaces/",
+      "contentType": "text/html",
+      "bytes": 35117
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-user-repos",
+      "path": "docs/apis/get-api-v-5-user-repos/index.html",
+      "sha256": "fd507df5b984eb3e69f416b1cfbc641d821afaaeaada394d66e3bf83114dd443",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-user-repos/",
+      "contentType": "text/html",
+      "bytes": 105179
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-user-starred",
+      "path": "docs/apis/get-api-v-5-user-starred/index.html",
+      "sha256": "2106d44eb19d6471415bf005e045a29b336c5de0d82b3d1a41b31d706a7b1e62",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-user-starred/",
+      "contentType": "text/html",
+      "bytes": 94391
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-user-subscriptions",
+      "path": "docs/apis/get-api-v-5-user-subscriptions/index.html",
+      "sha256": "7644b33c30893ece6853ef634537dc34c13330517375bc4ea96117e92a1623a7",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-user-subscriptions/",
+      "contentType": "text/html",
+      "bytes": 95182
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-user-username-starred",
+      "path": "docs/apis/get-api-v-5-user-username-starred/index.html",
+      "sha256": "b94afdcec101286724c220abbcbe4ffbd5bbe88a3219c50933f1fac1d2022546",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-user-username-starred/",
+      "contentType": "text/html",
+      "bytes": 95712
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-user-username-subscriptions",
+      "path": "docs/apis/get-api-v-5-user-username-subscriptions/index.html",
+      "sha256": "0fe8870913a58531b66756f49cb4e6cc4b43300cc7d41d178b923e1b327a8284",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-user-username-subscriptions/",
+      "contentType": "text/html",
+      "bytes": 95761
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-users-merge-requests",
+      "path": "docs/apis/get-api-v-5-users-merge-requests/index.html",
+      "sha256": "fc9edaef19fd00091a2dabed79131480935100a6bef40454b5d71ca9aa545eff",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-users-merge-requests/",
+      "contentType": "text/html",
+      "bytes": 171968
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-users-orgs",
+      "path": "docs/apis/get-api-v-5-users-orgs/index.html",
+      "sha256": "f90b24ad8bc894f4348171321550d8e7ddaa32f0082ff46f4cafb60f09458301",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-users-orgs/",
+      "contentType": "text/html",
+      "bytes": 41145
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-users-username",
+      "path": "docs/apis/get-api-v-5-users-username/index.html",
+      "sha256": "2249ae2e5885cc21a89164b223f7b43e847588d51eb9cc71f8ab57495078047a",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-users-username/",
+      "contentType": "text/html",
+      "bytes": 49386
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-users-username-events",
+      "path": "docs/apis/get-api-v-5-users-username-events/index.html",
+      "sha256": "961e35cac55d328736f79ac39e77229158ad5db17af00d62b4447aabedb58f15",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-users-username-events/",
+      "contentType": "text/html",
+      "bytes": 94613
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-users-username-orgs",
+      "path": "docs/apis/get-api-v-5-users-username-orgs/index.html",
+      "sha256": "391d085d5d8e6b56d32ea7bcc49f7168995e0b9825e7a4a511044c077968dbc5",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-users-username-orgs/",
+      "contentType": "text/html",
+      "bytes": 40539
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-5-users-username-repos",
+      "path": "docs/apis/get-api-v-5-users-username-repos/index.html",
+      "sha256": "e61d8dc05c00318bd94591bcd0725522b7c5ede7723b6c078b9c8ec67581383b",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-5-users-username-repos/",
+      "contentType": "text/html",
+      "bytes": 109156
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-8-enterprise-enterprise-id-customized-roles",
+      "path": "docs/apis/get-api-v-8-enterprise-enterprise-id-customized-roles/index.html",
+      "sha256": "0d4c536b5d72e9ff9fe28e995555348987ebe95122aacfa35367ca6889638424",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-8-enterprise-enterprise-id-customized-roles/",
+      "contentType": "text/html",
+      "bytes": 37860
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-8-enterprise-enterprise-id-groups-projects",
+      "path": "docs/apis/get-api-v-8-enterprise-enterprise-id-groups-projects/index.html",
+      "sha256": "c543c63abd8bef6ac39085e7ccf5c11aa1f70e5c6dc14f10480f2c04f4f200f1",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-8-enterprise-enterprise-id-groups-projects/",
+      "contentType": "text/html",
+      "bytes": 37105
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-8-enterprise-enterprise-id-milestones",
+      "path": "docs/apis/get-api-v-8-enterprise-enterprise-id-milestones/index.html",
+      "sha256": "7566aa06bf9469e6a3a164aa039dbf7fcd6c92415c565ad168ef2c4cd0355a4a",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-8-enterprise-enterprise-id-milestones/",
+      "contentType": "text/html",
+      "bytes": 47186
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-8-enterprise-enterprise-id-milestones-milestone-id",
+      "path": "docs/apis/get-api-v-8-enterprise-enterprise-id-milestones-milestone-id/index.html",
+      "sha256": "02d9ee75bd3419caf6c8121ed5dec7caab1c1b92c93b802c2c24bb8a6ca492e4",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-8-enterprise-enterprise-id-milestones-milestone-id/",
+      "contentType": "text/html",
+      "bytes": 37657
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-8-enterprises-enterprise-labels",
+      "path": "docs/apis/get-api-v-8-enterprises-enterprise-labels/index.html",
+      "sha256": "cb4780890b610ee112e24db4244adf0169a51647badbb78cbe38013365d90244",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-8-enterprises-enterprise-labels/",
+      "contentType": "text/html",
+      "bytes": 33994
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-8-enterprises-enterprise-members",
+      "path": "docs/apis/get-api-v-8-enterprises-enterprise-members/index.html",
+      "sha256": "034f46b6d3bed41f10c836da683618cfc3829b4018251bc829e3da4c2d476939",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-8-enterprises-enterprise-members/",
+      "contentType": "text/html",
+      "bytes": 42991
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-8-enterprises-enterprise-members-username",
+      "path": "docs/apis/get-api-v-8-enterprises-enterprise-members-username/index.html",
+      "sha256": "ee91658e774978c370d1f37f576eec24b6c1371fcf11e88e8865b6497d9da86a",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-8-enterprises-enterprise-members-username/",
+      "contentType": "text/html",
+      "bytes": 42143
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-8-enterprises-enterprises-id-issue-extend-field",
+      "path": "docs/apis/get-api-v-8-enterprises-enterprises-id-issue-extend-field/index.html",
+      "sha256": "8dd81a29cd8d1bb061e4ebca15b6557b7205b78688350e524db61a7d648ad1b3",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-8-enterprises-enterprises-id-issue-extend-field/",
+      "contentType": "text/html",
+      "bytes": 95320
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-8-org-org-enterprise",
+      "path": "docs/apis/get-api-v-8-org-org-enterprise/index.html",
+      "sha256": "bf5041be986575537a6906e8a08083bf99c1d3269e472eb56443862e013d9a4f",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-8-org-org-enterprise/",
+      "contentType": "text/html",
+      "bytes": 36577
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-8-orgs-org-actions-runner-groups",
+      "path": "docs/apis/get-api-v-8-orgs-org-actions-runner-groups/index.html",
+      "sha256": "1e94e45ce958114571857e51f304bb7a55fd5535deb6e504413c454e5c8a3d0e",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-8-orgs-org-actions-runner-groups/",
+      "contentType": "text/html",
+      "bytes": 41956
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-8-orgs-org-actions-runner-groups-runner-group-id",
+      "path": "docs/apis/get-api-v-8-orgs-org-actions-runner-groups-runner-group-id/index.html",
+      "sha256": "5655cb0ec2c66e95f290f72b32f1f875bf6837a0c0f5b97caa4246e4e61ed5dd",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-8-orgs-org-actions-runner-groups-runner-group-id/",
+      "contentType": "text/html",
+      "bytes": 38028
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-8-orgs-org-actions-runner-groups-runner-group-id-runners",
+      "path": "docs/apis/get-api-v-8-orgs-org-actions-runner-groups-runner-group-id-runners/index.html",
+      "sha256": "f34db56f7729a16c0caf4c661cfde62f0f6fb827b5ab5996874bb36f1fee7d7e",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-8-orgs-org-actions-runner-groups-runner-group-id-runners/",
+      "contentType": "text/html",
+      "bytes": 46878
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-8-orgs-org-actions-runner-groups-runner-group-id-runners-sets",
+      "path": "docs/apis/get-api-v-8-orgs-org-actions-runner-groups-runner-group-id-runners-sets/index.html",
+      "sha256": "df2530a74ef78663c3e0873e1c2964855be058edbef82e689fb0f3b661c7c916",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-8-orgs-org-actions-runner-groups-runner-group-id-runners-sets/",
+      "contentType": "text/html",
+      "bytes": 53124
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-8-orgs-org-actions-runner-groups-runner-group-id-shared-namespaces",
+      "path": "docs/apis/get-api-v-8-orgs-org-actions-runner-groups-runner-group-id-shared-namespaces/index.html",
+      "sha256": "d73921cb9d18ff97e8444fd814d88d12a1b37f0e477a99d255de3bcafb14ae4d",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-8-orgs-org-actions-runner-groups-runner-group-id-shared-namespaces/",
+      "contentType": "text/html",
+      "bytes": 44733
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-8-orgs-org-actions-runner-resources-job-history",
+      "path": "docs/apis/get-api-v-8-orgs-org-actions-runner-resources-job-history/index.html",
+      "sha256": "54bd93c975a5b259f1532c1594ab797c342784f6d4fe48620d61ca6506076569",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-8-orgs-org-actions-runner-resources-job-history/",
+      "contentType": "text/html",
+      "bytes": 49927
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-8-repos-owner-repo-actions-artifacts",
+      "path": "docs/apis/get-api-v-8-repos-owner-repo-actions-artifacts/index.html",
+      "sha256": "ccb4142e1e7d172740c16897f5fd5ddd18610f2a5d1cf40ff35b718e3ab1309e",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-8-repos-owner-repo-actions-artifacts/",
+      "contentType": "text/html",
+      "bytes": 43074
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-8-repos-owner-repo-actions-artifacts-artifact-id",
+      "path": "docs/apis/get-api-v-8-repos-owner-repo-actions-artifacts-artifact-id/index.html",
+      "sha256": "0a2eb7ff724aaeb62731f94252d806491766d7ee39a22a8f5c517cd775f20aea",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-8-repos-owner-repo-actions-artifacts-artifact-id/",
+      "contentType": "text/html",
+      "bytes": 39742
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-8-repos-owner-repo-actions-artifacts-artifact-id-archive-format",
+      "path": "docs/apis/get-api-v-8-repos-owner-repo-actions-artifacts-artifact-id-archive-format/index.html",
+      "sha256": "5908c21a61012e54c29cdc08cdd4208afa12515a2607b0e32aaa9a9443f827c8",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-8-repos-owner-repo-actions-artifacts-artifact-id-archive-format/",
+      "contentType": "text/html",
+      "bytes": 34358
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-8-repos-owner-repo-actions-runner-sets",
+      "path": "docs/apis/get-api-v-8-repos-owner-repo-actions-runner-sets/index.html",
+      "sha256": "015af3e22b70b1befc601759b850fa0cae872bb007d547cda59d9436fd36156a",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-8-repos-owner-repo-actions-runner-sets/",
+      "contentType": "text/html",
+      "bytes": 52897
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-8-repos-owner-repo-actions-runners",
+      "path": "docs/apis/get-api-v-8-repos-owner-repo-actions-runners/index.html",
+      "sha256": "cb2341f973dc2938539078bac308c9574e7340f9cb3c35cafc0d2bb6a05c8e4f",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-8-repos-owner-repo-actions-runners/",
+      "contentType": "text/html",
+      "bytes": 46685
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-8-repos-owner-repo-actions-runners-shared-runners",
+      "path": "docs/apis/get-api-v-8-repos-owner-repo-actions-runners-shared-runners/index.html",
+      "sha256": "edab5c95608ee3025c71f174570bb69f0d9f69f0619a95805b4a3539a4381f1d",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-8-repos-owner-repo-actions-runners-shared-runners/",
+      "contentType": "text/html",
+      "bytes": 46800
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-8-repos-owner-repo-actions-runs",
+      "path": "docs/apis/get-api-v-8-repos-owner-repo-actions-runs/index.html",
+      "sha256": "c6977ea002544e9989027c39b7fed296091d6fc5cc4f25f2fb14a0f29f468a30",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-8-repos-owner-repo-actions-runs/",
+      "contentType": "text/html",
+      "bytes": 52625
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-8-repos-owner-repo-actions-runs-run-id",
+      "path": "docs/apis/get-api-v-8-repos-owner-repo-actions-runs-run-id/index.html",
+      "sha256": "4b2385c558494c7a0a5cb42e399aae128984dca6ba138ead09f940b9daae040c",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-8-repos-owner-repo-actions-runs-run-id/",
+      "contentType": "text/html",
+      "bytes": 109258
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-8-repos-owner-repo-actions-runs-run-id-artifacts",
+      "path": "docs/apis/get-api-v-8-repos-owner-repo-actions-runs-run-id-artifacts/index.html",
+      "sha256": "f00ac505e727690b398e612f897253c57eedb377b53725246042db313fecf6b6",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-8-repos-owner-repo-actions-runs-run-id-artifacts/",
+      "contentType": "text/html",
+      "bytes": 43548
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-8-repos-owner-repo-actions-runs-run-id-jobs",
+      "path": "docs/apis/get-api-v-8-repos-owner-repo-actions-runs-run-id-jobs/index.html",
+      "sha256": "4b227c44e43853d54e11e92cd9a0c70f675eb454c81320bb4a7105f6496644c4",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-8-repos-owner-repo-actions-runs-run-id-jobs/",
+      "contentType": "text/html",
+      "bytes": 68492
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-8-repos-owner-repo-actions-runs-run-id-jobs-job-id",
+      "path": "docs/apis/get-api-v-8-repos-owner-repo-actions-runs-run-id-jobs-job-id/index.html",
+      "sha256": "65cef003321e0ca86806fce4841975d61616844a2260ce642e4f25c5920a2202",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-8-repos-owner-repo-actions-runs-run-id-jobs-job-id/",
+      "contentType": "text/html",
+      "bytes": 66521
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-8-repos-owner-repo-actions-runs-run-id-jobs-job-id-download-log",
+      "path": "docs/apis/get-api-v-8-repos-owner-repo-actions-runs-run-id-jobs-job-id-download-log/index.html",
+      "sha256": "16fb545e8eed1a18783875819851185480b24dd4ae93d1be29a598c957a90545",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-8-repos-owner-repo-actions-runs-run-id-jobs-job-id-download-log/",
+      "contentType": "text/html",
+      "bytes": 34238
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-8-repos-owner-repo-actions-runs-run-id-jobs-job-id-logs",
+      "path": "docs/apis/get-api-v-8-repos-owner-repo-actions-runs-run-id-jobs-job-id-logs/index.html",
+      "sha256": "cbcb3d86b627e8a5e828e6a1ca8768877bb87c9af20f3ae8a55700832332f994",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-8-repos-owner-repo-actions-runs-run-id-jobs-job-id-logs/",
+      "contentType": "text/html",
+      "bytes": 21992
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-8-repos-owner-repo-actions-shared-runner-sets",
+      "path": "docs/apis/get-api-v-8-repos-owner-repo-actions-shared-runner-sets/index.html",
+      "sha256": "c24a3e5601eee996ed0f219d62e00bc91e810e398e7a331a679564aa25aaad58",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-8-repos-owner-repo-actions-shared-runner-sets/",
+      "contentType": "text/html",
+      "bytes": 52935
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-api-v-8-repos-owner-repo-actions-workflows",
+      "path": "docs/apis/get-api-v-8-repos-owner-repo-actions-workflows/index.html",
+      "sha256": "c09d79384bf7074d411006496e7fdd71373f11b4d13e8bd817141453798aee34",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-api-v-8-repos-owner-repo-actions-workflows/",
+      "contentType": "text/html",
+      "bytes": 39102
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-oauth-authorize-client-id-client-id-redirect-uri-redirect-uri-response-type-code-scope-scope-state-state",
+      "path": "docs/apis/get-oauth-authorize-client-id-client-id-redirect-uri-redirect-uri-response-type-code-scope-scope-state-state/index.html",
+      "sha256": "d89ecea60a8e5c6dd65b296f65930b425a42c6ea4aa70241a5bdedb7cb53122b",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-oauth-authorize-client-id-client-id-redirect-uri-redirect-uri-response-type-code-scope-scope-state-state/",
+      "contentType": "text/html",
+      "bytes": 16655
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/get-owner-repo-raw-head-sha-name",
+      "path": "docs/apis/get-owner-repo-raw-head-sha-name/index.html",
+      "sha256": "676f869354fb82136d96876c4fffb74682c0ecf7c7168f2e4844815c33ea8c78",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/get-owner-repo-raw-head-sha-name/",
+      "contentType": "text/html",
+      "bytes": 39047
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/oauth",
+      "path": "docs/apis/oauth/index.html",
+      "sha256": "74923bee975e1a7d92c335402d7edd4520ef96901e0594e60abc8e502c366eea",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/oauth/",
+      "contentType": "text/html",
+      "bytes": 29469
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/patch-api-v-5-orgs-org",
+      "path": "docs/apis/patch-api-v-5-orgs-org/index.html",
+      "sha256": "196010746da2c7b988d87806359e15470107ee5ac4c41c518f76459db5276738",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/patch-api-v-5-orgs-org/",
+      "contentType": "text/html",
+      "bytes": 39676
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/patch-api-v-5-repos-owner-issues-number",
+      "path": "docs/apis/patch-api-v-5-repos-owner-issues-number/index.html",
+      "sha256": "a656e6ab57ad0415d142a63a15165a3da8d1970a49e78ccf1bd45ee5548eb31d",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/patch-api-v-5-repos-owner-issues-number/",
+      "contentType": "text/html",
+      "bytes": 103918
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/patch-api-v-5-repos-owner-repo",
+      "path": "docs/apis/patch-api-v-5-repos-owner-repo/index.html",
+      "sha256": "c8f78ffaa41326677d356464d7d8cbeaff9a2498199528606496b60e49764efb",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/patch-api-v-5-repos-owner-repo/",
+      "contentType": "text/html",
+      "bytes": 70944
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/patch-api-v-5-repos-owner-repo-comments-id",
+      "path": "docs/apis/patch-api-v-5-repos-owner-repo-comments-id/index.html",
+      "sha256": "4430ad4faf9c61edbb3067a94f1e62065ae3fa088cc5a5a5577ed00ecfdacb9b",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/patch-api-v-5-repos-owner-repo-comments-id/",
+      "contentType": "text/html",
+      "bytes": 43489
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/patch-api-v-5-repos-owner-repo-hooks-id",
+      "path": "docs/apis/patch-api-v-5-repos-owner-repo-hooks-id/index.html",
+      "sha256": "cb522aa3d14c298d89b073efb27c35cbba3fd0b537f4c801c8f01abb1e06021f",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/patch-api-v-5-repos-owner-repo-hooks-id/",
+      "contentType": "text/html",
+      "bytes": 43503
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/patch-api-v-5-repos-owner-repo-issues-comments-id",
+      "path": "docs/apis/patch-api-v-5-repos-owner-repo-issues-comments-id/index.html",
+      "sha256": "c2894cae9523c848c3902bbd4ba5a6a289a9b5966fa66b2b48ec040682dd2e6a",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/patch-api-v-5-repos-owner-repo-issues-comments-id/",
+      "contentType": "text/html",
+      "bytes": 34606
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/patch-api-v-5-repos-owner-repo-labels-original-name",
+      "path": "docs/apis/patch-api-v-5-repos-owner-repo-labels-original-name/index.html",
+      "sha256": "698ea2f023aaf95383e81ee6d9bc82a848c2e360a455be2384941bb6a955d483",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/patch-api-v-5-repos-owner-repo-labels-original-name/",
+      "contentType": "text/html",
+      "bytes": 33814
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/patch-api-v-5-repos-owner-repo-milestones-number",
+      "path": "docs/apis/patch-api-v-5-repos-owner-repo-milestones-number/index.html",
+      "sha256": "aad26a048f6d586cdcd8fd4098d06fccb9e5d897b5edaa776255fdd1d9b67c77",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/patch-api-v-5-repos-owner-repo-milestones-number/",
+      "contentType": "text/html",
+      "bytes": 43001
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/patch-api-v-5-repos-owner-repo-pulls-comments-id",
+      "path": "docs/apis/patch-api-v-5-repos-owner-repo-pulls-comments-id/index.html",
+      "sha256": "bb7e53996063f8d57202ba5bd393a28858de1e869aad183170fa5bd884f973c4",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/patch-api-v-5-repos-owner-repo-pulls-comments-id/",
+      "contentType": "text/html",
+      "bytes": 40779
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/patch-api-v-5-repos-owner-repo-pulls-number",
+      "path": "docs/apis/patch-api-v-5-repos-owner-repo-pulls-number/index.html",
+      "sha256": "7ce53c8400d25bbabfd29503668859e8c0c1154a38e775d31a9c8d166c7eb975",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/patch-api-v-5-repos-owner-repo-pulls-number/",
+      "contentType": "text/html",
+      "bytes": 48152
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/patch-api-v-5-repos-owner-repo-pulls-number-assignees",
+      "path": "docs/apis/patch-api-v-5-repos-owner-repo-pulls-number-assignees/index.html",
+      "sha256": "60dd82a2f5397edb2a61ffdb17efff47db1f4553864b579e8d5027f05e73b2e5",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/patch-api-v-5-repos-owner-repo-pulls-number-assignees/",
+      "contentType": "text/html",
+      "bytes": 39479
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/patch-api-v-5-repos-owner-repo-pulls-number-testers",
+      "path": "docs/apis/patch-api-v-5-repos-owner-repo-pulls-number-testers/index.html",
+      "sha256": "78c7e5455dc62abd27e05cf94616703869324e5aed18d07e2d1485ec630f4512",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/patch-api-v-5-repos-owner-repo-pulls-number-testers/",
+      "contentType": "text/html",
+      "bytes": 39445
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/patch-api-v-5-repos-owner-repo-releases-tag",
+      "path": "docs/apis/patch-api-v-5-repos-owner-repo-releases-tag/index.html",
+      "sha256": "b871e3fce72c2d867dc91f2a56286beb587ede9d873b9f1aa9c9042bd7635fc8",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/patch-api-v-5-repos-owner-repo-releases-tag/",
+      "contentType": "text/html",
+      "bytes": 59998
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/patch-api-v-5-user",
+      "path": "docs/apis/patch-api-v-5-user/index.html",
+      "sha256": "1d905ca8853aa72dd50b262d69bf13997c669e17a3c5dc30dfcbde2c71662c88",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/patch-api-v-5-user/",
+      "contentType": "text/html",
+      "bytes": 46418
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/post-api-v-1-audio-transcriptions",
+      "path": "docs/apis/post-api-v-1-audio-transcriptions/index.html",
+      "sha256": "ac7a6ef5041aae72926a51db921f030d49ec5561f1f43349d747e9064ec1059b",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/post-api-v-1-audio-transcriptions/",
+      "contentType": "text/html",
+      "bytes": 30914
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/post-api-v-5-audio-classification",
+      "path": "docs/apis/post-api-v-5-audio-classification/index.html",
+      "sha256": "dd4a052372924a48faece8abdeabb9cd66706b68258b8322926880078d718900",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/post-api-v-5-audio-classification/",
+      "contentType": "text/html",
+      "bytes": 54265
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/post-api-v-5-chat-completions",
+      "path": "docs/apis/post-api-v-5-chat-completions/index.html",
+      "sha256": "2018f1d6547cb263dbc5d64a7e5877dc40073850da3f5069d9685e017ed03894",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/post-api-v-5-chat-completions/",
+      "contentType": "text/html",
+      "bytes": 43190
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/post-api-v-5-detect-yolo",
+      "path": "docs/apis/post-api-v-5-detect-yolo/index.html",
+      "sha256": "921212ef8d0e448582e4c678c3662839d95d710c29d2bd442d4a4182cb5f0449",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/post-api-v-5-detect-yolo/",
+      "contentType": "text/html",
+      "bytes": 65028
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/post-api-v-5-org-org",
+      "path": "docs/apis/post-api-v-5-org-org/index.html",
+      "sha256": "0cb4c22dc764d667f52ec7465a1c4301f7867833ec2fbb6d2b24bcd71b1da7b3",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/post-api-v-5-org-org/",
+      "contentType": "text/html",
+      "bytes": 36764
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/post-api-v-5-org-org-discuss",
+      "path": "docs/apis/post-api-v-5-org-org-discuss/index.html",
+      "sha256": "a7a6b7aaaab6b2ab3da52bf2ad8dad7a47d9c513497dd23443973d7ec8ce2f48",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/post-api-v-5-org-org-discuss/",
+      "contentType": "text/html",
+      "bytes": 51467
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/post-api-v-5-org-org-discuss-number-comment",
+      "path": "docs/apis/post-api-v-5-org-org-discuss-number-comment/index.html",
+      "sha256": "75aeaa75444d1bbedcff863828038f43036c04af5a22b72e1a2d650333bc6426",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/post-api-v-5-org-org-discuss-number-comment/",
+      "contentType": "text/html",
+      "bytes": 47738
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/post-api-v-5-org-org-discuss-number-comment-id-reply",
+      "path": "docs/apis/post-api-v-5-org-org-discuss-number-comment-id-reply/index.html",
+      "sha256": "69d5e0ed87809f3114650056bb2126bc2f30bfb56be12518d2a0a15d4200563b",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/post-api-v-5-org-org-discuss-number-comment-id-reply/",
+      "contentType": "text/html",
+      "bytes": 48043
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/post-api-v-5-org-org-projects-repo-transfer",
+      "path": "docs/apis/post-api-v-5-org-org-projects-repo-transfer/index.html",
+      "sha256": "4aa8d0629bec9b5822a01db6bf5f6b12c7aba0d125d4d3330915c588db8b9f58",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/post-api-v-5-org-org-projects-repo-transfer/",
+      "contentType": "text/html",
+      "bytes": 41250
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/post-api-v-5-org-owner-kanban-id-add-item",
+      "path": "docs/apis/post-api-v-5-org-owner-kanban-id-add-item/index.html",
+      "sha256": "48c353713dfc2ae77163c72a92f6f75f4e62047803caea3f891b75c63c34cd8f",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/post-api-v-5-org-owner-kanban-id-add-item/",
+      "contentType": "text/html",
+      "bytes": 29658
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/post-api-v-5-orgs-org-memberships-username",
+      "path": "docs/apis/post-api-v-5-orgs-org-memberships-username/index.html",
+      "sha256": "60833a60b31cce106b31ee55b0f013ee1b5d4aea65389f741b4ae9567add6721",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/post-api-v-5-orgs-org-memberships-username/",
+      "contentType": "text/html",
+      "bytes": 46540
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/post-api-v-5-orgs-org-repos",
+      "path": "docs/apis/post-api-v-5-orgs-org-repos/index.html",
+      "sha256": "155a31f6784c85fa8ee99d676fec2cf39b28f9263e1d9aeb37882c07cb52cf77",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/post-api-v-5-orgs-org-repos/",
+      "contentType": "text/html",
+      "bytes": 72501
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/post-api-v-5-repos-owner-issues",
+      "path": "docs/apis/post-api-v-5-repos-owner-issues/index.html",
+      "sha256": "590526b22cb6f6f7b19f81d2c12ad18d1b2fc716659ebe5239ce067761eb31a7",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/post-api-v-5-repos-owner-issues/",
+      "contentType": "text/html",
+      "bytes": 91284
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/post-api-v-5-repos-owner-repo-branches",
+      "path": "docs/apis/post-api-v-5-repos-owner-repo-branches/index.html",
+      "sha256": "cb58c5fd4ac10365995820e7a864d04584c19843579c7d108c3b132cd5fee8dd",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/post-api-v-5-repos-owner-repo-branches/",
+      "contentType": "text/html",
+      "bytes": 52274
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/post-api-v-5-repos-owner-repo-commits-sha-comments",
+      "path": "docs/apis/post-api-v-5-repos-owner-repo-commits-sha-comments/index.html",
+      "sha256": "cea04985df13a4ca23b04cf12ec8d84e3583e01e6c202c7664de4463d3856e4b",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/post-api-v-5-repos-owner-repo-commits-sha-comments/",
+      "contentType": "text/html",
+      "bytes": 36216
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/post-api-v-5-repos-owner-repo-contents-path",
+      "path": "docs/apis/post-api-v-5-repos-owner-repo-contents-path/index.html",
+      "sha256": "1bef38ba34ff0ee076133e0dc2ffeb54c673f57fa648e9689202034062f125a0",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/post-api-v-5-repos-owner-repo-contents-path/",
+      "contentType": "text/html",
+      "bytes": 57302
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/post-api-v-5-repos-owner-repo-discuss",
+      "path": "docs/apis/post-api-v-5-repos-owner-repo-discuss/index.html",
+      "sha256": "1f976504f33afb72a3a5d73e67c65a3f9a1871547dee54dba5c9c5f6182b4794",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/post-api-v-5-repos-owner-repo-discuss/",
+      "contentType": "text/html",
+      "bytes": 51743
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/post-api-v-5-repos-owner-repo-discuss-number-comment",
+      "path": "docs/apis/post-api-v-5-repos-owner-repo-discuss-number-comment/index.html",
+      "sha256": "0c090f339564c06ceeef5ea9224ef15e9cb243ddac71bd06d85d8b2badab6b4e",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/post-api-v-5-repos-owner-repo-discuss-number-comment/",
+      "contentType": "text/html",
+      "bytes": 48133
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/post-api-v-5-repos-owner-repo-discuss-number-comment-id-reply",
+      "path": "docs/apis/post-api-v-5-repos-owner-repo-discuss-number-comment-id-reply/index.html",
+      "sha256": "74db5dfb715d2498a1ad90331a94886c4956ce50ce82b896060ae73f1d72588d",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/post-api-v-5-repos-owner-repo-discuss-number-comment-id-reply/",
+      "contentType": "text/html",
+      "bytes": 48520
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/post-api-v-5-repos-owner-repo-file-upload",
+      "path": "docs/apis/post-api-v-5-repos-owner-repo-file-upload/index.html",
+      "sha256": "06bd491c9e4bb00f1dd54a18edbc74c3932d9d264a3b60e25834e032c50249a5",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/post-api-v-5-repos-owner-repo-file-upload/",
+      "contentType": "text/html",
+      "bytes": 42198
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/post-api-v-5-repos-owner-repo-forks",
+      "path": "docs/apis/post-api-v-5-repos-owner-repo-forks/index.html",
+      "sha256": "695def934d31c727535daa901531c1b2b92970a53d16992eb93f7a7208b91abb",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/post-api-v-5-repos-owner-repo-forks/",
+      "contentType": "text/html",
+      "bytes": 55916
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/post-api-v-5-repos-owner-repo-hooks",
+      "path": "docs/apis/post-api-v-5-repos-owner-repo-hooks/index.html",
+      "sha256": "20cacb240adc3aed000fefcb78ef54c4e13972705060c1173f10b778209888b6",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/post-api-v-5-repos-owner-repo-hooks/",
+      "contentType": "text/html",
+      "bytes": 44184
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/post-api-v-5-repos-owner-repo-hooks-id-tests",
+      "path": "docs/apis/post-api-v-5-repos-owner-repo-hooks-id-tests/index.html",
+      "sha256": "8a8fb3df2653b4efea38080d60cca900a20fc7edc011fedffc817922b58f73d1",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/post-api-v-5-repos-owner-repo-hooks-id-tests/",
+      "contentType": "text/html",
+      "bytes": 28010
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/post-api-v-5-repos-owner-repo-img-upload",
+      "path": "docs/apis/post-api-v-5-repos-owner-repo-img-upload/index.html",
+      "sha256": "3b14d68f4ddde861ba3332361b87b2199e38842abc439cfe44112ecbf84c025b",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/post-api-v-5-repos-owner-repo-img-upload/",
+      "contentType": "text/html",
+      "bytes": 42526
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/post-api-v-5-repos-owner-repo-issues-number-comments",
+      "path": "docs/apis/post-api-v-5-repos-owner-repo-issues-number-comments/index.html",
+      "sha256": "fcf37109a8545fd7f88a4b36506089167cee6d3edd0fba4fc94874c16ad4ae3e",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/post-api-v-5-repos-owner-repo-issues-number-comments/",
+      "contentType": "text/html",
+      "bytes": 61048
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/post-api-v-5-repos-owner-repo-issues-number-labels",
+      "path": "docs/apis/post-api-v-5-repos-owner-repo-issues-number-labels/index.html",
+      "sha256": "0e4fbd7a5c3f6a056ed917d6a3ab83f6c7213cd7d8b76319521c0d557e236b6a",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/post-api-v-5-repos-owner-repo-issues-number-labels/",
+      "contentType": "text/html",
+      "bytes": 42753
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/post-api-v-5-repos-owner-repo-labels",
+      "path": "docs/apis/post-api-v-5-repos-owner-repo-labels/index.html",
+      "sha256": "d7908aa97f6e756e90d66d5d0100358204ae725721b01538e4bc2fed7125a5fa",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/post-api-v-5-repos-owner-repo-labels/",
+      "contentType": "text/html",
+      "bytes": 34260
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/post-api-v-5-repos-owner-repo-milestones",
+      "path": "docs/apis/post-api-v-5-repos-owner-repo-milestones/index.html",
+      "sha256": "3492a32a20305f98b6d7101140f9f71143e00235fe544a3aa24d0bf5bd892f14",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/post-api-v-5-repos-owner-repo-milestones/",
+      "contentType": "text/html",
+      "bytes": 42286
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/post-api-v-5-repos-owner-repo-protected-tags",
+      "path": "docs/apis/post-api-v-5-repos-owner-repo-protected-tags/index.html",
+      "sha256": "4b21e970206e3eb9518f92528bd262140640e53f647979bd1c956d9c3bebfa9a",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/post-api-v-5-repos-owner-repo-protected-tags/",
+      "contentType": "text/html",
+      "bytes": 34266
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/post-api-v-5-repos-owner-repo-pulls",
+      "path": "docs/apis/post-api-v-5-repos-owner-repo-pulls/index.html",
+      "sha256": "3ddd9d3781d89630127a5a0a3d5d09b4e9d5cce738fbfa639beee653bf80bcef",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/post-api-v-5-repos-owner-repo-pulls/",
+      "contentType": "text/html",
+      "bytes": 392513
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/post-api-v-5-repos-owner-repo-pulls-number-approval-reviewers",
+      "path": "docs/apis/post-api-v-5-repos-owner-repo-pulls-number-approval-reviewers/index.html",
+      "sha256": "a15f43bc7d3300695186414cebfdb0fceb055ccf44d5d75fffdbd51ce1c3456b",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/post-api-v-5-repos-owner-repo-pulls-number-approval-reviewers/",
+      "contentType": "text/html",
+      "bytes": 43932
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/post-api-v-5-repos-owner-repo-pulls-number-assignees",
+      "path": "docs/apis/post-api-v-5-repos-owner-repo-pulls-number-assignees/index.html",
+      "sha256": "9995c062a10e8942d8951e7b404fbac5dab756c7e8d8b09b72303ea7070030e5",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/post-api-v-5-repos-owner-repo-pulls-number-assignees/",
+      "contentType": "text/html",
+      "bytes": 41971
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/post-api-v-5-repos-owner-repo-pulls-number-comments",
+      "path": "docs/apis/post-api-v-5-repos-owner-repo-pulls-number-comments/index.html",
+      "sha256": "e019dd6befcdb6fc4b81a9ab956ddea8cea1f0724bca2876af827fcec010aeb2",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/post-api-v-5-repos-owner-repo-pulls-number-comments/",
+      "contentType": "text/html",
+      "bytes": 43806
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/post-api-v-5-repos-owner-repo-pulls-number-discussions-discussions-id-comments",
+      "path": "docs/apis/post-api-v-5-repos-owner-repo-pulls-number-discussions-discussions-id-comments/index.html",
+      "sha256": "1e5464299ea854d69c87dac88bf90f7bff3f62248f0897d97f4b337423ed8466",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/post-api-v-5-repos-owner-repo-pulls-number-discussions-discussions-id-comments/",
+      "contentType": "text/html",
+      "bytes": 41929
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/post-api-v-5-repos-owner-repo-pulls-number-labels",
+      "path": "docs/apis/post-api-v-5-repos-owner-repo-pulls-number-labels/index.html",
+      "sha256": "4386f6e58975950f0e6fae14a4c1747454a779a0db2c5b0a968a33d50db4e768",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/post-api-v-5-repos-owner-repo-pulls-number-labels/",
+      "contentType": "text/html",
+      "bytes": 47551
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/post-api-v-5-repos-owner-repo-pulls-number-linked-issues",
+      "path": "docs/apis/post-api-v-5-repos-owner-repo-pulls-number-linked-issues/index.html",
+      "sha256": "d54a99ddab16ad6ec73894f748b6b2116d69407d3696e08d995f13218666cd27",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/post-api-v-5-repos-owner-repo-pulls-number-linked-issues/",
+      "contentType": "text/html",
+      "bytes": 50447
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/post-api-v-5-repos-owner-repo-pulls-number-refresh-position",
+      "path": "docs/apis/post-api-v-5-repos-owner-repo-pulls-number-refresh-position/index.html",
+      "sha256": "b0e0c339db975b3bd1cb7aead4d69f3d59a4b9401882579462c527cd68c48fe6",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/post-api-v-5-repos-owner-repo-pulls-number-refresh-position/",
+      "contentType": "text/html",
+      "bytes": 40868
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/post-api-v-5-repos-owner-repo-pulls-number-review",
+      "path": "docs/apis/post-api-v-5-repos-owner-repo-pulls-number-review/index.html",
+      "sha256": "7f11b751f4618abfee290efa7e29450377afe6d82b13872fb74362cf8c502283",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/post-api-v-5-repos-owner-repo-pulls-number-review/",
+      "contentType": "text/html",
+      "bytes": 39372
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/post-api-v-5-repos-owner-repo-pulls-number-test",
+      "path": "docs/apis/post-api-v-5-repos-owner-repo-pulls-number-test/index.html",
+      "sha256": "e49f83cc42d3b371d3e1367481e730dbd075b347509ea6fd0866d6241bd73009",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/post-api-v-5-repos-owner-repo-pulls-number-test/",
+      "contentType": "text/html",
+      "bytes": 39344
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/post-api-v-5-repos-owner-repo-pulls-number-testers",
+      "path": "docs/apis/post-api-v-5-repos-owner-repo-pulls-number-testers/index.html",
+      "sha256": "24678d21e910f1b81fc8b868bb7c97441dbd98582e627e0c5233a95d2caab885",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/post-api-v-5-repos-owner-repo-pulls-number-testers/",
+      "contentType": "text/html",
+      "bytes": 48909
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/post-api-v-5-repos-owner-repo-releases",
+      "path": "docs/apis/post-api-v-5-repos-owner-repo-releases/index.html",
+      "sha256": "9c035e502393256949ab9b3c1c8e4a2e28cce87276d59bb8d1109b4e895c991a",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/post-api-v-5-repos-owner-repo-releases/",
+      "contentType": "text/html",
+      "bytes": 46050
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/post-api-v-5-repos-owner-repo-tags",
+      "path": "docs/apis/post-api-v-5-repos-owner-repo-tags/index.html",
+      "sha256": "0cd00ac3aa5ff10a1af483e9b83ce4c5e955be014cd5566c685fa796eed9dc79",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/post-api-v-5-repos-owner-repo-tags/",
+      "contentType": "text/html",
+      "bytes": 37602
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/post-api-v-5-repos-owner-repo-transfer",
+      "path": "docs/apis/post-api-v-5-repos-owner-repo-transfer/index.html",
+      "sha256": "7f3bc817c633bdd081d2a314b662d7f66c2533093a6f9b328a87b9e37ab1b1b6",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/post-api-v-5-repos-owner-repo-transfer/",
+      "contentType": "text/html",
+      "bytes": 41028
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/post-api-v-5-similarity",
+      "path": "docs/apis/post-api-v-5-similarity/index.html",
+      "sha256": "3d6cd7b9feb4b6c0753d9d36f8543ffef6663f58f368eec467c5968f4a433638",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/post-api-v-5-similarity/",
+      "contentType": "text/html",
+      "bytes": 31453
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/post-api-v-5-user-keys",
+      "path": "docs/apis/post-api-v-5-user-keys/index.html",
+      "sha256": "4549c14b94fcd7830f5479befa3b683a4d5437e97be1037ee7c28188e1bd6551",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/post-api-v-5-user-keys/",
+      "contentType": "text/html",
+      "bytes": 38237
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/post-api-v-5-user-repos",
+      "path": "docs/apis/post-api-v-5-user-repos/index.html",
+      "sha256": "28413153902ca4545888ca78e2525b661d64b6195cceae41caa3bdd73e7527c2",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/post-api-v-5-user-repos/",
+      "contentType": "text/html",
+      "bytes": 58918
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/post-api-v-5-video-generate",
+      "path": "docs/apis/post-api-v-5-video-generate/index.html",
+      "sha256": "316a30649609a250b319f3a4fc768b0d812aafbf57a5d4fdb74972946378cd75",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/post-api-v-5-video-generate/",
+      "contentType": "text/html",
+      "bytes": 31469
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/post-api-v-5-video-status",
+      "path": "docs/apis/post-api-v-5-video-status/index.html",
+      "sha256": "dba0412833af4f9dd5ec045f30a99c738db0d0c54513fa755c366808b3f26564",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/post-api-v-5-video-status/",
+      "contentType": "text/html",
+      "bytes": 33775
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/post-api-v-8-enterprise-enterprise-id-milestones",
+      "path": "docs/apis/post-api-v-8-enterprise-enterprise-id-milestones/index.html",
+      "sha256": "0215a6c6540a519cce562c343761b60dc45d46876b9f49573e77f2a32df112e6",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/post-api-v-8-enterprise-enterprise-id-milestones/",
+      "contentType": "text/html",
+      "bytes": 39260
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/post-api-v-8-enterprises-enterprise-memberships-username",
+      "path": "docs/apis/post-api-v-8-enterprises-enterprise-memberships-username/index.html",
+      "sha256": "00fe049b3875e5bb5d57f8aafc43935e0f78373181c23654d63f2ba5d9668d4f",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/post-api-v-8-enterprises-enterprise-memberships-username/",
+      "contentType": "text/html",
+      "bytes": 46877
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/post-api-v-8-enterprises-enterprises-id-issues",
+      "path": "docs/apis/post-api-v-8-enterprises-enterprises-id-issues/index.html",
+      "sha256": "adff6e8cb2d32ff8db26b83e76f39c93780a59bc4162b4a19265ae99b4ec6070",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/post-api-v-8-enterprises-enterprises-id-issues/",
+      "contentType": "text/html",
+      "bytes": 138810
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/post-api-v-8-enterprises-enterprises-id-label",
+      "path": "docs/apis/post-api-v-8-enterprises-enterprises-id-label/index.html",
+      "sha256": "e80b82ee7ad8a8823901d4f149030993fa531d090ac61da7044c133dcf9990c6",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/post-api-v-8-enterprises-enterprises-id-label/",
+      "contentType": "text/html",
+      "bytes": 134621
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/post-api-v-8-repos-owner-repo-actions-runs-run-id-jobs-job-id-logs",
+      "path": "docs/apis/post-api-v-8-repos-owner-repo-actions-runs-run-id-jobs-job-id-logs/index.html",
+      "sha256": "1baea52e68b23afcef1959578b7018ba0cf339ccb00bfa1e839aa356f24d88cd",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/post-api-v-8-repos-owner-repo-actions-runs-run-id-jobs-job-id-logs/",
+      "contentType": "text/html",
+      "bytes": 39332
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/post-api-v-8-repos-owner-repo-actions-runs-run-id-rerun",
+      "path": "docs/apis/post-api-v-8-repos-owner-repo-actions-runs-run-id-rerun/index.html",
+      "sha256": "95dd5868091afe03ed15765b7fb731158755b8fae90f076f6e809003b44eae9f",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/post-api-v-8-repos-owner-repo-actions-runs-run-id-rerun/",
+      "contentType": "text/html",
+      "bytes": 34302
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/post-api-v-8-repos-owner-repo-actions-runs-run-id-retry",
+      "path": "docs/apis/post-api-v-8-repos-owner-repo-actions-runs-run-id-retry/index.html",
+      "sha256": "16b09fc93a7f3d5cbe983d4d1fa2aa539ac61aadae9b2f7a8337cf3556a544c2",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/post-api-v-8-repos-owner-repo-actions-runs-run-id-retry/",
+      "contentType": "text/html",
+      "bytes": 35482
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/post-api-v-8-repos-owner-repo-actions-runs-run-id-stop",
+      "path": "docs/apis/post-api-v-8-repos-owner-repo-actions-runs-run-id-stop/index.html",
+      "sha256": "4d9220cda96ec4db89b33b32048a5e063fe150f4d26afff1ad5ac9602a784ec9",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/post-api-v-8-repos-owner-repo-actions-runs-run-id-stop/",
+      "contentType": "text/html",
+      "bytes": 34312
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/post-api-v-8-repos-owner-repo-actions-workflows-validate",
+      "path": "docs/apis/post-api-v-8-repos-owner-repo-actions-workflows-validate/index.html",
+      "sha256": "3c673739d0d639d445d24672f233e3dc9109cccdab3d0c886a3cd54eace38a65",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/post-api-v-8-repos-owner-repo-actions-workflows-validate/",
+      "contentType": "text/html",
+      "bytes": 44372
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/post-api-v-8-repos-owner-repo-actions-workflows-workflow-id-dispatches",
+      "path": "docs/apis/post-api-v-8-repos-owner-repo-actions-workflows-workflow-id-dispatches/index.html",
+      "sha256": "d3174aa649fb3cd96ac2da1760411593d14a094c161e251800f7c3d2d7ce0c26",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/post-api-v-8-repos-owner-repo-actions-workflows-workflow-id-dispatches/",
+      "contentType": "text/html",
+      "bytes": 37307
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/post-oauth-token-grant-type-authorization-code-code-code-client-id-client-id-client-secret-client-secret",
+      "path": "docs/apis/post-oauth-token-grant-type-authorization-code-code-code-client-id-client-id-client-secret-client-secret/index.html",
+      "sha256": "f3f0f3bf08a2c5fb43dc8878c9f1d1698db5911bade0a1f72868d7ab5f0afb23",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/post-oauth-token-grant-type-authorization-code-code-code-client-id-client-id-client-secret-client-secret/",
+      "contentType": "text/html",
+      "bytes": 40474
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/put-api-v-5-enterprises-enterprise-members-username",
+      "path": "docs/apis/put-api-v-5-enterprises-enterprise-members-username/index.html",
+      "sha256": "a9b80fc404860a03ffd9937becd8838e6e543b9d90e48e032b204621bab18f42",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/put-api-v-5-enterprises-enterprise-members-username/",
+      "contentType": "text/html",
+      "bytes": 42504
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/put-api-v-5-org-org-discuss-number",
+      "path": "docs/apis/put-api-v-5-org-org-discuss-number/index.html",
+      "sha256": "2ac1620f7a6e25bf32995124c72cf23b06cd22cc223dbe27d81738f9f1ed0373",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/put-api-v-5-org-org-discuss-number/",
+      "contentType": "text/html",
+      "bytes": 51158
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/put-api-v-5-org-org-discuss-number-comment-id",
+      "path": "docs/apis/put-api-v-5-org-org-discuss-number-comment-id/index.html",
+      "sha256": "b40df83f9bc3cd7b53d11e2741d29b34de26cef11b69a3eb844bb61ee57e4964",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/put-api-v-5-org-org-discuss-number-comment-id/",
+      "contentType": "text/html",
+      "bytes": 47989
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/put-api-v-5-org-org-repo-repo-status",
+      "path": "docs/apis/put-api-v-5-org-org-repo-repo-status/index.html",
+      "sha256": "0f5accc6feac8a63adace9ac09d802a8c9950c3cedf61665cb8b6faa805cf34a",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/put-api-v-5-org-org-repo-repo-status/",
+      "contentType": "text/html",
+      "bytes": 41148
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/put-api-v-5-org-owner-kanban-kanban-id-state",
+      "path": "docs/apis/put-api-v-5-org-owner-kanban-kanban-id-state/index.html",
+      "sha256": "b51a098de3c3abd1f255f9f3eabfec747e21a00da001783e6e70d4a7644358b9",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/put-api-v-5-org-owner-kanban-kanban-id-state/",
+      "contentType": "text/html",
+      "bytes": 26060
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/put-api-v-5-org-owner-kanban-repo-repo-type-iid",
+      "path": "docs/apis/put-api-v-5-org-owner-kanban-repo-repo-type-iid/index.html",
+      "sha256": "e1e37ba4e40ad965cf35be9d2816aeb726b503662285a4790f6f6b033c6609f9",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/put-api-v-5-org-owner-kanban-repo-repo-type-iid/",
+      "contentType": "text/html",
+      "bytes": 17748
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/put-api-v-5-org-owner-kanban-repo-repo-type-iid-new",
+      "path": "docs/apis/put-api-v-5-org-owner-kanban-repo-repo-type-iid-new/index.html",
+      "sha256": "d475d61f1fc47f42c3c90a649f3189c4aa6e10ee04f5f98d8b4a912595e73f4a",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/put-api-v-5-org-owner-kanban-repo-repo-type-iid-new/",
+      "contentType": "text/html",
+      "bytes": 29773
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/put-api-v-5-repos-owner-repo-branches-setting-new",
+      "path": "docs/apis/put-api-v-5-repos-owner-repo-branches-setting-new/index.html",
+      "sha256": "f330ed2c104aa618f5d8387830fadb1d3db52efd2015df67bb697cc4351b93e6",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/put-api-v-5-repos-owner-repo-branches-setting-new/",
+      "contentType": "text/html",
+      "bytes": 30450
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/put-api-v-5-repos-owner-repo-branches-wildcard-setting",
+      "path": "docs/apis/put-api-v-5-repos-owner-repo-branches-wildcard-setting/index.html",
+      "sha256": "b839e28e1ca56cfcabfd73dbfd30d9a2839865a6a2db33d8adde84b378b7159c",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/put-api-v-5-repos-owner-repo-branches-wildcard-setting/",
+      "contentType": "text/html",
+      "bytes": 30543
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/put-api-v-5-repos-owner-repo-clas",
+      "path": "docs/apis/put-api-v-5-repos-owner-repo-clas/index.html",
+      "sha256": "f014e2aa0f65f57e782bbcf92b58a5cf01db26653a3ef6d1cbd781d16f73bcb8",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/put-api-v-5-repos-owner-repo-clas/",
+      "contentType": "text/html",
+      "bytes": 34930
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/put-api-v-5-repos-owner-repo-collaborators-username",
+      "path": "docs/apis/put-api-v-5-repos-owner-repo-collaborators-username/index.html",
+      "sha256": "772ace5d33b17fd27e64a04677f66d47c5d0264b2affc553623900bdf7ca23ed",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/put-api-v-5-repos-owner-repo-collaborators-username/",
+      "contentType": "text/html",
+      "bytes": 42438
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/put-api-v-5-repos-owner-repo-contents-path",
+      "path": "docs/apis/put-api-v-5-repos-owner-repo-contents-path/index.html",
+      "sha256": "7b6d8bc42c644eb535142b973474b5a7e2d800ca882e22a838e0ea1cf79f10a3",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/put-api-v-5-repos-owner-repo-contents-path/",
+      "contentType": "text/html",
+      "bytes": 60824
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/put-api-v-5-repos-owner-repo-discuss-number",
+      "path": "docs/apis/put-api-v-5-repos-owner-repo-discuss-number/index.html",
+      "sha256": "5ff03cc81aaaf9d6324d15ed8810246bccd8e41f9b5af0966b6ac1a5d630e72a",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/put-api-v-5-repos-owner-repo-discuss-number/",
+      "contentType": "text/html",
+      "bytes": 52087
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/put-api-v-5-repos-owner-repo-discuss-number-comment",
+      "path": "docs/apis/put-api-v-5-repos-owner-repo-discuss-number-comment/index.html",
+      "sha256": "2fc4508d03d6079ad23b5c9ba92ea9c7484a62bb184327ff53658f2e32f66ff1",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/put-api-v-5-repos-owner-repo-discuss-number-comment/",
+      "contentType": "text/html",
+      "bytes": 32914
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/put-api-v-5-repos-owner-repo-discuss-number-comment-id",
+      "path": "docs/apis/put-api-v-5-repos-owner-repo-discuss-number-comment-id/index.html",
+      "sha256": "1f663c1cfe4b4a7d45cbe06f9d88056aadff868826252f7bea96dd5b3c6858c4",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/put-api-v-5-repos-owner-repo-discuss-number-comment-id/",
+      "contentType": "text/html",
+      "bytes": 48466
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/put-api-v-5-repos-owner-repo-issues-number-kanban-values",
+      "path": "docs/apis/put-api-v-5-repos-owner-repo-issues-number-kanban-values/index.html",
+      "sha256": "954c65d681fbd9c58758f665b4513db86124590b1bcdcb41c6f1bffb82774a8d",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/put-api-v-5-repos-owner-repo-issues-number-kanban-values/",
+      "contentType": "text/html",
+      "bytes": 45185
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/put-api-v-5-repos-owner-repo-issues-number-labels",
+      "path": "docs/apis/put-api-v-5-repos-owner-repo-issues-number-labels/index.html",
+      "sha256": "f71a05dd99a78533ae0b3e6b9584407f574a5ef7e2cb8418b14e47d1c73dcda9",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/put-api-v-5-repos-owner-repo-issues-number-labels/",
+      "contentType": "text/html",
+      "bytes": 30122
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/put-api-v-5-repos-owner-repo-issues-number-related-branches",
+      "path": "docs/apis/put-api-v-5-repos-owner-repo-issues-number-related-branches/index.html",
+      "sha256": "38b55d8fe640f7df741cef6de64b24f02a43220f0ee9cc8e97147f94a3350c62",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/put-api-v-5-repos-owner-repo-issues-number-related-branches/",
+      "contentType": "text/html",
+      "bytes": 35364
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/put-api-v-5-repos-owner-repo-members-username",
+      "path": "docs/apis/put-api-v-5-repos-owner-repo-members-username/index.html",
+      "sha256": "2613cf9be4464a8fd8b0dd56d7dad3d06f63a8e62521d727ef51b514bb36e237",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/put-api-v-5-repos-owner-repo-members-username/",
+      "contentType": "text/html",
+      "bytes": 52900
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/put-api-v-5-repos-owner-repo-module-setting",
+      "path": "docs/apis/put-api-v-5-repos-owner-repo-module-setting/index.html",
+      "sha256": "cd49747e150a77d24f89fe8920131bd7a3a37a10a0be5464baad7273d08c431e",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/put-api-v-5-repos-owner-repo-module-setting/",
+      "contentType": "text/html",
+      "bytes": 42328
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/put-api-v-5-repos-owner-repo-notifications",
+      "path": "docs/apis/put-api-v-5-repos-owner-repo-notifications/index.html",
+      "sha256": "1bcdad9da11dfcd42944eb9f1921ba099714c8c10826ce731d9898e0fa3a8861",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/put-api-v-5-repos-owner-repo-notifications/",
+      "contentType": "text/html",
+      "bytes": 29973
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/put-api-v-5-repos-owner-repo-project-labels",
+      "path": "docs/apis/put-api-v-5-repos-owner-repo-project-labels/index.html",
+      "sha256": "6e08ffa6fa135e1567e4711b9cde5b1110eb242fe0a73d1640dc21bdbab55206",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/put-api-v-5-repos-owner-repo-project-labels/",
+      "contentType": "text/html",
+      "bytes": 29675
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/put-api-v-5-repos-owner-repo-protected-tags",
+      "path": "docs/apis/put-api-v-5-repos-owner-repo-protected-tags/index.html",
+      "sha256": "a86c8b11e28bb706730395a31505c583aa1cbc2a615d481d387ecb6647143076",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/put-api-v-5-repos-owner-repo-protected-tags/",
+      "contentType": "text/html",
+      "bytes": 34355
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/put-api-v-5-repos-owner-repo-pull-request-settings",
+      "path": "docs/apis/put-api-v-5-repos-owner-repo-pull-request-settings/index.html",
+      "sha256": "bc1116c18fd46ee3527fa1f87838e96228b8912af2c09973eddbd010b1fd8a72",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/put-api-v-5-repos-owner-repo-pull-request-settings/",
+      "contentType": "text/html",
+      "bytes": 77702
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/put-api-v-5-repos-owner-repo-pulls-number-comments-discussions-id",
+      "path": "docs/apis/put-api-v-5-repos-owner-repo-pulls-number-comments-discussions-id/index.html",
+      "sha256": "16e4433d57c8e2a90df29db646a3000a8272c782a068f0d78de7ad0a567c0ad0",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/put-api-v-5-repos-owner-repo-pulls-number-comments-discussions-id/",
+      "contentType": "text/html",
+      "bytes": 36948
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/put-api-v-5-repos-owner-repo-pulls-number-labels",
+      "path": "docs/apis/put-api-v-5-repos-owner-repo-pulls-number-labels/index.html",
+      "sha256": "d3bd99c16894e7e20254d94597997e47fa9319ac93351a5359964271bfa6155e",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/put-api-v-5-repos-owner-repo-pulls-number-labels/",
+      "contentType": "text/html",
+      "bytes": 39626
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/put-api-v-5-repos-owner-repo-pulls-number-merge",
+      "path": "docs/apis/put-api-v-5-repos-owner-repo-pulls-number-merge/index.html",
+      "sha256": "141ab29b5acdf2e0694d038eb061e11be725e16dabc2ae6b4218cdc1e671e377",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/put-api-v-5-repos-owner-repo-pulls-number-merge/",
+      "contentType": "text/html",
+      "bytes": 45252
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/put-api-v-5-repos-owner-repo-pulls-number-mergers",
+      "path": "docs/apis/put-api-v-5-repos-owner-repo-pulls-number-mergers/index.html",
+      "sha256": "7bf8d8575693e72e1586302ed3cc24a135828f997ab9940935c862353a92c89b",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/put-api-v-5-repos-owner-repo-pulls-number-mergers/",
+      "contentType": "text/html",
+      "bytes": 43526
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/put-api-v-5-repos-owner-repo-push-config",
+      "path": "docs/apis/put-api-v-5-repos-owner-repo-push-config/index.html",
+      "sha256": "3ea24eda65ef7505a2e441b5c6319e1091f6a0032fb2028ca9465f5ad1859d4a",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/put-api-v-5-repos-owner-repo-push-config/",
+      "contentType": "text/html",
+      "bytes": 44181
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/put-api-v-5-repos-owner-repo-repo-settings",
+      "path": "docs/apis/put-api-v-5-repos-owner-repo-repo-settings/index.html",
+      "sha256": "4c49f670bebe05cf530bace85ea81bd42752f69ac398c10d1b9256b43fc8bb4d",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/put-api-v-5-repos-owner-repo-repo-settings/",
+      "contentType": "text/html",
+      "bytes": 52299
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/put-api-v-5-repos-owner-repo-reviewer",
+      "path": "docs/apis/put-api-v-5-repos-owner-repo-reviewer/index.html",
+      "sha256": "b80323f5ba5b725c866a968e9a1daa4755bb049b65d1fd5285218b5b48c93e8f",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/put-api-v-5-repos-owner-repo-reviewer/",
+      "contentType": "text/html",
+      "bytes": 42853
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/put-api-v-5-repos-owner-repo-sync-repo",
+      "path": "docs/apis/put-api-v-5-repos-owner-repo-sync-repo/index.html",
+      "sha256": "1928dd491e1577d0cd274bcc9dc021b1ce0f07a04dc292cde72da85f363de40c",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/put-api-v-5-repos-owner-repo-sync-repo/",
+      "contentType": "text/html",
+      "bytes": 38868
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/put-api-v-5-repos-owner-repo-transition",
+      "path": "docs/apis/put-api-v-5-repos-owner-repo-transition/index.html",
+      "sha256": "e16a59e00b55b0a9d69fac93a9077bf6a268df9addae3be860af2b2c0d3ac947",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/put-api-v-5-repos-owner-repo-transition/",
+      "contentType": "text/html",
+      "bytes": 41075
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/put-api-v-8-enterprise-enterprise-id-milestones-milestone-id",
+      "path": "docs/apis/put-api-v-8-enterprise-enterprise-id-milestones-milestone-id/index.html",
+      "sha256": "dad9c67c0ed20e5a8d7cde65f45da03560c1dd74735e80a49cec99f1854e505a",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/put-api-v-8-enterprise-enterprise-id-milestones-milestone-id/",
+      "contentType": "text/html",
+      "bytes": 39960
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/put-api-v-8-enterprises-enterprise-members-username",
+      "path": "docs/apis/put-api-v-8-enterprises-enterprise-members-username/index.html",
+      "sha256": "2184c0c6412706efcc8772a3cfc449f1db2058a14c665c889cf7f3ea1357de9e",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/put-api-v-8-enterprises-enterprise-members-username/",
+      "contentType": "text/html",
+      "bytes": 43437
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/put-api-v-8-enterprises-enterprises-id-label-label-id",
+      "path": "docs/apis/put-api-v-8-enterprises-enterprises-id-label-label-id/index.html",
+      "sha256": "56e15be866a0b1daabfdbd29fa4558376b2c857a6d068f914b3e03006dd00da5",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/put-api-v-8-enterprises-enterprises-id-label-label-id/",
+      "contentType": "text/html",
+      "bytes": 135009
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/release/",
+      "path": "docs/apis/release/index.html",
+      "sha256": "9a23263979aa3abc2ed08e8ce63cd4755955ab1bd37648ba3cf96704293f413c",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/release/",
+      "contentType": "text/html",
+      "bytes": 32345
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/release/202411",
+      "path": "docs/apis/release/202411/index.html",
+      "sha256": "96f0dc29f8745d608dd6ab1eb7a8fd7e4f695855bcce4653fa229a13271a507a",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/release/202411/",
+      "contentType": "text/html",
+      "bytes": 61195
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/release/202412",
+      "path": "docs/apis/release/202412/index.html",
+      "sha256": "73476468894a07a9796204270a7ea290bf607ed223d5a029c7ce4ed19d23d3d7",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/release/202412/",
+      "contentType": "text/html",
+      "bytes": 32097
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/release/2025-02",
+      "path": "docs/apis/release/2025-02/index.html",
+      "sha256": "16847c9f87929306612249e53fd12697d3317ead0820a14d1e363851b3294845",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/release/2025-02/",
+      "contentType": "text/html",
+      "bytes": 11928
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/release/202501",
+      "path": "docs/apis/release/202501/index.html",
+      "sha256": "8146a5dabda323493500271b9d0bb27856f7584634db8fb18d275cb20bf10b5a",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/release/202501/",
+      "contentType": "text/html",
+      "bytes": 29451
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/release/20250103",
+      "path": "docs/apis/release/20250103/index.html",
+      "sha256": "928a985baad11141afc34440e30d4592ea9fec8ae66aec4388492a3ad6a91a60",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/release/20250103/",
+      "contentType": "text/html",
+      "bytes": 11016
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/release/20250106",
+      "path": "docs/apis/release/20250106/index.html",
+      "sha256": "4252170c9737c8f993d7c1176b4873b4ab75201f9739695635280afc067663b4",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/release/20250106/",
+      "contentType": "text/html",
+      "bytes": 11013
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/release/20250116",
+      "path": "docs/apis/release/20250116/index.html",
+      "sha256": "e806ed5586f098915786feb6ee6f14d166fea358a972d9bf6606c5daeead75c7",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/release/20250116/",
+      "contentType": "text/html",
+      "bytes": 11798
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/release/20250123",
+      "path": "docs/apis/release/20250123/index.html",
+      "sha256": "5ddacbbeafce594d51e1d2c849204e98c9fb88a44c330cbfc12a96ab8efae56e",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/release/20250123/",
+      "contentType": "text/html",
+      "bytes": 12407
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/release/202502",
+      "path": "docs/apis/release/202502/index.html",
+      "sha256": "04396feb400fdfc44242fe447ee1257e036487d354447773c278f0acacb2a4f6",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/release/202502/",
+      "contentType": "text/html",
+      "bytes": 25519
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/release/20250208",
+      "path": "docs/apis/release/20250208/index.html",
+      "sha256": "09d089e4906f40c2801afcb089c5dedf5a6c6de6fa446689bd990cc34f0a1de7",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/release/20250208/",
+      "contentType": "text/html",
+      "bytes": 11988
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/release/202503",
+      "path": "docs/apis/release/202503/index.html",
+      "sha256": "2db21adc28bcc117aed4386c88c5d0f265918259b175ae110cc0f22dff037846",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/release/202503/",
+      "contentType": "text/html",
+      "bytes": 31857
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/release/20250306",
+      "path": "docs/apis/release/20250306/index.html",
+      "sha256": "94b2421df1117b4048e6d3367136b059a8ac078a1680fcae6c5edaaaaa48daac",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/release/20250306/",
+      "contentType": "text/html",
+      "bytes": 11614
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/release/20250313",
+      "path": "docs/apis/release/20250313/index.html",
+      "sha256": "b27bca06f12939351162d509749e35e6d6374f2ac4cf196844efca37a8897577",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/release/20250313/",
+      "contentType": "text/html",
+      "bytes": 11482
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/release/20250320",
+      "path": "docs/apis/release/20250320/index.html",
+      "sha256": "08fd85b611ff346ab29746cfbfb5f5eba6ff91dabad1436c9e9bd3dfd2fea8bc",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/release/20250320/",
+      "contentType": "text/html",
+      "bytes": 11181
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/release/20250324",
+      "path": "docs/apis/release/20250324/index.html",
+      "sha256": "64a3a7e121075e6bf0338e14f56347366c190973039c98b576df767e9784f8b1",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/release/20250324/",
+      "contentType": "text/html",
+      "bytes": 10871
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/release/20250327",
+      "path": "docs/apis/release/20250327/index.html",
+      "sha256": "93408d231c9ca70888b7fa286b59979fdf8e19abb6cd658476a6838957b48ac0",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/release/20250327/",
+      "contentType": "text/html",
+      "bytes": 11050
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/release/202504",
+      "path": "docs/apis/release/202504/index.html",
+      "sha256": "f55618573bb89d81e1f58eaff8beec5174637fac2becc7bcf256913c253189ff",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/release/202504/",
+      "contentType": "text/html",
+      "bytes": 24964
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/release/20250429",
+      "path": "docs/apis/release/20250429/index.html",
+      "sha256": "60bc18fdede1ade3f4c68c8a30fa635e17fd87e60af36346b13ed0ebe6383e44",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/release/20250429/",
+      "contentType": "text/html",
+      "bytes": 11433
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/release/202505",
+      "path": "docs/apis/release/202505/index.html",
+      "sha256": "e4520d248448aec16059394479830ae556ee1301dab74fec05ca1c5b537796fd",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/release/202505/",
+      "contentType": "text/html",
+      "bytes": 26945
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/release/20250509",
+      "path": "docs/apis/release/20250509/index.html",
+      "sha256": "0c1c7d96662d6623c9cd3cfef74eddd433f92d2fa62c185f41b976351d8e5475",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/release/20250509/",
+      "contentType": "text/html",
+      "bytes": 11653
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/release/20250522",
+      "path": "docs/apis/release/20250522/index.html",
+      "sha256": "83237ad626d4f2474fa9e7e0672ebe6df4578e9e3454201202f58fc701a4b2d6",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/release/20250522/",
+      "contentType": "text/html",
+      "bytes": 11070
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/release/20250528",
+      "path": "docs/apis/release/20250528/index.html",
+      "sha256": "88cd23cf65d758f68b879e2750bfacf14367932fee2b1b41c1d1aa4e1bf3201e",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/release/20250528/",
+      "contentType": "text/html",
+      "bytes": 11005
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/release/202506",
+      "path": "docs/apis/release/202506/index.html",
+      "sha256": "5a63168e434de6fdc1557c4a65e84ef1be0738fa4132d483fb878fab29a476a0",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/release/202506/",
+      "contentType": "text/html",
+      "bytes": 26990
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/release/20250604",
+      "path": "docs/apis/release/20250604/index.html",
+      "sha256": "73d8536970d9599978819c8c69f3904c3e2559312af8a96651c932f18b42e741",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/release/20250604/",
+      "contentType": "text/html",
+      "bytes": 11002
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/release/20250605",
+      "path": "docs/apis/release/20250605/index.html",
+      "sha256": "3bed173409a68174c2877901a0b88cf61b10ea5c1ce723211b90fabf0328f254",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/release/20250605/",
+      "contentType": "text/html",
+      "bytes": 11002
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/release/20250612",
+      "path": "docs/apis/release/20250612/index.html",
+      "sha256": "eb437d5017240ded094d12a9909bc5d77452480e50202da2bec4437b7977775e",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/release/20250612/",
+      "contentType": "text/html",
+      "bytes": 11143
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/release/20250626",
+      "path": "docs/apis/release/20250626/index.html",
+      "sha256": "a5bbf26db4a5d1deb6c1207a546842730147caec4ef8d63a6b46dd625b7d2278",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/release/20250626/",
+      "contentType": "text/html",
+      "bytes": 11360
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/release/202507",
+      "path": "docs/apis/release/202507/index.html",
+      "sha256": "a48351ed846a93cb42cb51795d91f30af13a2ec9fd2ff263a500ad01be2f8015",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/release/202507/",
+      "contentType": "text/html",
+      "bytes": 30564
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/release/20250703",
+      "path": "docs/apis/release/20250703/index.html",
+      "sha256": "47a74e7a51f8f8dd796498b697ee5a2f6ae48165fe69fb936a13f497e8ea322f",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/release/20250703/",
+      "contentType": "text/html",
+      "bytes": 11005
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/release/20250710",
+      "path": "docs/apis/release/20250710/index.html",
+      "sha256": "5b7e138047a11ab57faa2f2eb0b2ab5f153f1f96350d74d747d21520db95892e",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/release/20250710/",
+      "contentType": "text/html",
+      "bytes": 11294
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/release/20250714",
+      "path": "docs/apis/release/20250714/index.html",
+      "sha256": "2af47e1eecc316699affebb6c9b466cfbff23a8e7585dc1db26af824a122ec65",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/release/20250714/",
+      "contentType": "text/html",
+      "bytes": 11294
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/release/20250725",
+      "path": "docs/apis/release/20250725/index.html",
+      "sha256": "0429d0cb4ce53e344c198e1ecfebb1b2ecb2d7112e9eeb76707a42ea9acf13e0",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/release/20250725/",
+      "contentType": "text/html",
+      "bytes": 11169
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/release/20250731",
+      "path": "docs/apis/release/20250731/index.html",
+      "sha256": "7279f672ea13570abca3649c4c0363ef2c1a42161355782786747281ef72257a",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/release/20250731/",
+      "contentType": "text/html",
+      "bytes": 12828
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/release/202508",
+      "path": "docs/apis/release/202508/index.html",
+      "sha256": "392085ef29e649818f574c18105a94110a1621c3e75fd1bd209e7541b769228b",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/release/202508/",
+      "contentType": "text/html",
+      "bytes": 27844
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/release/20250821",
+      "path": "docs/apis/release/20250821/index.html",
+      "sha256": "7499293f5ab11ad5f7bff7933a56510c240e824147f957dbd02614d17e4438d8",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/release/20250821/",
+      "contentType": "text/html",
+      "bytes": 11293
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/release/20250828",
+      "path": "docs/apis/release/20250828/index.html",
+      "sha256": "d9e34481b40e2fce07b24c767053f5cff0198610683304b02fb8e759131afc7c",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/release/20250828/",
+      "contentType": "text/html",
+      "bytes": 12644
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/release/202509",
+      "path": "docs/apis/release/202509/index.html",
+      "sha256": "f0662c078e09943382852d60e83d3efcf2fffc02e09bfa896118cf2b2ea81aef",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/release/202509/",
+      "contentType": "text/html",
+      "bytes": 24510
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/release/20250904",
+      "path": "docs/apis/release/20250904/index.html",
+      "sha256": "f8b6b1201cde38b97f59e0c027b094690be99277a5e4a5cf65e5d691af7f6bec",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/release/20250904/",
+      "contentType": "text/html",
+      "bytes": 10454
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/release/202510",
+      "path": "docs/apis/release/202510/index.html",
+      "sha256": "e883c4fe0e3f9904e461b858c3b653b6947b0726180c3d4fa3c4a6176530104c",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/release/202510/",
+      "contentType": "text/html",
+      "bytes": 27415
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/release/20251016",
+      "path": "docs/apis/release/20251016/index.html",
+      "sha256": "89402fc739b6d5683f81a53cc6e658232db25f2d84993c25948de47555d5195a",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/release/20251016/",
+      "contentType": "text/html",
+      "bytes": 11720
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/release/20251023",
+      "path": "docs/apis/release/20251023/index.html",
+      "sha256": "99b62b5cdbd71789173620bdc5ff226d5806bf9f31228fccc947d96c90e5e885",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/release/20251023/",
+      "contentType": "text/html",
+      "bytes": 11270
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/release/202512",
+      "path": "docs/apis/release/202512/index.html",
+      "sha256": "f2cf4ce5d2e9dbf328057cbce95e538164dbb000878550f4ee79c7644e8f819f",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/release/202512/",
+      "contentType": "text/html",
+      "bytes": 24657
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/release/20251204",
+      "path": "docs/apis/release/20251204/index.html",
+      "sha256": "363578c5fc271b72a5d35641c0aabadf746f58bd0bce8fea5650d6115952faae",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/release/20251204/",
+      "contentType": "text/html",
+      "bytes": 10599
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/release/20251205",
+      "path": "docs/apis/release/20251205/index.html",
+      "sha256": "6ddd5749a89e13f5556bf75f402beb3ce6c3143858f10e915a863974b65a6b1e",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/release/20251205/",
+      "contentType": "text/html",
+      "bytes": 10599
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/release/20260108",
+      "path": "docs/apis/release/20260108/index.html",
+      "sha256": "3d426d8f03159ad34862f3d21f31d46ab736ad1339e5909425b3506a0e6385e3",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/release/20260108/",
+      "contentType": "text/html",
+      "bytes": 24117
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/release/20260319",
+      "path": "docs/apis/release/20260319/index.html",
+      "sha256": "1470f443cc5b7653e2a300c883af2694ec8aa8d4fa4364a694d0f568049365ae",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/release/20260319/",
+      "contentType": "text/html",
+      "bytes": 24080
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/release/20260408",
+      "path": "docs/apis/release/20260408/index.html",
+      "sha256": "adce730f104dc1fe2ac330f6398a4c9a485115df473934be30b245c9de96284f",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/release/20260408/",
+      "contentType": "text/html",
+      "bytes": 24031
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/release/20260519",
+      "path": "docs/apis/release/20260519/index.html",
+      "sha256": "7ffeb07d2eeba5570bff20a1f19eea06b7bb98ced8aa1edb4f3c9c9e1bb68f0d",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/release/20260519/",
+      "contentType": "text/html",
+      "bytes": 24200
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/release/20260521",
+      "path": "docs/apis/release/20260521/index.html",
+      "sha256": "2deeee32471d81fe01db416d6ed4dcbfbc58d29480f979709cb29cfac8c45baf",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/release/20260521/",
+      "contentType": "text/html",
+      "bytes": 25499
+    },
+    {
+      "url": "https://docs.gitcode.com/docs/apis/release/20260528",
+      "path": "docs/apis/release/20260528/index.html",
+      "sha256": "e7533614e16332fa058cdd6c4bc59e7a6b8929d487657bbf377f7bfd65713748",
+      "resolvedUrl": "https://docs.gitcode.com/docs/apis/release/20260528/",
+      "contentType": "text/html",
+      "bytes": 24606
+    }
+  ]
+}
