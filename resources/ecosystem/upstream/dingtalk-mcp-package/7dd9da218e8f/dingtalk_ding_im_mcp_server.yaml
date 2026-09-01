@@ -1,0 +1,69 @@
+server:
+  name: dingtalk-ding-message
+  description: DING消息
+  default_active: true
+  securitySchemes:
+    - id: DingTalkAuth
+      type: apiKey
+      in: header
+      name: x-acs-dingtalk-access-token
+tools:
+  - name: sendDINGMessageByRobot
+    description: >
+      使用机器人发送 DING 消息（高优先级提醒）。只有当用户明确提到“发 DING”、“DING 一下”、“钉一下””等关键词时，才调用此工具。
+      DING 消息通常带有强提醒，不同于普通消息。未明确要求时，请勿调用。
+    args:
+      - name: robotCode
+        description: 机器人Code
+        type: string
+        position: body
+        system: ROBOT_CODE
+      - name: remindType
+        type: string
+        description: DING消息类型。1：应用内DING，2：短信DING，3：电话DING；默认值为1。
+        position: body
+        required: true
+      - name: receiverUserIdList
+        description: 接收人userId列表。应用内DING消息，每次接收人不能超过200个。短信DING和电话DING，每次接收人不能超过20个。
+        type: array
+        required: true
+        position: body
+        items:
+          type: string
+      - name: content
+        description: DING消息内容。
+        type: string
+        required: true
+        position: body
+    requestTemplate:
+      url: https://api.dingtalk.com//v1.0/robot/ding/send
+      method: POST
+      headers:
+        - key: Content-Type
+          value: application/json
+      security:
+        id: DingTalkAuth
+    responseTemplate: {}
+
+  - name: recallDINGMessage
+    description: 撤回机器人发送的DING消息
+    args:
+      - name: robotCode
+        description: 机器人Code
+        type: string
+        position: body
+        system: ROBOT_CODE
+      - name: openDingId
+        type: string
+        description: 需要被撤回的DING消息ID。
+        position: body
+        required: true
+    requestTemplate:
+      url: https://api.dingtalk.com//v1.0/robot/ding/recall
+      method: POST
+      headers:
+        - key: Content-Type
+          value: application/json
+      security:
+        id: DingTalkAuth
+    responseTemplate: { }

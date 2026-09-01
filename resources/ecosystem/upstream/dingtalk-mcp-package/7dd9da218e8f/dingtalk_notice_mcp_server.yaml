@@ -1,0 +1,109 @@
+server:
+  name: dingtalk-notice
+  version: 1.0.0
+  description: DingTalk Work Notice MCP Server - 钉钉工作通知MCP服务器
+
+tools:
+  # 发送工作通知消息
+  - name: sendNotice
+    description: 发送工作通知消息，支持 markdown 消息类型
+    requestTemplate:
+      method: POST
+      url: https://oapi.dingtalk.com/topapi/message/corpconversation/asyncsend_v2
+    args:
+      - name: agent_id
+        type: number
+        required: true
+        position: body
+        description: 发送消息时使用的微应用的AgentID
+        system: DINGTALK_AGENT_ID
+      - name: userid_list
+        type: string
+        required: false
+        position: body
+        description: 接收人用户ID列表，用逗号分隔，最多5000人
+      - name: dept_id_list
+        type: string
+        required: false
+        position: body
+        description: 接收部门ID列表，用逗号分隔（可选）
+      - name: to_all_user
+        type: boolean
+        required: false
+        position: body
+        description: 是否发送给全员（可选，默认false）
+      - name: msg.msgtype
+        not_need_model_transform: true
+        type: string
+        required: true
+        position: body
+        description: markdown消息格式
+        default: markdown
+      - name: msg.markdown.title
+        type: string
+        required: true
+        position: body
+        description: markdown消息标题
+      - name: msg.markdown.text
+        type: string
+        required: true
+        position: body
+        description: markdown消息内容
+
+  # 获取工作通知消息的发送结果
+  - name: getSendResult
+    description: 获取工作通知消息的发送结果，查询消息发送状态和统计信息
+    requestTemplate:
+      method: POST
+      url: https://oapi.dingtalk.com/topapi/message/corpconversation/getsendresult
+    args:
+      - name: agent_id
+        type: number
+        required: true
+        position: body
+        description: 发送消息时使用的微应用的AgentID
+        system: DINGTALK_AGENT_ID
+      - name: task_id
+        type: number
+        required: true
+        position: body
+        description: 发送任务ID（发送消息时返回的task_id）
+
+  # 获取工作通知消息的发送进度
+  - name: getSendProgress
+    description: 获取工作通知消息的发送进度，实时查询消息发送进度
+    requestTemplate:
+      method: POST
+      url: https://oapi.dingtalk.com/topapi/message/corpconversation/getsendprogress
+    args:
+      - name: agent_id
+        type: number
+        required: true
+        position: body
+        description: 发送消息时使用的微应用的AgentID
+        system: DINGTALK_AGENT_ID
+      - name: task_id
+        type: number
+        required: true
+        position: body
+        description: 发送任务ID（发送消息时返回的task_id）
+
+  # 撤回工作通知消息
+  - name: recallNotice
+    description: 撤回已发送的工作通知消息，消息撤回后接收人将无法看到该消息
+    requestTemplate:
+      method: POST
+      url: https://oapi.dingtalk.com/topapi/message/corpconversation/recall
+    args:
+      - name: agent_id
+        type: number
+        required: true
+        position: body
+        description: 发送消息时使用的微应用的AgentID
+        system: DINGTALK_AGENT_ID
+      - name: msg_task_id
+        type: number
+        required: true
+        position: body
+        description: 要撤回的消息任务ID
+

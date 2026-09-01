@@ -1,0 +1,423 @@
+server:
+  name: dingtalk-report
+  description: 钉钉日志
+tools:
+  - name: createReport
+    description: |
+      创建并发送工作日志到指定接收人。
+      
+      【重要提示】contents参数格式复杂，必须严格按照以下格式构造：
+      
+      1. 每个content对象必须包含5个字段：content_type, sort, type, content, key
+      2. content_type固定为"markdown"
+      3. sort和type的值需要从getTemplateDetail接口获取
+      4. key为字段名称，content为实际填写的内容
+      
+      【使用流程】
+      1. 先调用getTemplateDetail获取模板字段信息
+      2. 根据返回的fields构造contents数组
+      3. 调用本接口创建日志
+      
+      【完整示例】
+      对于"空白日志"模板：
+      {
+        "template_id": "1740b290d90f07517b0d3b14da2b4b7b",
+        "contents": [
+          {
+            "content_type": "markdown",
+            "sort": 0,
+            "type": 1,
+            "content": "今天完成了项目开发工作",
+            "key": "内容"
+          }
+        ],
+        "userid": "0420131813787933",
+        "to_chat": true,
+        "dd_from": "MCP_ASSISTANT",
+        "to_userids": ["0420131813787933"]
+      }
+      
+      【常见参数组合】
+      - 发送给自己：to_userids=["自己的userid"], to_chat=true
+      - 发送给他人：to_userids=["他人userid1", "他人userid2"], to_chat=true
+      - 发送到群：to_cids=["群id1"], to_chat=false
+    requestTemplate:
+      method: POST
+      url: https://oapi.dingtalk.com/topapi/report/create
+    args:
+      - name: template_id
+        type: string
+        required: true
+        position: body
+        description: |
+          模板ID，从getTemplateDetail接口的result.id字段获取。
+          示例值："1740b290d90f07517b0d3b14da2b4b7b"
+      - name: contents
+        type: array
+        required: true
+        position: body
+        description: |
+          日志内容数组，必须严格按照以下JSON Schema构造：
+          
+          每个数组元素是一个对象，包含以下必需字段：
+          - content_type: 固定值"markdown"
+          - sort: 数字，字段排序（从模板详情获取）
+          - type: 数字，字段类型（从模板详情获取，通常为1）
+          - content: 字符串，实际填写的内容，支持Markdown格式，最长1000字符
+          - key: 字符串，字段名称（从模板详情的field_name获取）
+          
+          构造方法：
+          1. 调用getTemplateDetail获取模板fields
+          2. 对于每个field，创建一个content对象：
+             {
+               "content_type": "markdown",
+               "sort": field.sort,
+               "type": field.type,
+               "content": "你要填写的内容",
+               "key": field.field_name
+             }
+        items:
+          type: object
+          required:
+            - content_type
+            - sort
+            - type
+            - content
+            - key
+          properties:
+            content_type:
+              type: string
+              enum: ["markdown"]
+              description: 内容类型，固定值"markdown"
+            sort:
+              type: number
+              description: 字段排序序号，必须从getTemplateDetail的result.fields[].sort获取
+            type:
+              type: number
+              description: 字段类型，必须从getTemplateDetail的result.fields[].type获取（1=文本类型）
+            content:
+              type: string
+              maxLength: 1000
+              description: 实际填写的内容，支持Markdown语法，最长1000字符
+            key:
+              type: string
+              description: 字段名称，必须从getTemplateDetail的result.fields[].field_name获取
+      - name: userid
+        type: string
+        required: true
+        position: body
+        description: |
+          创建日志的员工userId。
+          示例值："0420131813787933"
+      - name: to_userids
+        type: array
+        required: false
+        position: body
+        description: |
+          日志发送到的员工userId列表（可选）。
+          如果不指定，日志只保存不发送。
+          示例值：["0420131813787933", "其他userid"]
+        items:
+          type: string
+          description: 员工的userId
+      - name: to_chat
+        type: boolean
+        required: true
+        position: body
+        description: |
+          发送日志到员工时是否发送单聊消息。
+          - true: 发送日志消息给指定用户
+          - false: 不单独发送消息
+          通常设置为true以确保接收人能收到通知。
+      - name: to_cids
+        type: array
+        required: false
+        position: body
+        description: |
+          日志要发送到的群ID列表（可选）。
+          注意：群必须是在日志模板中预先配置好的接收群。
+          示例值：["群id1", "群id2"]
+        items:
+          type: string
+          description: 群聊的ID
+      - name: dd_from
+        type: string
+        required: true
+        position: body
+        description: |
+          日志来源标识，自定义的唯一来源标识。
+          建议使用有意义的标识，如"MCP_ASSISTANT"、"AUTO_REPORT"等。
+          示例值："MCP_ASSISTANT"
+
+  - name: saveReportDraft
+    description: |
+      保存日志内容供后续编辑和发送（草稿功能）。
+      
+      此接口用于保存日志内容但不立即发送，可以后续在钉钉中编辑和发送。
+      contents参数格式与「createReport」相同，必须包含完整的字段结构。
+      
+      【使用场景】
+      - 需要保存日志但暂不发送
+      - 创建模板供后续使用
+      - 批量准备多个日志内容
+      
+      【参数格式】与createLog的contents参数完全相同
+    requestTemplate:
+      method: POST
+      url: https://oapi.dingtalk.com/topapi/report/savecontent
+    args:
+      - name: template_id
+        type: string
+        required: true
+        position: body
+        description: |
+          模板ID，从getTemplateDetail接口的result.id字段获取。
+          示例值："1740b290d90f07517b0d3b14da2b4b7b"
+      - name: contents
+        type: array
+        required: true
+        position: body
+        description: |
+          日志内容数组，格式与createLog接口的contents参数完全相同。
+          
+          每个数组元素必须包含：
+          - content_type: "markdown"
+          - sort: 从模板详情获取的字段排序
+          - type: 从模板详情获取的字段类型
+          - content: 实际内容
+          - key: 字段名称
+        items:
+          type: object
+          required:
+            - content_type
+            - sort
+            - type
+            - content
+            - key
+          properties:
+            content_type:
+              type: string
+              enum: ["markdown"]
+              description: 内容类型，固定值"markdown"
+            sort:
+              type: number
+              description: 字段排序序号
+            type:
+              type: number
+              description: 字段类型（1=文本类型）
+            content:
+              type: string
+              maxLength: 1000
+              description: 实际填写的内容
+            key:
+              type: string
+              description: 字段名称
+      - name: userid
+        type: string
+        required: true
+        position: body
+        description: |
+          创建日志的员工userId。
+          示例值："0420131813787933"
+      - name: dd_from
+        type: string
+        required: true
+        position: body
+        description: |
+          日志来源标识，自定义的唯一标识。
+          示例值："MCP_ASSISTANT"
+
+  - name: getReportList
+    description: |
+      查询用户发出的日志列表。
+      
+      可以根据时间范围、模板名称、用户等条件查询日志列表。
+      支持分页查询，适用于批量处理和数据分析。
+      
+      【使用场景】
+      - 查看个人的日志历史
+      - 统计团队日志数据
+      - 查找特定时间段的日志
+      
+      【时间参数说明】
+      - start_time和end_time最多相隔180天
+      - 时间格式为Unix时间戳（毫秒）
+      - 可使用JavaScript的Date.now()或new Date().getTime()获取
+      
+      【查询示例】
+      查询最近7天的所有日志：
+      {
+        "start_time": 1703145600000,  // 7天前的时间戳
+        "end_time": 1703750400000,    // 当前时间戳
+        "cursor": 0,
+        "size": 10
+      }
+    requestTemplate:
+      method: POST
+      url: https://oapi.dingtalk.com/topapi/report/list
+    args:
+      - name: start_time
+        type: number
+        required: true
+        position: body
+        description: |
+          查询的日志创建开始时间，Unix时间戳（毫秒）。
+          注意：与end_time间隔不能超过180天。
+          示例值：1703145600000（2023-12-21的时间戳）
+      - name: end_time
+        type: number
+        required: true
+        position: body
+        description: |
+          查询的日志创建结束时间，Unix时间戳（毫秒）。
+          必须大于start_time，且间隔不超过180天。
+          示例值：1703750400000（2023-12-28的时间戳）
+      - name: template_name
+        type: string
+        required: false
+        position: body
+        description: |
+          要查询的模板名称（可选）。
+          不传则查询所有模板的日志。
+          示例值："日报"、"周报"、"空白日志"
+      - name: userid
+        type: string
+        required: false
+        position: body
+        description: |
+          员工的userId（可选）。
+          不传则查询所有员工的日志（需要权限）。
+          示例值："0420131813787933"
+      - name: cursor
+        type: number
+        required: true
+        position: body
+        description: |
+          查询游标，用于分页。
+          初始查询传入0，后续从上一次响应的next_cursor获取。
+          示例值：0
+      - name: size
+        type: number
+        required: true
+        position: body
+        description: |
+          每页数据量，范围1-20。
+          建议使用10以获得较好的性能。
+          示例值：10
+      - name: modified_start_time
+        type: number
+        required: false
+        position: body
+        description: |
+          查询的日志修改开始时间，Unix时间戳（毫秒）（可选）。
+          用于查询在特定时间段内被修改过的日志。
+      - name: modified_end_time
+        type: number
+        required: false
+        position: body
+        description: |
+          查询的日志修改结束时间，Unix时间戳（毫秒）（可选）。
+          与modified_start_time配合使用。
+
+  - name: getReportTemplateList
+    description: |
+      获取用户可见的日志模板列表。
+      
+      返回当前用户有权限查看和使用的所有日志模板。
+      模板包含基本信息如名称、ID等，不包含详细字段信息。
+      
+      【使用场景】
+      - 查看可用的日志模板
+      - 获取模板基本信息
+      - 为用户选择提供模板列表
+      
+      【返回信息】
+      - template_list: 模板列表
+      - 每个模板包含：name（名称）、report_code（ID）等
+      
+      【后续操作】
+      获取到模板列表后，可使用getTemplateDetail获取具体模板的字段信息。
+    requestTemplate:
+      method: POST
+      url: https://oapi.dingtalk.com/topapi/report/template/listbyuserid
+    args:
+      - name: userid
+        type: string
+        required: false
+        position: body
+        description: |
+          员工的userId（可选）。
+          不传表示获取所有日志模板。
+          传入userid则获取该用户有权限的模板。
+          示例值："0420131813787933"
+      - name: offset
+        type: number
+        required: false
+        position: body
+        description: |
+          分页偏移量，从0开始（可选）。
+          用于分页查询，默认为0。
+          示例值：0
+      - name: size
+        type: number
+        required: false
+        position: body
+        description: |
+          分页大小，范围1-100（可选）。
+          默认值为100，建议使用默认值获取所有模板。
+          示例值：100
+
+  - name: getReportTemplateDetail
+    description: |
+      查看日志模板的详细字段和配置信息。
+      
+      返回模板的完整字段定义，这是构造createLog的contents参数的关键信息。
+      每个字段包含field_name、sort、type等属性，用于构造正确的日志内容。
+      
+      【重要性】
+      此接口是使用createLog的前置条件！必须先获取模板详情才能正确构造contents参数。
+      
+      【返回字段说明】
+      - fields数组：模板的所有字段定义
+      - 每个field包含：
+        - field_name: 字段名称（用于contents的key）
+        - sort: 排序序号（用于contents的sort）
+        - type: 字段类型（用于contents的type，1=文本）
+      
+      【使用示例】
+      1. 调用此接口获取模板详情
+      2. 根据返回的fields构造contents数组
+      3. 调用createLog创建日志
+      
+      对于"空白日志"模板的响应示例：
+      {
+        "fields": [
+          {
+            "field_name": "内容",
+            "sort": 0,
+            "type": 1
+          }
+        ],
+        "id": "1740b290d90f07517b0d3b14da2b4b7b",
+        "name": "空白日志"
+      }
+    requestTemplate:
+      method: POST
+      url: https://oapi.dingtalk.com/topapi/report/template/getbyname
+    args:
+      - name: template_name
+        type: string
+        required: true
+        position: body
+        description: |
+          模板名称，必须是已存在的模板名称。
+          可以从getTemplateList接口的返回结果中获取准确的模板名称。
+          示例值："空白日志"、"日报"、"周报"
+      - name: userid
+        type: string
+        required: true
+        position: body
+        description: |
+          操作该接口的员工userId。
+          必须是有权限查看该模板的用户ID。
+          示例值："0420131813787933" 

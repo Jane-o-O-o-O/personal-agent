@@ -1,0 +1,199 @@
+server:
+  name: dingtalk-tasks
+  description: 钉钉待办
+  default_active: false
+  securitySchemes:
+    - id: DingTalkAuth
+      type: apiKey
+      in: header
+      name: x-acs-dingtalk-access-token
+tools:
+  - name: queryTasks
+    description: 查询钉钉待办/任务列表
+    args:
+      - name: unionId
+        description: 用户UnionId
+        type: string
+        required: true
+        position: path
+      - name: nextToken
+        type: string
+        description: 分页游标，默认为0。如果一个查询条件一次无法全部返回结果，会返回分页token，下次查询带上该token后会返回后续数据，直到分页token为null表示数据已经全部查询完毕。
+        position: body
+      - name: isDone
+        description: 待办完成状态。true：已完成；false：未完成
+        type: boolean
+        position: body
+      - name: roleTypes
+        description: 查询目标用户角色类型。executor：执行人；creator：创建人；participant：参与人。可以同时传多个值。外层list表示或的关系，内层list表示与的关系。例如：[["executor"], ["creator"],["participant"]] 表示查询用户角色为执行人或创建人或参与人的待办列表； [["executor", "creator"]] 表示查询用户角色为执行人并且是创建人的待办列表。
+        type: array
+        items:
+          type: array
+          items:
+            type: string
+        position: body
+    requestTemplate:
+      url: https://api.dingtalk.com/v1.0/todo/users/{unionId}/org/tasks/query
+      method: POST
+      headers:
+        - key: Content-Type
+          value: application/json
+      security:
+        id: DingTalkAuth
+    responseTemplate: {}
+  - name: deleteTask
+    description: 删除钉钉待办
+    args:
+      - name: unionId
+        description: 用户UnionId
+        type: string
+        required: true
+        position: path
+      - name: taskId
+        description: 待办ID
+        type: string
+        required: true
+        position: path
+    requestTemplate:
+      url: https://api.dingtalk.com/v1.0/todo/users/{unionId}/tasks/{taskId}
+      method: DELETE
+      headers:
+        - key: Content-Type
+          value: application/json
+      security:
+        id: DingTalkAuth
+    responseTemplate: {}
+  - name: createTask
+    description: 创建待办
+    args:
+      - name: unionId
+        description: 待办创建者的UnionId
+        type: string
+        required: true
+        position: path
+      - name: subject
+        description: 待办标题，最大长度1024
+        type: string
+        required: true
+        position: body
+      - name: description
+        description: 待办备注，最大长度4096
+        type: string
+        position: body
+      - name: dueTime
+        description: 待办截止时间，Unix时间戳，单位毫秒。
+        type: number
+        position: body
+      - name: executorIds
+        description: 待办执行人的UnionId
+        type: array
+        position: body
+        items:
+          type: string
+      - name: participantIds
+        description: 待办参与人的UnionId
+        type: array
+        position: body
+        items:
+          type: string
+
+    requestTemplate:
+      url: https://api.dingtalk.com/v1.0/todo/users/{unionId}/tasks
+      method: POST
+      headers:
+        - key: Content-Type
+          value: application/json
+      security:
+        id: DingTalkAuth
+    responseTemplate: { }
+  - name: updateTask
+    description: 更新待办
+    args:
+      - name: unionId
+        description: 用户UnionId
+        type: string
+        required: true
+        position: path
+      - name: taskId
+        description: 待办ID
+        type: string
+        required: true
+        position: path
+      - name: subject
+        description: 待办标题，最大长度1024
+        type: string
+        required: true
+        position: body
+      - name: description
+        description: 待办备注，4096
+        type: string
+        position: body
+      - name: done
+        description: 完成状态。true：已完成；false：未完成
+        type: boolean
+        position: body
+      - name: dueTime
+        description: 待办截止时间，Unix时间戳，单位毫秒。
+        type: number
+        position: body
+      - name: executorIds
+        description: 待办执行人的UnionId
+        type: array
+        position: body
+        items:
+          type: string
+      - name: participantIds
+        description: 待办参与人的UnionId
+        type: array
+        position: body
+        items:
+          type: string
+
+    requestTemplate:
+      url: https://api.dingtalk.com/v1.0/todo/users/{unionId}/tasks/{taskId}
+      method: PUT
+      headers:
+        - key: Content-Type
+          value: application/json
+      security:
+        id: DingTalkAuth
+    responseTemplate: { }
+  - name: updateExecutorsTaskStatus
+    description: 更新执行人待办状态
+    args:
+      - name: unionId
+        description: 待办所属用户UnionId
+        type: string
+        required: true
+        position: path
+      - name: taskId
+        description: 待办ID
+        type: string
+        required: true
+        position: path
+      - name: executorStatusList
+        description: 执行者状态列表，id需传用户的unionId，最大数量1000。
+        type: array
+        required: true
+        position: body
+        items:
+          type: object
+          properties:
+            id:
+              type: string
+              description: 执行者unionId
+            isDone:
+              type: boolean
+              description: 执行者完成状态
+          "required":
+            - "id"
+            - "isDone"
+    requestTemplate:
+      url: https://api.dingtalk.com/v1.0/todo/users/{unionId}/tasks/{taskId}/executorStatus
+      method: PUT
+      headers:
+        - key: Content-Type
+          value: application/json
+      security:
+        id: DingTalkAuth
+    responseTemplate: { }

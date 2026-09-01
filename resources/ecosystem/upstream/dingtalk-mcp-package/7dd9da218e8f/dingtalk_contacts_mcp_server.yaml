@@ -1,0 +1,118 @@
+server:
+  name: dingtalk-contacts
+  description: 钉钉通讯录
+  default_active: true
+  securitySchemes:
+    - id: DingTalkAuth
+      type: apiKey
+      in: header
+      name: x-acs-dingtalk-access-token
+tools:
+  - name: currentDateTime
+    description: 获取当前日期和时间
+
+  - name: searchUser
+    description: 根据姓名搜索钉钉通讯录用户的userId。
+    args:
+      - name: queryWord
+        description: 搜索关键词，可以是用户姓名、姓名拼音或英文名称。
+        type: string
+        required: true
+        position: body
+      - name: offset
+        description: 分页偏移量，从0开始
+        type: number
+        position: body
+      - name: size
+        description: 分页大小，最大50
+        type: number
+        position: body
+      - name: fullMatchField
+        description: 是否精确匹配，1：精确匹配用户名称。
+        type: number
+        position: body
+    requestTemplate:
+      url: https://api.dingtalk.com/v1.0/contact/users/search
+      method: POST
+      headers:
+        - key: Content-Type
+          value: application/json
+      security:
+        id: DingTalkAuth
+    responseTemplate: {}
+  - name: getUserDetailByUserId
+    description: 查询用户详情 - 根据userId获取用户的详细信息，包含用户的unionId。
+    args:
+      - name: userid
+        description: 用户的userId。
+        type: string
+        required: true
+        position: body
+      - name: language
+        description: 语言。 * **zh_CN** ：中文（默认值） * **en_US** ：英文
+        type: string
+        position: body
+        items:
+          enum:
+            - zh_CN
+            - en_US
+    requestTemplate:
+      url: https://oapi.dingtalk.com/topapi/v2/user/get
+      method: POST
+      headers:
+        - key: Content-Type
+          value: application/json
+      security:
+        id: DingTalkAuth
+    responseTemplate: {}
+  - name: getUserIdByMobile
+    description: 根据手机号获取用户的userId。
+    args:
+      - name: mobile
+        description: 手机号
+        type: string
+        required: true
+        position: body
+    requestTemplate:
+      url: https://oapi.dingtalk.com/topapi/v2/user/getbymobile
+      method: POST
+      headers:
+        - key: Content-Type
+          value: application/json
+      security:
+        id: DingTalkAuth
+    responseTemplate: { }
+  - name: getUserIdByUnionId
+    description: 根据unionId获取用户的userId。
+    args:
+      - name: unionid
+        description: unionId,员工在当前开发者企业账号范围内的唯一标识
+        type: string
+        required: true
+        position: body
+    requestTemplate:
+      url: https://oapi.dingtalk.com/topapi/user/getbyunionid
+      method: POST
+      headers:
+        - key: Content-Type
+          value: application/json
+      security:
+        id: DingTalkAuth
+    responseTemplate: { }
+  - name: getDepartmentUsersByDepId
+    description: 获取指定部门下的所有成员的userId。
+    args:
+      - name: dept_id
+        description: 部门ID
+        type: number
+        required: true
+        position: body
+    requestTemplate:
+      url: https://oapi.dingtalk.com/topapi/user/listid
+      method: POST
+      headers:
+        - key: Content-Type
+          value: application/json
+      security:
+        id: DingTalkAuth
+    responseTemplate: { }

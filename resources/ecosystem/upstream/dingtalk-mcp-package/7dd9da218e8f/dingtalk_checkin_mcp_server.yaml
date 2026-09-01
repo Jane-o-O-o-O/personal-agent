@@ -1,0 +1,76 @@
+server:
+  name: dingtalk-checkin
+  description: 钉钉签到
+tools:
+  - name: getDepartmentCheckinRecords
+    description: 获取部门用户签到记录，以部门维度获取员工签到记录进行统计分析
+    requestTemplate:
+      method: GET
+      url: https://oapi.dingtalk.com/checkin/record
+      headers: []
+    args:
+      - name: department_id
+        type: string
+        required: true
+        position: query
+        description: 部门ID，1表示根部门，可通过获取部门列表接口获取dept_id参数值
+      - name: start_time
+        type: number
+        required: true
+        position: query
+        description: 开始时间，Unix时间戳，单位毫秒
+      - name: end_time
+        type: number
+        required: true
+        position: query
+        description: 结束时间，Unix时间戳，单位毫秒。开始时间和结束时间的间隔不能大于45天
+      - name: offset
+        type: number
+        required: false
+        position: query
+        description: 支持分页查询，与size参数同时设置时才生效，此参数代表偏移量，从0开始，默认为0
+      - name: size
+        type: number
+        required: false
+        position: query
+        description: 支持分页查询，与offset参数同时设置时才生效，此参数代表分页大小，最大100，默认为100
+      - name: order
+        type: string
+        required: false
+        position: query
+        description: 排序方式，asc为正序，desc为倒序，默认为asc
+
+  - name: getUserCheckinRecords
+    description: 获取指定用户的签到记录，可获取指定人员的签到记录进行统计分析
+    requestTemplate:
+      method: POST
+      url: https://oapi.dingtalk.com/topapi/checkin/record/get
+      headers:
+        - key: Content-Type
+          value: application/json
+    args:
+      - name: userid_list
+        type: string
+        required: true
+        position: body
+        description: 需要查询的用户列表，最大列表长度为10，多个用户用逗号分隔
+      - name: start_time
+        type: number
+        required: true
+        position: body
+        description: 开始时间，Unix时间戳，单位毫秒
+      - name: end_time
+        type: number
+        required: true
+        position: body
+        description: 截止时间，单位毫秒。如果是取1个人的数据，时间范围最大10天；如果是取多个人的数据，时间范围最大1天
+      - name: cursor
+        type: number
+        required: true
+        position: body
+        description: 分页查询的游标，最开始可以传0
+      - name: size
+        type: number
+        required: true
+        position: body
+        description: 分页查询的每页大小，最大100 

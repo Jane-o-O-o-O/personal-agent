@@ -1,0 +1,63 @@
+{
+  "name": "dingtalk-mcp",
+  "version": "1.1.21",
+  "description": "DingTalk MCP Server - A TypeScript-based MCP server for DingTalk integration",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "dingtalk-mcp": "./dist/cli.js"
+  },
+  "files": [
+    "dist/**/*",
+    "*.yaml",
+    "dist/utils",
+    "!dist/test.js",
+    "!staging"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "start": "npm run build && node dist/cli.js",
+    "prepublishOnly": "npm run build",
+    "test": "npm run build && node dist/test.js",
+    "test-token-cache": "npm run build && node dist/test-token-cache.js",
+    "demo-token-cache": "npm run build && node dist/demo-token-cache.js",
+    "get-token": "npm run build && node dist/get-token.js",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^0.4.0",
+    "axios": "^1.6.0",
+    "dotenv": "^16.3.0",
+    "js-yaml": "^4.1.0"
+  },
+  "devDependencies": {
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "^20.19.0",
+    "typescript": "^5.8.3"
+  },
+  "keywords": [
+    "mcp",
+    "dingtalk",
+    "con",
+    "cursor",
+    "ai",
+    "typescript",
+    "model-context-protocol",
+    "tasks"
+  ],
+  "author": "dingtalk",
+  "license": "MIT",
+  "engines": {
+    "node": ">=16.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/open-dingtalk/dingtalk-mcp"
+  },
+  "bugs": {
+    "url": "https://github.com/open-dingtalk/dingtalk-mcp/issues"
+  },
+  "homepage": "https://open.dingtalk.com/document/ai-dev/dingtalk-server-api-mcp-overview"
+}

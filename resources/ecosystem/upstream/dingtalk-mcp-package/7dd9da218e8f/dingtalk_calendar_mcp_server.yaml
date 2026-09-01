@@ -1,0 +1,349 @@
+server:
+  name: dingtalk-calendar
+  description: 钉钉日程
+tools:
+  - name: createEvent
+    description: 创建一个新的日程，支持设置时间、地点、参与者、提醒、重复规则等
+    requestTemplate:
+      method: POST
+      url: https://api.dingtalk.com/v1.0/calendar/users/{unionId}/calendars/{calendarId}/events
+    args:
+      - name: unionId
+        type: string
+        required: true
+        position: path
+        description: 日程创建者的unionId
+      - name: calendarId
+        type: string
+        required: true
+        position: path
+        description: 日程所属的日历ID，统一为primary，表示用户的主日历
+      - name: summary
+        type: string
+        required: true
+        position: body
+        description: 日程标题，最大不超过2048个字符
+      - name: description
+        type: string
+        required: false
+        position: body
+        description: 日程描述，最大不超过5000个字符
+      - name: start
+        type: object
+        required: true
+        position: body
+        description: 日程开始时间对象。非全天日程格式示例：{"dateTime":"2025-09-20T10:15:30+08:00","timeZone":"Asia/Shanghai"}；全天日程格式：{"date":"2025-09-20"}
+      - name: end
+        type: object
+        required: false
+        position: body
+        description: 日程结束时间对象。非全天日程格式示例：{"dateTime":"2025-09-20T11:15:30+08:00","timeZone":"Asia/Shanghai"}；全天日程格式：{"date":"2025-09-21"}（全天日程结束日期需要+1天）
+      - name: isAllDay
+        type: boolean
+        required: false
+        position: body
+        description: 是否全天日程
+      - name: location
+        type: object
+        required: false
+        position: body
+        description: 日程地点对象，包含displayName字段。示例：{"displayName":"会议室A"}
+      - name: attendees
+        type: array
+        required: false
+        position: body
+        description: 日程参与人列表，最多支持500个参与人。数组中每个对象包含id（用户unionId）和isOptional（是否可选参与人）字段。示例：[{"id":"unionId123","isOptional":false}]
+      - name: reminders
+        type: array
+        required: false
+        position: body
+        description: 日程提醒设置，数组中每个对象包含method和minutes字段。如不传默认开始前15分钟提醒，传空数组表示不设提醒。method只支持"dingtalk"（钉钉内提醒），minutes为Integer类型表示提前N分钟提醒。示例：[{"method":"dingtalk","minutes":15}]
+      - name: recurrence
+        type: object
+        required: false
+        position: body
+        description: 日程循环规则对象
+      - name: onlineMeetingInfo
+        type: object
+        required: false
+        position: body
+        description: 创建日程同时创建线上会议。对象包含type字段，目前只支持"dingtalk"（钉钉视频会议）。示例：{"type":"dingtalk"}
+      - name: extra
+        type: object
+        required: false
+        position: body
+        description: 扩展配置，如noPushNotification、noChatNotification等。示例：{"noPushNotification":"true","noChatNotification":"false"}
+      - name: uiConfigs
+        type: array
+        required: false
+        position: body
+        description: UI配置，控制日程详情页内组件的展示
+      - name: richTextDescription
+        type: object
+        required: false
+        position: body
+        description: 富文本描述对象
+
+  - name: updateEvent
+    description: 修改已存在的日程信息
+    requestTemplate:
+      method: PUT
+      url: https://api.dingtalk.com/v1.0/calendar/users/{unionId}/calendars/{calendarId}/events/{eventId}
+    args:
+      - name: unionId
+        type: string
+        required: true
+        position: path
+        description: 日程组织者的unionId
+      - name: calendarId
+        type: string
+        required: true
+        position: path
+        description: 日程所属的日历ID，统一为primary
+      - name: eventId
+        type: string
+        required: true
+        position: path
+        description: 要修改的日程ID
+      - name: id
+        type: string
+        required: true
+        position: body
+        description: 要修改的日程ID，和eventId参数的值一样。
+      - name: summary
+        type: string
+        required: false
+        position: body
+        description: 日程标题
+      - name: description
+        type: string
+        required: false
+        position: body
+        description: 日程描述
+      - name: start
+        type: object
+        required: false
+        position: body
+        description: 日程开始时间对象。非全天日程格式：{"dateTime":"2021-09-20T10:15:30+08:00","timeZone":"Asia/Shanghai"}；全天日程格式：{"date":"2021-09-20"}
+      - name: end
+        type: object
+        required: false
+        position: body
+        description: 日程结束时间对象。非全天日程格式：{"dateTime":"2021-09-20T11:15:30+08:00","timeZone":"Asia/Shanghai"}；全天日程格式：{"date":"2021-09-21"}（全天日程结束日期需要+1天）
+      - name: isAllDay
+        type: boolean
+        required: false
+        position: body
+        description: 是否全天日程
+      - name: location
+        type: object
+        required: false
+        position: body
+        description: 日程地点对象
+        properties:
+          displayName:
+            type: string
+            description: 日程地点的名称。
+
+  - name: deleteEvent
+    description: 删除指定的日程
+    requestTemplate:
+      method: DELETE
+      url: https://api.dingtalk.com/v1.0/calendar/users/{unionId}/calendars/{calendarId}/events/{eventId}?pushNotification=Boolean
+    args:
+      - name: unionId
+        type: string
+        required: true
+        position: path
+        description: 日程组织者的unionId
+      - name: calendarId
+        type: string
+        required: true
+        position: path
+        description: 日程所属的日历ID，统一为primary
+      - name: eventId
+        type: string
+        required: true
+        position: path
+        description: 要删除的日程ID
+      - name: pushNotification
+        type: boolean
+        required: false
+        position: query
+        description: 是否发送弹窗提醒
+
+  - name: getEvent
+    description: 查询单个日程的详细信息
+    requestTemplate:
+      method: GET
+      url: https://api.dingtalk.com/v1.0/calendar/users/{unionId}/calendars/{calendarId}/events/{eventId}?maxAttendees=Integer
+    args:
+      - name: unionId
+        type: string
+        required: true
+        position: path
+        description: 日程组织者的unionId
+      - name: calendarId
+        type: string
+        required: true
+        position: path
+        description: 日程所属的日历ID，统一为primary
+      - name: eventId
+        type: string
+        required: true
+        position: path
+        description: 要查询的日程ID
+      - name: maxAttendees
+        type: number
+        required: false
+        position: query
+        description: 返回的参与者列表的最大数量
+
+
+  - name: addAttendee
+    description: 添加日程参与者，每次最多支持操作500人
+    requestTemplate:
+      method: POST
+      url: https://api.dingtalk.com/v1.0/calendar/users/{unionId}/calendars/{calendarId}/events/{eventId}/attendees
+    args:
+      - name: unionId
+        type: string
+        required: true
+        position: path
+        description: 日程创建者的unionId
+      - name: calendarId
+        type: string
+        required: true
+        position: path
+        description: 日程所属的日历ID，统一为primary
+      - name: eventId
+        type: string
+        required: true
+        position: path
+        description: 日程ID
+      - name: attendeesToAdd
+        type: array
+        required: true
+        position: body
+        description: 需要添加的参与人列表，数组中每个对象包含id（用户unionId）和isOptional（是否可选参与人）字段。示例：[{"id":"unionId123","isOptional":false}]
+      - name: pushNotification
+        type: boolean
+        required: false
+        position: body
+        description: 是否弹窗提醒
+      - name: chatNotification
+        type: boolean
+        required: false
+        position: body
+        description: 是否单聊提醒
+
+  - name: removeAttendee
+    description: 删除日程参与者，每次最多支持操作500人
+    requestTemplate:
+      method: POST
+      url: https://api.dingtalk.com/v1.0/calendar/users/{unionId}/calendars/{calendarId}/events/{eventId}/attendees/batchRemove
+    args:
+      - name: unionId
+        type: string
+        required: true
+        position: path
+        description: 日程创建者的unionId
+      - name: calendarId
+        type: string
+        required: true
+        position: path
+        description: 日程所属的日历ID，统一为primary
+      - name: eventId
+        type: string
+        required: true
+        position: path
+        description: 日程ID
+      - name: attendeesToRemove
+        type: array
+        required: true
+        position: body
+        description: 需要删除的参与人列表，数组中每个对象包含id（用户unionId）字段。示例：[{"id":"unionId123"}]
+      - name: pushNotification
+        type: boolean
+        required: false
+        position: body
+        description: 是否弹窗提醒
+      - name: chatNotification
+        type: boolean
+        required: false
+        position: body
+        description: 是否单聊提醒
+
+  - name: getAttendees
+    description: 获取日程参与者列表
+    requestTemplate:
+      method: GET
+      url: https://api.dingtalk.com/v1.0/calendar/users/{unionId}/calendars/{calendarId}/events/{eventId}/attendees?maxResults=Integer&nextToken=String
+    args:
+      - name: unionId
+        type: string
+        required: true
+        position: path
+        description: 日程创建者的unionId
+      - name: calendarId
+        type: string
+        required: true
+        position: path
+        description: 日程所属的日历ID，统一为primary
+      - name: eventId
+        type: string
+        required: true
+        position: path
+        description: 日程ID
+      - name: maxResults
+        type: number
+        required: false
+        position: query
+        description: 最大返回数量，默认100，最大500
+      - name: nextToken
+        type: string
+        required: false
+        position: query
+        description: 分页标记
+
+  - name: getCalendarView
+    description: 查询日程视图，按时间范围获取日程列表
+    requestTemplate:
+      method: GET
+      url: https://api.dingtalk.com/v1.0/calendar/users/{unionId}/calendars/{calendarId}/eventsview?timeMin=String&timeMax=String&maxAttendees=Integer&maxResults=Integer&nextToken=String
+    args:
+      - name: unionId
+        type: string
+        required: true
+        position: path
+        description: 用户的unionId
+      - name: calendarId
+        type: string
+        required: true
+        position: path
+        description: 日程所属的日历ID，统一为primary
+      - name: timeMin
+        type: string
+        required: true
+        position: query
+        description: 查询的起始时间，格式为ISO-8601的date-time格式。
+      - name: timeMax
+        type: string
+        required: true
+        position: query
+        description: 查询的结束时间，格式为ISO-8601的date-time格式。
+      - name: maxAttendees
+        type: number
+        required: false
+        position: query
+        description: 返回的参与者列表的最大数量
+      - name: maxResults
+        type: number
+        required: false
+        position: query
+        description: 最大返回数量
+      - name: nextToken
+        type: string
+        required: false
+        position: query
+        description: 分页标记

@@ -1,0 +1,218 @@
+server:
+  name: dingtalk-robot-send-message
+  description: 钉钉机器人发消息
+  default_active: true
+  securitySchemes:
+    - id: DingTalkAuth
+      type: apiKey
+      in: header
+      name: x-acs-dingtalk-access-token
+tools:
+  - name: sendMessageToGroupByRobot
+    description: >
+      向群聊发送普通消息（非 DING、非待办）。
+      例如，当用户说“在群里说一下”、“通知到XX群”但未提及“DING”或“钉一下”时使用。
+    args:
+      - name: robotCode
+        description: 机器人Code
+        type: string
+        position: body
+        system: ROBOT_CODE
+      - name: openConversationId
+        type: string
+        description: 会话ID。
+        position: body
+        required: true
+      - name: msgKey
+        type: string
+        description: 消息模板key，默认为"sampleMarkdown"。
+        position: body
+        default: sampleMarkdown
+        # 不需要模型处理
+        not_need_model_transform: true
+      - name: msgParam
+        type: object
+        extendType: json
+        description: sampleMarkdown消息内容
+        position: body
+        required: true
+        items:
+          type: object
+          properties:
+            title:
+              type: string
+              description: 消息标题。
+            text:
+              type: string
+              description: 消息内容，markdown格式。
+
+
+
+    requestTemplate:
+      url: https://api.dingtalk.com/v1.0/robot/groupMessages/send
+      method: POST
+      headers:
+        - key: Content-Type
+          value: application/json
+      security:
+        id: DingTalkAuth
+    responseTemplate: { }
+
+  - name: recallGroupMessageByRobot
+    description: 撤回机器人发送的群消息
+    args:
+      - name: robotCode
+        description: 机器人Code
+        type: string
+        position: body
+        system: ROBOT_CODE
+      - name: openConversationId
+        type: string
+        description: 会话ID。
+        position: body
+        required: true
+      - name: processQueryKeys
+        type: array
+        description: 要撤回的消息ID列表。
+        position: body
+        required: true
+        items:
+          type: string
+
+    requestTemplate:
+      url: https://api.dingtalk.com/v1.0/robot/groupMessages/recall
+      method: POST
+      headers:
+        - key: Content-Type
+          value: application/json
+      security:
+        id: DingTalkAuth
+    responseTemplate: { }
+
+  - name: batchSendMessageToUsersByRobot
+    description:  >
+      使用机器人向一个或多个个人用户发送消息。适用于一对一单聊场景。
+      当用户明确表示要给一个或多个个人发送消息（非群聊）时，使用此工具。
+      注意：此工具仅用于单聊，不能用于群组。如果目标是群，请使用 sendMessageToGroupByCustomRobot 或者 sendMessageToGroupByRobot。
+    args:
+      - name: robotCode
+        description: 机器人Code
+        type: string
+        position: body
+        system: ROBOT_CODE
+      - name: userIds
+        type: array
+        description: 用户userId列表。
+        position: body
+        required: true
+        items:
+          type: string
+      - name: msgKey
+        type: string
+        description: 消息模板key，默认为"sampleMarkdown"。
+        position: body
+        default: sampleMarkdown
+        # 不需要模型处理
+        not_need_model_transform: true
+      - name: msgParam
+        type: object
+        # 扩展类型，最终发送给API时，转换为json string
+        extendType: json
+        description: sampleMarkdown消息内容
+        position: body
+        required: true
+        items:
+          type: object
+          properties:
+            title:
+              type: string
+              description: 消息标题。
+            text:
+              type: string
+              description: 消息内容，markdown格式。
+
+    requestTemplate:
+      url: https://api.dingtalk.com/v1.0/robot/oToMessages/batchSend
+      method: POST
+      headers:
+        - key: Content-Type
+          value: application/json
+      security:
+        id: DingTalkAuth
+    responseTemplate: { }
+
+  - name: batchRecallToUsersMessageByRobot
+    description: 批量撤回机器人给人发送的消息
+    args:
+      - name: robotCode
+        description: 机器人Code
+        type: string
+        position: body
+        system: ROBOT_CODE
+      - name: processQueryKeys
+        type: array
+        description: 要撤回的消息ID列表。
+        position: body
+        required: true
+        items:
+          type: string
+
+    requestTemplate:
+      url: https://api.dingtalk.com/v1.0/robot/oToMessages/batchRecall
+      method: POST
+      headers:
+        - key: Content-Type
+          value: application/json
+      security:
+        id: DingTalkAuth
+    responseTemplate: { }
+  - name: sendMessageToGroupByCustomRobot
+    description: >
+      使用群自定义机器人向指定群发送消息。
+      仅在用户明确要求“使用自定义机器人”或“通过自定义机器人发消息”时调用此工具。
+      注意：此工具只能用于向群（group）发送消息，不能用于单聊或个人用户。
+      如果用户未明确提及自定义机器人，请不要调用此工具。
+    args:
+      - name: msgtype
+        description: 消息类型，默认为markdown
+        type: string
+        position: body
+        default: markdown
+        # 不需要模型处理
+        not_need_model_transform: true
+      - name: markdown
+        type: object
+        position: body
+        description: markdown消息
+        items:
+          type: object
+          properties:
+            title:
+              type: string
+              description: 消息标题。
+            text:
+              type: string
+              description: 消息内容，markdown格式。
+      - name: at
+        description: AT群成员
+        position: body
+        type: object
+        items:
+          type: object
+          properties:
+            isAtAll:
+              type: boolean
+              description: 是否AT所有人，默认为false。
+            atUserIds:
+              type: array
+              items:
+                type: string
+              description: 被AT的群成员userId。
+
+    requestTemplate:
+      url: https://oapi.dingtalk.com/robot/send?access_token=ROBOT_ACCESS_TOKEN
+      method: POST
+      headers:
+        - key: Content-Type
+          value: application/json
+    responseTemplate: { }

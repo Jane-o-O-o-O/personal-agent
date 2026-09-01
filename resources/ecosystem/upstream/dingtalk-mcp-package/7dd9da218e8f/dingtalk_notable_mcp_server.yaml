@@ -1,0 +1,531 @@
+server:
+  name: dingtalk-notable
+  description: 钉钉AI表格/多维表
+tools:
+  - name: notableSupportedSearchFilters
+    description: AI表格/多维表支持的搜索过滤条件
+    requestTemplate:
+      type: file
+      url: /resources/notable-field-search-filters.md
+
+  - name: notableSupportedFieldInfo
+    description: AI表格/多维表支持的字段类型和额外属性
+    requestTemplate:
+      type: file
+      url: /resources/notable-field-property.md
+
+  - name: notableRecordValuesFormat
+    description: AI表格/多维表记录值格式
+    requestTemplate:
+      type: file
+      url: /resources/notable-record-values.md
+
+
+  - name: queryNotables
+    description: 根据名称查询AI表格/多维表
+    requestTemplate:
+      method: POST
+      url: https://api.dingtalk.com/v2.0/storage/dentries/search?operatorId=String
+    args:
+      - name: operatorId
+        description: 操作人的unionId，如果找不到，可以从通讯录相关Tool中获取。
+        type: string
+        required: true
+        position: query
+      - name: keyword
+        description: AI表格/多维表名称
+        type: string
+        required: true
+        position: body
+      - name: option
+        description: 查询参数
+        type: object
+        required: true
+        position: body
+        items:
+          type: object
+          required:
+            - dentryCategories
+            - creatorIds
+          properties:
+            dentryCategories:
+              type: array
+              description: 文件类别
+              items:
+                type: string
+                enum: [ "alidoc" ]
+            creatorIds:
+              type: array
+              description: 创建者的userId
+              items:
+                type: string
+            nextToken:
+              type: string
+              description: 分页游标，第一次查询不需要此值，第二次查询需要，从本接口的返回值nextToken获取，如果返回值为空则说明没有更多数据
+            maxResults:
+              type: integer
+              description: 分页大小，默认值10
+  # 数据表
+  - name: getNotableSheet
+    description: 获取AI表格/多维表的单个数据表的ID和名称
+    requestTemplate:
+      method: GET
+      url: https://api.dingtalk.com/v1.0/notable/bases/{baseId}/sheets/{sheetIdOrName}?operatorId=String
+    args:
+      - name: operatorId
+        description: 操作人的unionId
+        type: string
+        required: true
+        position: query
+      - name: baseId
+        description: AI表格/多维表ID，从「根据名称查询AI表格/多维表」Tool中的结果字段「dentryUuid」获取。
+        type: string
+        required: true
+        position: query
+      - name: sheetIdOrName
+        description: 数据表ID或数据表名称。数据表ID可以通过调用「getNotableAllSheets」获取
+        type: string
+        required: true
+        position: path
+
+  - name: getNotableAllSheets
+    description: 获取AI表格/多维表的所有数据表
+    requestTemplate:
+      method: GET
+      url: https://api.dingtalk.com/v1.0/notable/bases/{baseId}/sheets?operatorId=String
+    args:
+      - name: operatorId
+        description: 操作人的unionId
+        type: string
+        required: true
+        position: query
+      - name: baseId
+        description: AI表格/多维表ID，从「根据名称查询AI表格/多维表」Tool中的结果字段「dentryUuid」获取。
+        type: string
+        required: true
+        position: query
+
+  - name: updateNotableSheetName
+    description: 更新AI表格/多维表的单个数据表的名称
+    requestTemplate:
+      method: PUT
+      url: https://api.dingtalk.com/v1.0/notable/bases/{baseId}/sheets/{sheetIdOrName}?operatorId=String
+    args:
+      - name: operatorId
+        description: 操作人的unionId
+        type: string
+        required: true
+        position: query
+      - name: baseId
+        description: AI表格/多维表ID，从「根据名称查询AI表格/多维表」Tool中的结果字段「dentryUuid」获取。
+        type: string
+        required: true
+        position: query
+      - name: sheetIdOrName
+        description: 数据表ID或数据表名称。数据表ID可以通过调用「getNotableAllSheets」获取
+        type: string
+        required: true
+        position: path
+      - name: name
+        description: 数据表名称
+        type: string
+        required: true
+        position: body
+
+  - name: createNotableSheet
+    description: 创建AI表格/多维表的数据表
+    requestTemplate:
+      method: POST
+      url: https://api.dingtalk.com/v1.0/notable/bases/{baseId}/sheets?operatorId=String
+    args:
+      - name: operatorId
+        description: 操作人的unionId
+        type: string
+        required: true
+        position: query
+      - name: baseId
+        description: AI表格/多维表ID，从「根据名称查询AI表格/多维表」Tool中的结果字段「dentryUuid」获取。
+        type: string
+        required: true
+        position: query
+      - name: name
+        description: 数据表ID或数据表名称。
+        type: string
+        required: true
+        position: body
+      - name: fields
+        type: array
+        required: true
+        position: body
+        items:
+          type: object
+          properties:
+            name:
+              type: string
+              description: 字段名称
+            type:
+              type: string
+              description: 字段类型，参考「notableSupportedFieldInfo」Tool返回结果中的[类型]。
+            property:
+              type: Map<String, Any>
+              description: 字段属性，具体格式请参考「notableSupportedFieldInfo」Tool返回结果中的[属性]。
+
+
+  - name: deleteNotableSheet
+    description: 删除AI表格/多维表的单个数据表
+    requestTemplate:
+      method: DELETE
+      url: https://api.dingtalk.com/v1.0/notable/bases/{baseId}/sheets/{sheetIdOrName}?operatorId=String
+    args:
+      - name: operatorId
+        description: 操作人的unionId
+        type: string
+        required: true
+        position: query
+      - name: baseId
+        description: AI表格/多维表ID，从「根据名称查询AI表格/多维表」Tool中的结果字段「dentryUuid」获取。
+        type: string
+        required: true
+        position: query
+      - name: sheetIdOrName
+        description: 数据表ID或数据表名称。数据表ID可以通过调用「getNotableAllSheets」获取
+        type: string
+        required: true
+        position: path
+
+  # 记录
+  - name: listNotableRecords
+    description: 获取AI表格/多维表里指定数据表的多行记录
+    requestTemplate:
+      method: POST
+      url: https://api.dingtalk.com/v1.0/notable/bases/{baseId}/sheets/{sheetIdOrName}/records/list?operatorId=String
+    args:
+      - name: operatorId
+        description: 操作人的unionId
+        type: string
+        required: true
+        position: query
+      - name: baseId
+        description: AI表格/多维表ID，从「根据名称查询AI表格/多维表」Tool中的结果字段「dentryUuid」获取。
+        type: string
+        required: true
+        position: path
+      - name: sheetIdOrName
+        description: 数据表ID或数据表名称。数据表ID可以通过调用「getNotableAllSheets」获取
+        type: string
+        required: true
+        position: path
+      - name: maxResults
+        description: 每页记录数，最大100，默认100
+        type: integer
+        required: false
+        position: body
+      - name: nextToken
+        description: 分页游标
+        type: string
+        required: false
+        position: body
+      - name: filter
+        description: 过滤条件
+        type: object
+        required: true
+        position: body
+        items:
+          type: object
+          properties:
+            combination:
+              type: string
+              description: 条件组合方式，可选值：
+                || and：同时满足所有条件
+                || or：满足任一条件
+            conditions:
+              type: array
+              items:
+                type: object
+                properties:
+                  field:
+                    type: string
+                    description: 字段ID或字段名。
+                  operator:
+                    type: string
+                    description: 条件类型：equal | notEqual | greater | greaterEqual | less | lessEqual | contain | notContain | empty | notEmpty。
+                  value:
+                    type: array
+                    description: 字段值，必须是数组类型，格式需要参考「notableSupportedSearchFilters」说明。
+                    items:
+                      type: any
+                  required:
+                    - field
+                    - operator
+                    - value
+
+  - name: getNotableRecord
+    description: 获取AI表格/多维表里指定数据表的单行记录
+    requestTemplate:
+      method: GET
+      url: https://api.dingtalk.com/v1.0/notable/bases/{baseId}/sheets/{sheetIdOrName}/records/{recordId}?operatorId=String
+    args:
+      - name: operatorId
+        description: 操作人的unionId
+        type: string
+        required: true
+        position: query
+      - name: baseId
+        description: AI表格/多维表ID，从「根据名称查询AI表格/多维表」Tool中的结果字段「dentryUuid」获取。
+        type: string
+        required: true
+        position: path
+      - name: sheetIdOrName
+        description: 数据表ID或数据表名称。数据表ID可以通过调用「getNotableAllSheets」获取
+        type: string
+        required: true
+        position: path
+      - name: recordId
+        description: 记录ID
+        type: string
+        required: true
+        position: path
+
+  - name: deleteNotableRecords
+    description: 删除AI表格/多维表里指定数据表的多行记录
+    requestTemplate:
+      method: POST
+      url: https://api.dingtalk.com/v1.0/notable/bases/{baseId}/sheets/{sheetIdOrName}/records/delete?operatorId=String
+    args:
+      - name: operatorId
+        description: 操作人的unionId
+        type: string
+        required: true
+        position: query
+      - name: baseId
+        description: AI表格/多维表ID，从「根据名称查询AI表格/多维表」Tool中的结果字段「dentryUuid」获取。
+        type: string
+        required: true
+        position: path
+      - name: sheetIdOrName
+        description: 数据表ID或数据表名称。数据表ID可以通过调用「getNotableAllSheets」获取
+        type: string
+        required: true
+        position: path
+      - name: recordIds
+        description: 记录ID数组
+        type: array
+        required: true
+        position: body
+        items:
+          type: string
+
+  - name: insertNotableRecords
+    description: 在AI表格/多维表里指定数据表中新增行记录
+    requestTemplate:
+      method: POST
+      url: https://api.dingtalk.com/v1.0/notable/bases/{baseId}/sheets/{sheetIdOrName}/records?operatorId=String
+    args:
+      - name: operatorId
+        description: 操作人的unionId
+        type: string
+        required: true
+        position: query
+      - name: baseId
+        description: AI表格/多维表ID，从「根据名称查询AI表格/多维表」Tool中的结果字段「dentryUuid」获取。
+        type: string
+        required: true
+        position: path
+      - name: sheetIdOrName
+        description: 数据表ID或数据表名称。数据表ID可以通过调用「getNotableAllSheets」获取
+        type: string
+        required: true
+        position: path
+      - name: records
+        description: 记录数组
+        type: array
+        required: true
+        position: body
+        items:
+          type: object
+          description: 该行记录中各字段的值，具体格式请参考「notableRecordValuesFormat」Tool的结果。
+          properties:
+            fields:
+              type: object
+              description: | 
+                字段键值对,key为字段ID或名称，value为字段设置值，格式需参考「notableRecordValuesFormat」Tool的结果。
+                参考如下结构图：
+                "fields":{
+                       "人员2":[
+                           {
+                               unionId: "oEoTOxbGV6o7AiSB5RcfrTAiEiE"
+                           }
+                       ],
+                       "标题": "name"
+                   }
+
+  - name: updateNotableRecords
+    description: 更新AI表格/多维表里指定数据表的多行记录
+    requestTemplate:
+      method: PUT
+      url: https://api.dingtalk.com/v1.0/notable/bases/{baseId}/sheets/{sheetIdOrName}/records?operatorId=String
+    args:
+      - name: operatorId
+        description: 操作人的unionId
+        type: string
+        required: true
+        position: query
+      - name: baseId
+        description: AI表格/多维表ID，从「根据名称查询AI表格/多维表」Tool中的结果字段「dentryUuid」获取。
+        type: string
+        required: true
+        position: path
+      - name: sheetIdOrName
+        description: 数据表ID或数据表名称。数据表ID可以通过调用「getNotableAllSheets」获取
+        type: string
+        required: true
+        position: path
+      - name: records
+        description: 记录数组，每个记录包含id和fields字段
+        type: array
+        required: true
+        position: body
+        items:
+          type: object
+          properties:
+            id:
+              type: string
+              description: 记录ID
+            fields:
+              type: object
+              description: |
+                字段键值对，key为字段ID，value为字段设置值，格式需参考「notableRecordValuesFormat」Tool的结果。
+                参考如下结构图：
+                "fields":{
+                       "人员2":[
+                           {
+                               unionId: "oEoTOxbGV6o7AiSB5RcfrTAiEiE"
+                           }
+                       ],
+                       "标题": "name"
+                   }
+
+
+  # 字段
+  - name: getNotableAllFields
+    description: 获取AI表格/多维表里指定数据表的所有字段
+    requestTemplate:
+      method: GET
+      url: https://api.dingtalk.com/v1.0/notable/bases/{baseId}/sheets/{sheetIdOrName}/fields?operatorId=String
+    args:
+      - name: operatorId
+        description: 操作人的unionId
+        type: string
+        required: true
+        position: query
+      - name: baseId
+        description: AI表格/多维表ID，从「根据名称查询AI表格/多维表」Tool中的结果字段「dentryUuid」获取。
+        type: string
+        required: true
+        position: path
+      - name: sheetIdOrName
+        description: 数据表ID或数据表名称。数据表ID可以通过调用「getNotableAllSheets」获取
+        type: string
+        required: true
+        position: path
+
+  - name: createNotableField
+    description: 在AI表格/多维表里指定数据表中创建字段
+    requestTemplate:
+      method: POST
+      url: https://api.dingtalk.com/v1.0/notable/bases/{baseId}/sheets/{sheetIdOrName}/fields?operatorId=String
+    args:
+      - name: operatorId
+        description: 操作人的unionId
+        type: string
+        required: true
+        position: query
+      - name: baseId
+        description: AI表格/多维表ID，从「根据名称查询AI表格/多维表」Tool中的结果字段「dentryUuid」获取。
+        type: string
+        required: true
+        position: path
+      - name: sheetIdOrName
+        description: 数据表ID或数据表名称。数据表ID可以通过调用「getNotableAllSheets」获取
+        type: string
+        required: true
+        position: path
+      - name: name
+        description: 字段名称
+        type: string
+        required: true
+        position: body
+      - name: type
+        description: 字段类型，需要参考「notableSupportedFieldInfo」Tool的对不同类型字段的类型描述。
+        type: string
+        required: true
+        position: body
+      - name: property
+        description: 字段属性，，需要参考「notableSupportedFieldInfo」Tool的对不同类型字段的属性描述。
+        type: object
+        required: false
+        position: body
+
+  - name: deleteNotableField
+    description: 删除AI表格/多维表里指定数据表的字段
+    requestTemplate:
+      method: DELETE
+      url: https://api.dingtalk.com/v1.0/notable/bases/{baseId}/sheets/{sheetIdOrName}/fields/{fieldIdOrName}?operatorId=String
+    args:
+      - name: operatorId
+        description: 操作人的unionId
+        type: string
+        required: true
+        position: query
+      - name: baseId
+        description: AI表格/多维表ID，从「根据名称查询AI表格/多维表」Tool中的结果字段「dentryUuid」获取。
+        type: string
+        required: true
+        position: path
+      - name: sheetIdOrName
+        description: 数据表ID或数据表名称。数据表ID可以通过调用「getNotableAllSheets」获取
+        type: string
+        required: true
+        position: path
+      - name: fieldIdOrName
+        description: 字段ID或字段名称
+        type: string
+        required: true
+        position: path
+
+  - name: updateNotableField
+    description: 更新AI表格/多维表里指定数据表的字段，建议先从「getNotableAllFields」Tool中获取要更新字段的类型。
+    requestTemplate:
+      method: PUT
+      url: https://api.dingtalk.com/v1.0/notable/bases/{baseId}/sheets/{sheetIdOrName}/fields/{fieldIdOrName}?operatorId=String
+    args:
+      - name: operatorId
+        description: 操作人的unionId
+        type: string
+        required: true
+        position: query
+      - name: baseId
+        description: AI表格/多维表ID，从「根据名称查询AI表格/多维表」Tool中的结果字段「dentryUuid」获取。
+        type: string
+        required: true
+        position: path
+      - name: sheetIdOrName
+        description: 数据表ID或数据表名称。数据表ID可以通过调用「getNotableAllSheets」获取
+        type: string
+        required: true
+        position: path
+      - name: fieldIdOrName
+        description: 字段ID或字段名称
+        type: string
+        required: true
+        position: path
+      - name: name
+        description: 字段名称
+        type: string
+        required: true
+        position: body
+      - name: property
+        description: 字段属性，需要参考「notableSupportedFieldInfo」Tool的对不同类型字段的属性描述。
+        type: object
+        required: false
+        position: body

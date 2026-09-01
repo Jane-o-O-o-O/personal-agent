@@ -1,0 +1,146 @@
+server:
+  name: dingtalk-service-window
+  version: 1.0.0
+  description: DingTalk ServiceWindow MCP Server with Message Builder
+  securitySchemes:
+    - id: DingTalkAuth
+      type: apiKey
+      in: header
+      name: x-acs-dingtalk-access-token
+
+# 注意：当前版本的工具定义在代码中，此配置文件为预留扩展
+tools:
+      
+  - name: sendServiceWindowMessage
+    description: "发送服务窗单人消息"
+    requestTemplate:
+      method: POST
+      url: "https://api.dingtalk.com/v1.0/crm/officialAccounts/oToMessages/send"
+      security:
+        id: DingTalkAuth
+    args:
+      - name: userId
+        description: 用户userId
+        type: string
+        required: true
+        position: body
+      - name: accountId
+        description: 服务窗帐号ID
+        type: string
+        required: true
+        position: body
+      - name: messageTitle
+        description: 消息标题
+        type: string
+        required: true
+        position: body
+      - name: messageContent
+        description: markdown格式的消息内容
+        type: string
+        required: true
+        position: body
+
+
+
+  - name: batchSendServiceWindowMessage
+    description: "批量发送服务窗消息"
+    requestTemplate:
+      method: POST
+      url: "https://api.dingtalk.com/v1.0/crm/officialAccounts/oToMessages/batchSend"
+      security:
+        id: DingTalkAuth
+    args:
+      - name: userIdList
+        description: 用户userId
+        type: array
+        required: false
+        position: body
+        items:
+          type: string
+      - name: accountId
+        description: 服务窗帐号ID
+        type: string
+        required: true
+        position: body
+      - name: messageTitle
+        description: 消息标题
+        type: string
+        required: true
+        position: body
+      - name: messageContent
+        description: markdown格式的消息内容
+        type: string
+        required: true
+        position: body
+        
+  - name: getServiceWindowFollowerInfo
+    description: "获取关注服务窗的单个用户信息"
+    requestTemplate:
+      method: GET
+      url: "https://api.dingtalk.com/v1.0/link/followers/infos?userId={String}&accountId={String}"
+      security:
+        id: DingTalkAuth
+    args:
+      - name: accountId
+        description: 服务窗帐号ID
+        type: string
+        required: true
+        position: query
+      - name: userId
+        description: 关注服务窗用户的userId
+        type: string
+        required: true
+        position: query
+        
+  - name: listServiceWindowFollowersInfo
+    description: "批量获取关注服务窗用户的信息"
+    requestTemplate:
+      method: GET
+      url: "https://api.dingtalk.com/v1.0/link/followers?accountId={String}&nextToken={String}&maxResults={String}"
+      security:
+        id: DingTalkAuth
+    args:
+      - name: accountId
+        description: 服务窗帐号ID
+        type: string
+        required: true
+        position: query
+      - name: nextToken
+        description: 分页游标
+        type: string
+        required: false
+        position: query
+      - name: maxResults
+        description: 每页最大条目数，最大值100
+        type: string
+        required: false
+        position: query
+
+        
+  - name: getUserFollowStatus
+    description: "获取用户的服务窗关注状态"
+    requestTemplate:
+      method: GET
+      url: "https://api.dingtalk.com/v1.0/link/followers/statuses?accountId={String}&userId={String}"
+      security:
+        id: DingTalkAuth
+    args:
+      - name: accountId
+        description: 服务窗帐号ID
+        type: string
+        required: true
+        position: query
+      - name: userId
+        description: 关注服务窗用户的userId
+        type: string
+        required: true
+        position: query
+
+        
+  - name: listServiceWindows
+    description: "获取企业下的服务窗列表，以获取服务窗帐号IDaccountId"
+    requestTemplate:
+      method: GET
+      url: "https://api.dingtalk.com/v1.0/link/accounts"
+      security:
+        id: DingTalkAuth

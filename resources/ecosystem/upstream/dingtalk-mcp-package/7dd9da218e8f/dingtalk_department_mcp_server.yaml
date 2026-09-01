@@ -1,0 +1,95 @@
+server:
+  name: dingtalk-department
+  description: 钉钉部门管理
+tools:
+  - name: getDepartmentDetail
+    description: 获取指定部门的详细信息，包括部门名称、父部门、管理员、权限设置等完整信息
+    requestTemplate:
+      method: POST
+      url: https://oapi.dingtalk.com/topapi/v2/department/get
+    args:
+      - name: dept_id
+        type: number
+        required: true
+        position: body
+        description: 部门ID，根部门ID为1
+      - name: language
+        type: string
+        required: false
+        position: body
+        description: 通讯录语言，zh_CN(中文)或en_US(英文)，默认zh_CN
+
+  - name: searchDepartment
+    description: 根据部门名称搜索部门ID，支持部门名称或拼音搜索
+    requestTemplate:
+      method: POST
+      url: https://api.dingtalk.com/v1.0/contact/departments/search
+    args:
+      - name: queryWord
+        type: string
+        required: true
+        position: body
+        description: 部门名称或者部门名称拼音
+      - name: offset
+        type: number
+        required: true
+        position: body
+        description: 分页页码，默认0
+      - name: size
+        type: number
+        required: true
+        position: body
+        description: 分页大小，默认10，最大100
+
+  - name: listSubDepartments
+    description: 获取指定部门的下一级子部门基础信息列表
+    requestTemplate:
+      method: POST
+      url: https://oapi.dingtalk.com/topapi/v2/department/listsub
+    args:
+      - name: dept_id
+        type: number
+        required: false
+        position: body
+        description: 父部门ID，不传则获取根部门的子部门，根部门ID为1
+      - name: language
+        type: string
+        required: false
+        position: body
+        description: 通讯录语言，zh_CN(中文)或en_US(英文)，默认zh_CN
+
+  - name: listSubDepartmentIds
+    description: 获取指定部门下的所有直属子部门ID列表
+    requestTemplate:
+      method: POST
+      url: https://oapi.dingtalk.com/topapi/v2/department/listsubid
+    args:
+      - name: dept_id
+        type: number
+        required: true
+        position: body
+        description: 父部门ID，根部门传1
+
+  - name: getDepartmentParents
+    description: 获取指定部门的所有父部门ID列表，从当前部门到根部门的完整路径
+    requestTemplate:
+      method: POST
+      url: https://oapi.dingtalk.com/topapi/v2/department/listparentbydept
+    args:
+      - name: dept_id
+        type: number
+        required: true
+        position: body
+        description: 要查询的部门ID
+
+  - name: getUserDepartmentParents
+    description: 获取指定用户所属的所有父级部门路径，返回用户所有部门归属的层级结构
+    requestTemplate:
+      method: POST
+      url: https://oapi.dingtalk.com/topapi/v2/department/listparentbyuser
+    args:
+      - name: userid
+        type: string
+        required: true
+        position: body
+        description: 要查询的用户的userid 
