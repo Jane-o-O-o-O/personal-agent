@@ -1,0 +1,40 @@
+{
+  "name": "@kuaidi100-mcp/kuaidi100-mcp-server",
+  "version": "1.0.4",
+  "description": "快递100推出了国内首个兼容MCP协议的物流信息服务平台—快递100 MCP Server。 快递100旗下百递云·API开放平台的核心API服务现已全面支持MCP协议。开发者简单配置即可快速接入快递查询、运费预估、智能时效预估（含全程与在途模式）等核心功能。",
+  "main": "dist/index.js",
+  "files": [
+    "dist"
+  ],
+  "bin": {
+    "kuaidi100-mcp": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "watch": "tsc --watch",
+    "clean": "rm -rf dist"
+  },
+  "keywords": [
+    "mcp",
+    "express",
+    "kuaidi100",
+    "model-context-protocol"
+  ],
+  "author": "kuaidi100",
+  "license": "Apache-2.0",
+  "dependencies": {
+    "@kuaidi100-mcp/kuaidi100-mcp-server": "^1.0.0",
+    "@modelcontextprotocol/sdk": "^1.17.4",
+    "axios": "^1.6.0",
+    "dotenv": "^16.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "ts-node": "^10.9.1",
+    "typescript": "^5.3.2"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
