@@ -1,0 +1,111 @@
+# frozen_string_literal: true
+
+require "ox"
+
+require "provider/adapters/adapter"
+
+class Provider
+  module Adapters
+    # Bank of Russia. Publishes daily rates for ~54 currencies against RUB, plus daily reference prices for gold,
+    # silver, platinum and palladium. FX uses XML_daily for the currency list and XML_dynamic for date ranges. Metals
+    # come from xml_metall in RUB per gram; values are normalized to per troy ounce here.
+    class CBR < Adapter
+      DAILY_URL = "https://www.cbr.ru/scripts/XML_daily.asp"
+      DYNAMIC_URL = "https://www.cbr.ru/scripts/XML_dynamic.asp"
+      METAL_URL = "https://www.cbr.ru/scripts/xml_metall.asp"
+
+      METAL_CODES = {
+        "1" => "XAU",
+        "2" => "XAG",
+        "3" => "XPT",
+        "4" => "XPD",
+      }.freeze
+
+      # XML_dynamic serves a currency's whole history under its current code. The TJS series is not restated across the
+      # 2000-10-30 introduction of the somoni: 1000 "TJS" = 13.54 RUB on 2000-10-01, 1 TJS = 12.65 on 2000-11-01.
+      # Earlier rows are Tajikistani ruble (TJR).
+      PREDECESSORS = {
+        "TJS" => ["TJR", Date.new(2000, 10, 30)],
+      }.freeze
+
+      def fetch(after:, upto: nil)
+        end_date = upto || Date.today
+        currencies = fetch_currency_list
+        fx = currencies.flat_map { |id, code| fetch_dynamic(id, code, after, end_date) }
+        fx + fetch_metals(after, end_date)
+      end
+
+      def parse_dynamic(xml, code)
+        Ox.load(xml).locate("ValCurs/Record").filter_map do |row|
+          date = Date.strptime(row[:Date], "%d.%m.%Y")
+          next if date.saturday? || date.sunday?
+
+          rate = extract_rate(row)
+          next unless rate
+
+          { date:, base: historical_code(code, date), quote: "RUB", rate: }
+        end
+      end
+
+      def parse_metals(xml)
+        Ox.load(xml).locate("Metall/Record").filter_map do |row|
+          base = METAL_CODES[row[:Code]]
+          next unless base
+
+          date = Date.strptime(row[:Date], "%d.%m.%Y")
+          next if date.saturday? || date.sunday?
+
+          buy = row.locate("Buy").first&.text
+          next unless buy && !buy.empty?
+
+          rate = Float(buy.tr(",", "."), exception: false)
+          next unless rate&.positive?
+
+          { date:, base:, quote: "RUB", rate: rate * GRAMS_PER_TROY_OUNCE }
+        end
+      end
+
+      private
+
+      def fetch_metals(start_date, end_date)
+        response = http.get(METAL_URL, params: {
+          date_req1: start_date.strftime("%d/%m/%Y"),
+          date_req2: end_date.strftime("%d/%m/%Y"),
+        },).to_s
+
+        parse_metals(response)
+      end
+
+      def fetch_currency_list
+        doc = Ox.load(http.get(DAILY_URL).to_s)
+        doc.locate("ValCurs/Valute").filter_map do |v|
+          code = v.locate("CharCode").first&.text
+          next unless code && !code.empty?
+
+          [v[:ID], code]
+        end
+      end
+
+      def fetch_dynamic(valute_id, code, start_date, end_date)
+        response = http.get(DYNAMIC_URL, params: {
+          date_req1: start_date.strftime("%d/%m/%Y"),
+          date_req2: end_date.strftime("%d/%m/%Y"),
+          VAL_NM_RQ: valute_id,
+        },).to_s
+
+        parse_dynamic(response, code)
+      end
+
+      def extract_rate(node)
+        vunit = node.locate("VunitRate").first
+        return Float(vunit.text.tr(",", ".")) if vunit&.text && !vunit.text.empty?
+
+        value = node.locate("Value").first
+        return unless value&.text
+
+        nominal = node.locate("Nominal").first&.text.to_i
+        Float(value.text.tr(",", ".")) / nominal
+      end
+    end
+  end
+end

@@ -1,0 +1,1207 @@
+# frozen_string_literal: true
+
+require_relative "../helper"
+require "csv"
+require "rack/test"
+
+# Skooma requires minitest/unit which was removed in Minitest 6
+$LOADED_FEATURES << "minitest/unit.rb"
+require "skooma"
+
+require "versions/v2"
+
+describe Versions::V2 do
+  include Rack::Test::Methods
+  include Skooma::Minitest[
+    File.expand_path("../../lib/public/v2/openapi.json", __dir__),
+  ]
+
+  let(:app) { Versions::V2.freeze }
+  let(:json) { Oj.load(last_response.body) }
+  let(:historical_date) { Fixtures.business_day(30).to_s }
+  let(:range_start) { Fixtures.business_day(60).to_s }
+  let(:range_end) { Fixtures.business_day(30).to_s }
+  let(:year_start) { (Fixtures.latest_date - 365).to_s }
+  let(:year_end) { Fixtures.latest_date.to_s }
+
+  def seconds_to_utc_midnight
+    now = Time.now.utc
+    (Time.utc(now.year, now.month, now.day) + 86400 - now).ceil
+  end
+
+  it "returns latest rates" do
+    get "/rates"
+
+    _(last_response).must_be(:ok?)
+    assert_conform_schema(200)
+    _(json.first["base"]).must_equal("EUR")
+  end
+
+  it "returns rates for a specific date" do
+    get "/rates?date=#{historical_date}"
+
+    _(last_response).must_be(:ok?)
+    assert_conform_schema(200)
+    _(json.first["date"]).must_equal(historical_date)
+  end
+
+  it "snaps to nearest business day for weekends" do
+    sunday = Fixtures.recent_sunday
+    friday = Fixtures.preceding_friday(sunday)
+    get "/rates?date=#{sunday}"
+
+    _(last_response).must_be(:ok?)
+    _(json.first["date"]).must_equal(friday.to_s)
+  end
+
+  it "returns rates for a date range" do
+    get "/rates?from=#{range_start}&to=#{range_end}"
+
+    _(last_response).must_be(:ok?)
+    assert_conform_schema(200)
+    dates = json.map { |r| r["date"] }.uniq
+
+    _(dates.length).must_be(:>, 1)
+  end
+
+  it "orders range query rows by date when carry-forward surfaces older quotes" do
+    from = Fixtures.business_day(40)
+    to = Fixtures.business_day(36)
+    Rate.where(provider: "ECB", quote: "USD", date: from..to).delete
+
+    get "/rates?providers=ecb&quotes=USD,GBP&from=#{from}&to=#{to}"
+
+    _(last_response).must_be(:ok?)
+    dates = json.map { |r| r["date"] }
+    usd_row = json.find { |r| r["quote"] == "USD" }
+
+    _(usd_row).wont_be_nil
+    _(usd_row["date"]).must_be(:<, from.to_s)
+    _(dates).must_equal(dates.sort)
+  end
+
+  it "orders weekly rollup rows by date" do
+    get "/rates?from=#{year_start}&to=#{year_end}&group=week"
+
+    _(last_response).must_be(:ok?)
+    dates = json.map { |r| r["date"] }
+
+    _(dates).must_equal(dates.sort)
+  end
+
+  it "does not duplicate the first row of a range query" do
+    from = Fixtures.business_day(60).to_s
+    to = Fixtures.business_day(56).to_s
+    get "/rates?base=EUR&quotes=USD&providers=ecb&from=#{from}&to=#{to}"
+
+    _(last_response).must_be(:ok?)
+    pairs = json.map { |r| [r["date"], r["base"], r["quote"]] }
+
+    _(pairs).must_equal(pairs.uniq)
+  end
+
+  it "does not duplicate the start date when the range opens on a gap boundary" do
+    monday = Fixtures.gap_boundary_monday
+    to = (monday + 2).to_s
+    get "/rates?base=EUR&quotes=USD&providers=ecb&from=#{monday}&to=#{to}"
+
+    _(last_response).must_be(:ok?)
+    starts = json.select { |r| r["date"] == monday.to_s && r["quote"] == "USD" }
+
+    _(starts.length).must_equal(1)
+  end
+
+  it "does not duplicate the first row of an NDJSON range query" do
+    from = Fixtures.business_day(60).to_s
+    to = Fixtures.business_day(56).to_s
+    get(
+      "/rates?base=EUR&quotes=USD&providers=ecb&from=#{from}&to=#{to}",
+      {},
+      { "HTTP_ACCEPT" => "application/x-ndjson" },
+    )
+
+    _(last_response).must_be(:ok?)
+    _(last_response.content_type).must_include("application/x-ndjson")
+    rows = last_response.body.split("\n").reject(&:empty?).map { |line| Oj.load(line) }
+    pairs = rows.map { |r| [r["date"], r["base"], r["quote"]] }
+
+    _(pairs).must_equal(pairs.uniq)
+  end
+
+  it "does not duplicate the first row of a CSV range query" do
+    from = Fixtures.business_day(60).to_s
+    to = Fixtures.business_day(56).to_s
+    get "/rates.csv?base=EUR&quotes=USD&providers=ecb&from=#{from}&to=#{to}"
+
+    _(last_response).must_be(:ok?)
+    _(last_response.content_type).must_include("text/csv")
+    rows = CSV.parse(last_response.body, headers: true)
+    pairs = rows.map { |r| [r["date"], r["base"], r["quote"]] }
+
+    _(pairs).must_equal(pairs.uniq)
+  end
+
+  it "rebases to a different currency" do
+    get "/rates?base=USD"
+
+    _(last_response).must_be(:ok?)
+    assert_conform_schema(200)
+    _(json.first["base"]).must_equal("USD")
+
+    eur = json.find { |r| r["quote"] == "EUR" }
+
+    _(eur["rate"]).must_be_kind_of(Float)
+  end
+
+  it "does not produce duplicate rows when blending providers" do
+    get "/rates?base=CAD"
+
+    _(last_response).must_be(:ok?)
+    pairs = json.map { |r| [r["date"], r["quote"]] }
+
+    _(pairs).must_equal(pairs.uniq)
+  end
+
+  it "filters quotes" do
+    get "/rates?quotes=USD,GBP"
+
+    _(last_response).must_be(:ok?)
+    assert_conform_schema(200)
+    quotes = json.map { |r| r["quote"] }.uniq.sort
+
+    _(quotes).must_equal(["GBP", "USD"])
+  end
+
+  it "includes the identity rate for the base" do
+    get "/rates"
+
+    _(last_response).must_be(:ok?)
+    assert_conform_schema(200)
+    identity = json.find { |r| r["quote"] == "EUR" }
+
+    _(identity).wont_be_nil
+    _(identity["base"]).must_equal("EUR")
+    _(identity["rate"]).must_equal(1.0)
+    _(identity["date"]).must_equal(json.map { |r| r["date"] }.max)
+  end
+
+  it "includes the identity rate when base is in quotes" do
+    get "/rates?quotes=EUR,USD"
+
+    _(last_response).must_be(:ok?)
+    quotes = json.map { |r| r["quote"] }.uniq.sort
+
+    _(quotes).must_equal(["EUR", "USD"])
+    _(json.find { |r| r["quote"] == "EUR" }["rate"]).must_equal(1.0)
+  end
+
+  it "includes the identity rate per date in range queries" do
+    from = Fixtures.business_day(60)
+    to = Fixtures.business_day(56)
+    get "/rates?providers=ecb&quotes=EUR,USD&from=#{from}&to=#{to}"
+
+    _(last_response).must_be(:ok?)
+    usd_dates = json.select { |r| r["quote"] == "USD" }.map { |r| r["date"] }
+    eur_rows = json.select { |r| r["quote"] == "EUR" }
+
+    _(eur_rows.map { |r| r["date"] }).must_equal(usd_dates)
+    _(eur_rows.map { |r| r["rate"] }.uniq).must_equal([1.0])
+  end
+
+  it "anchors the identity rate to visible rows, not hidden pivot data" do
+    latest = Fixtures.latest_date
+    Rate.where(quote: "GBP", date: latest).delete
+
+    get "/rates?quotes=EUR,GBP"
+
+    _(last_response).must_be(:ok?)
+    gbp = json.find { |r| r["quote"] == "GBP" }
+    eur = json.find { |r| r["quote"] == "EUR" }
+
+    _(gbp["date"]).must_be(:<, latest.to_s)
+    _(eur["date"]).must_equal(gbp["date"])
+  end
+
+  it "includes the identity rate for a pegged base" do
+    get "/rates?base=BMD"
+
+    _(last_response).must_be(:ok?)
+    identity = json.find { |r| r["quote"] == "BMD" }
+
+    _(identity).wont_be_nil
+    _(identity["base"]).must_equal("BMD")
+    _(identity["rate"]).must_equal(1.0)
+  end
+
+  it "omits providers on the identity rate when expanded" do
+    get "/rates?expand=providers&quotes=EUR,USD"
+
+    _(last_response).must_be(:ok?)
+    eur = json.find { |r| r["quote"] == "EUR" }
+    usd = json.find { |r| r["quote"] == "USD" }
+
+    _(eur).wont_be_nil
+    _(eur).wont_include("providers")
+    _(usd["providers"]).must_be_kind_of(Array)
+  end
+
+  it "returns the identity rate for a same-currency pair" do
+    get "/rate/USD/USD"
+
+    _(last_response).must_be(:ok?)
+    _(json["base"]).must_equal("USD")
+    _(json["quote"]).must_equal("USD")
+    _(json["rate"]).must_equal(1.0)
+    _(json["date"]).wont_be_nil
+  end
+
+  it "filters by provider" do
+    get "/rates?providers=ecb"
+
+    _(last_response).must_be(:ok?)
+    assert_conform_schema(200)
+  end
+
+  it "filters by multiple providers" do
+    get "/rates?providers=ecb,boc"
+
+    _(last_response).must_be(:ok?)
+    assert_conform_schema(200)
+  end
+
+  # BOA observes a daily fixing but releases a month of them at once, so its newest row can be weeks old with nothing
+  # missed. BOE publishes every day, so a row that old means the feed has stalled.
+  it "carries a daily fixing published in arrears across the wait for the next batch" do
+    Rate.dataset.insert(provider: "BOA", date: Date.today - 20, base: "EUR", quote: "DZD", mid: 145.0)
+
+    get "/providers/boa/rates"
+
+    _(last_response).must_be(:ok?)
+    row = json.find { |r| r["quote"] == "DZD" }
+
+    _(row).wont_be_nil
+    _(row["date"]).must_equal((Date.today - 20).to_s)
+  end
+
+  it "still drops a daily publisher's row after two weeks" do
+    Rate.dataset.insert(provider: "BOE", date: Date.today - 20, base: "EUR", quote: "GBP", mid: 0.86)
+
+    get "/providers/boe/rates"
+
+    _(last_response).must_be(:ok?)
+    _(json).must_be_empty
+  end
+
+  it "downsamples by week" do
+    get "/rates?from=#{year_start}&to=#{year_end}&group=week"
+
+    _(last_response).must_be(:ok?)
+    dates = json.map { |r| r["date"] }.uniq
+
+    _(dates.length).must_be(:<=, 55)
+  end
+
+  it "downsamples by month" do
+    get "/rates?from=#{year_start}&to=#{year_end}&group=month"
+
+    _(last_response).must_be(:ok?)
+    dates = json.map { |r| r["date"] }.uniq
+
+    _(dates.length).must_be(:<=, 13)
+  end
+
+  it "returns 422 for invalid group" do
+    get "/rates?from=#{range_start}&to=#{range_end}&group=day"
+
+    _(last_response.status).must_equal(422)
+  end
+
+  it "returns 422 for conflicting params" do
+    get "/rates?date=#{historical_date}&from=#{range_start}"
+
+    _(last_response.status).must_equal(422)
+  end
+
+  it "returns 422 for invalid date, from, and to values" do
+    invalid_dates = [
+      "04-01-1994", "2026-2-03", "2026-02-3", "20260203", "2026-02", "2026-02-03T12:00:00Z",
+      "2026-02-03junk", "2026-02-03\n", "", "not-a-date", "2026-02-30", "2026-02-29",
+    ]
+    ["date", "from", "to"].product(invalid_dates).each do |parameter, value|
+      get "/rates", parameter => value
+
+      assert_equal 422, last_response.status, "#{parameter}=#{value.inspect}"
+      _(Oj.load(last_response.body)["message"]).must_equal("invalid date")
+    end
+  end
+
+  it "accepts a valid leap day for snapshots and ranges" do
+    [{ date: "2000-02-29" }, { from: "2000-02-29", to: "2000-02-29" }].each do |params|
+      get "/rates", params
+
+      _(last_response.status).must_equal(200)
+    end
+  end
+
+  it "returns an ETag for range queries" do
+    get "/rates?from=#{range_start}&to=#{range_end}"
+
+    _(last_response).must_be(:ok?)
+    _(last_response.headers["ETag"]).wont_be_nil
+  end
+
+  it "lets caches serve stale rates on revalidation and origin errors" do
+    get "/rates?from=#{range_start}&to=#{range_end}"
+
+    cache_control = last_response.headers["Cache-Control"]
+
+    _(cache_control).must_include("public")
+    _(cache_control).must_include("max-age=86400")
+    _(cache_control).must_include("stale-while-revalidate")
+    _(cache_control).must_include("stale-if-error")
+  end
+
+  it "expires date-relative responses at next UTC midnight" do
+    ["/rates", "/rates?from=#{range_start}", "/rates?to=#{range_end}"].each do |path|
+      before = seconds_to_utc_midnight
+      get path
+      after = seconds_to_utc_midnight
+
+      cache_control = last_response.headers["Cache-Control"]
+
+      _(cache_control).must_include("public")
+      _(cache_control).must_include("stale-if-error")
+      _(cache_control).wont_include("stale-while-revalidate")
+      max_age = cache_control[/max-age=(\d+)/, 1].to_i
+
+      _(max_age).must_be(:<=, before)
+      _(max_age).must_be(:>=, after)
+    end
+  end
+
+  it "keeps the fixed max-age for explicit-date queries" do
+    get "/rates?date=#{historical_date}"
+
+    _(last_response.headers["Cache-Control"]).must_include("max-age=86400")
+  end
+
+  it "returns 422 for unknown parameters" do
+    get "/rates?provider=ecb"
+
+    _(last_response.status).must_equal(422)
+    _(json["message"]).must_include("unknown parameter")
+  end
+
+  it "returns 422 for expand=providers daily ranges longer than 5 years" do
+    get "/rates?from=2000-01-01&expand=providers"
+
+    _(last_response.status).must_equal(422)
+    assert_conform_schema(422)
+    _(json["message"]).must_include("quotes=")
+    _(json["message"]).must_include("group=week or group=month")
+    _(json["message"]).must_include("split the range")
+  end
+
+  it "serves single-provider daily ranges longer than 5 years" do
+    get "/rates?from=2000-01-01&providers=ecb"
+
+    _(last_response).must_be(:ok?)
+    _(json).wont_be_empty
+  end
+
+  it "keeps the cap for multi-provider daily ranges longer than 5 years" do
+    get "/rates?from=2000-01-01&providers=ecb,boc"
+
+    _(last_response.status).must_equal(422)
+    _(json["message"]).must_include("quotes=")
+  end
+
+  it "serves plain daily ranges longer than 5 years without any quotes filter" do
+    BlendedRate.rebuild
+
+    get "/rates?from=2000-01-01"
+
+    _(last_response).must_be(:ok?)
+    _(json).wont_be_empty
+  end
+
+  it "returns 503 when the deadline expires before streaming starts" do
+    slow_query = Object.new
+    def slow_query.range? = true
+    def slow_query.date_relative? = false
+    def slow_query.cache_key = "x"
+
+    def slow_query.each
+      return to_enum(:each) unless block_given?
+
+      raise RequestTimeout::Error, "request exceeded 90s timeout"
+    end
+
+    Versions::V2::RateQuery.stub(:new, slow_query) do
+      get "/rates?from=#{range_start}&to=#{range_end}"
+    end
+
+    _(last_response.status).must_equal(503)
+    assert_conform_schema(503)
+    _(json["message"]).must_include("timeout")
+  end
+
+  describe "heavy compute slots" do
+    let(:slots) { HeavySlots.new(1) }
+    let(:heavy_path) { "/rates?providers=ecb&from=#{range_start}&to=#{range_end}" }
+
+    it "returns 503 with Retry-After when every slot is held" do
+      slots.try_acquire
+      Versions::V2::RateQuery.stub(:heavy_slots, slots) do
+        get heavy_path
+      end
+
+      _(last_response.status).must_equal(503)
+      assert_conform_schema(503)
+      _(last_response.headers["Retry-After"]).must_equal("30")
+      _(last_response.headers["Content-Type"]).must_include("application/json")
+      _(json["status"]).must_equal(503)
+      _(json["message"]).must_include("retry")
+    end
+
+    it "serves the range and returns the slot when the stream drains" do
+      Versions::V2::RateQuery.stub(:heavy_slots, slots) do
+        get heavy_path
+      end
+
+      _(last_response).must_be(:ok?)
+      _(json).wont_be_empty
+      _(slots.held).must_equal(0)
+    end
+
+    # Puma closes the body when a client disconnects mid-stream. The enumerator fiber behind the stream is stranded and
+    # never runs its ensure, so the stream's close callback has to return the slot.
+    it "returns the slot when the client disconnects mid-stream" do
+      Versions::V2::RateQuery.stub(:heavy_slots, slots) do
+        _status, _headers, body = app.call(Rack::MockRequest.env_for(heavy_path))
+
+        _(slots.held).must_equal(1)
+
+        body.close
+
+        _(slots.held).must_equal(0)
+      end
+    end
+
+    it "does not touch the slots for table-served ranges" do
+      BlendedRate.rebuild
+      slots.try_acquire
+      Versions::V2::RateQuery.stub(:heavy_slots, slots) do
+        get "/rates?from=#{range_start}&to=#{range_end}"
+      end
+
+      _(last_response).must_be(:ok?)
+      _(json).wont_be_empty
+    end
+  end
+
+  it "routes deterministic errors in range queries through error_handler" do
+    bad_query = Object.new
+    def bad_query.range? = true
+    def bad_query.cache_key = "x"
+
+    def bad_query.each
+      return to_enum(:each) unless block_given?
+
+      raise "boom"
+    end
+
+    Versions::V2::RateQuery.stub(:new, bad_query) do
+      get "/rates?from=#{range_start}&to=#{range_end}"
+    end
+
+    _(last_response.status).must_equal(500)
+  end
+
+  it "returns rates as CSV" do
+    get "/rates.csv"
+
+    _(last_response).must_be(:ok?)
+    _(last_response.content_type).must_include("text/csv")
+    rows = CSV.parse(last_response.body, headers: true)
+
+    _(rows.headers).must_equal(["date", "base", "quote", "rate"])
+    _(rows.length).must_be(:>, 1)
+  end
+
+  it "expands providers when requested" do
+    get "/rates?expand=providers&quotes=USD"
+
+    _(last_response).must_be(:ok?)
+    json = Oj.load(last_response.body)
+
+    _(json).wont_be_empty
+    providers = json.first["providers"]
+
+    _(providers).must_be_kind_of(Array)
+    _(providers).wont_be_empty
+    _(providers.first).must_be_kind_of(Hash)
+    _(providers.first.keys.sort).must_equal(["date", "key", "rate"])
+    _(providers.first["key"]).must_be_kind_of(String)
+    _(providers.first["date"]).must_be_kind_of(String)
+    _(providers.first["rate"]).must_be_kind_of(Numeric)
+  end
+
+  it "pipe-delimits providers as KEY:RATE in CSV when expand=providers" do
+    from = (Fixtures.latest_date - 7).to_s
+    to = Fixtures.latest_date.to_s
+    get "/rates.csv?expand=providers&quotes=USD&from=#{from}&to=#{to}"
+
+    _(last_response).must_be(:ok?)
+    rows = CSV.parse(last_response.body, headers: true)
+
+    _(rows.headers).must_equal(["date", "base", "quote", "rate", "providers"])
+    _(rows.first["providers"]).wont_be_nil
+    _(rows.first["providers"]).must_match(/\A[A-Z]+:[\d.]+\*?(\|[A-Z]+:[\d.]+\*?)*\z/)
+  end
+
+  it "rejects unknown expand value" do
+    get "/rates?expand=foo"
+
+    _(last_response.status).must_equal(422)
+  end
+
+  it "serves CSV as an attachment named after the query" do
+    get "/rates.csv?quotes=USD&date=#{historical_date}"
+
+    _(last_response.headers["Content-Disposition"]).must_equal(%(attachment; filename="EUR-USD_#{historical_date}.csv"))
+  end
+
+  it "names streamed CSV ranges" do
+    get "/rates.csv?from=#{range_start}&to=#{range_end}"
+
+    _(last_response.headers["Content-Disposition"])
+      .must_equal(%(attachment; filename="EUR-rates_#{range_start}_#{range_end}.csv"))
+  end
+
+  it "does not attach JSON" do
+    get "/rates"
+
+    _(last_response.headers["Content-Disposition"]).must_be_nil
+  end
+
+  it "returns 406 for CSV on unsupported endpoints" do
+    get "/currencies.csv"
+
+    _(last_response.status).must_equal(406)
+  end
+
+  it "returns empty array for dates before dataset" do
+    get "/rates?date=1901-01-01"
+
+    _(last_response.status).must_equal(200)
+    _(Oj.load(last_response.body)).must_be_empty
+  end
+
+  it "returns currencies" do
+    get "/currencies?scope=all"
+
+    _(last_response).must_be(:ok?)
+    assert_conform_schema(200)
+    usd = json.find { |c| c["iso_code"] == "USD" }
+
+    _(usd["name"]).must_equal("United States Dollar")
+    _(usd["symbol"]).must_equal("$")
+    _(usd["iso_numeric"]).must_equal("840")
+  end
+
+  it "returns COMESA Dollar as a named accounting unit" do
+    date = Fixtures.latest_date
+    Rate.dataset.multi_insert([
+      { provider: "RBM", date:, base: "CMD", quote: "MWK", mid: 100.0 },
+      { provider: "RBM", date:, base: "USD", quote: "MWK", mid: 90.0 },
+    ])
+    Provider["RBM"].send(:refresh_currency_summaries, ["CMD", "MWK"])
+
+    get "/currency/cmd"
+
+    _(last_response).must_be(:ok?)
+    assert_conform_schema(200)
+    _(json["iso_code"]).must_equal("CMD")
+    _(json["name"]).must_equal("COMESA Dollar")
+    _(json["iso_numeric"]).must_be_nil
+    _(json["providers"]).must_equal(["RBM"])
+    _(json["peg"]).must_equal(
+      "base" => "USD",
+      "rate" => 1.0,
+      "authority" => "Common Market for Eastern and Southern Africa",
+    )
+  end
+
+  it "rejects unsupported currency scopes with or without a provider filter" do
+    ["invalid", "", "ALL", "active"].product([{}, { providers: "ecb" }]).each do |scope, params|
+      get "/currencies", params.merge(scope:)
+
+      assert_equal 422, last_response.status, "scope=#{scope.inspect}, params=#{params.inspect}"
+      _(Oj.load(last_response.body)).must_equal("status" => 422, "message" => "invalid scope")
+      assert_conform_response_schema(422)
+    end
+  end
+
+  it "returns active currencies when scope is omitted" do
+    Currency.create(iso_code: "DEM", start_date: "1999-01-04", end_date: "2001-12-31")
+
+    get "/currencies"
+
+    _(last_response).must_be(:ok?)
+    assert_conform_schema(200)
+    codes = json.map { |c| c["iso_code"] }
+
+    _(codes).must_include("USD")
+    _(codes).wont_include("DEM")
+  end
+
+  it "includes legacy currencies with scope all" do
+    Currency.create(iso_code: "DEM", start_date: "1999-01-04", end_date: "2001-12-31")
+
+    get "/currencies?scope=all"
+
+    _(last_response).must_be(:ok?)
+    assert_conform_schema(200)
+    _(json.map { |c| c["iso_code"] }).must_include("DEM")
+  end
+
+  it "returns a single currency" do
+    get "/currency/usd"
+
+    _(last_response).must_be(:ok?)
+    _(json["iso_code"]).must_equal("USD")
+    _(json["name"]).must_equal("United States Dollar")
+    _(json["providers"]).must_be_kind_of(Array)
+    _(json["providers"]).must_include("ECB")
+  end
+
+  it "returns 404 for unknown currency" do
+    get "/currency/xyz"
+
+    _(last_response.status).must_equal(404)
+  end
+
+  it "filters currencies by provider" do
+    get "/currencies?providers=ecb"
+
+    _(last_response).must_be(:ok?)
+    codes = json.map { |c| c["iso_code"] }
+
+    _(codes).must_include("USD")
+    _(codes).must_include("EUR")
+    _(codes).wont_include("BMD")
+  end
+
+  it "lists a monthly provider's historical coverage without changing global catalogues" do
+    Rate.multi_insert([
+      { provider: "INFOREURO", date: "1994-03-01", base: "XEU", quote: "ADP", mid: 160.0 },
+      { provider: "INFOREURO", date: "1998-01-01", base: "XEU", quote: "ADP", mid: 165.092 },
+      { provider: "INFOREURO", date: "1999-01-01", base: "EUR", quote: "XYZ", mid: 2.0 },
+    ])
+    Provider["INFOREURO"].send(:refresh_currency_summaries, ["XEU", "ADP", "XYZ"])
+    get "/currencies?scope=all"
+    global_before = last_response.body
+
+    get "/currencies?providers=inforeuro"
+
+    _(last_response).must_be(:ok?)
+    assert_conform_schema(200)
+    _(json.map { |c| c["iso_code"] }.sort).must_equal(["ADP", "XEU"])
+    adp = json.find { |c| c["iso_code"] == "ADP" }
+
+    _(adp["start_date"]).must_equal("1994-03-01")
+    _(adp["end_date"]).must_equal("1998-01-01")
+    provider_body = last_response.body
+
+    get "/currencies?providers=inforeuro&scope=all"
+
+    _(last_response.body).must_equal(provider_body)
+
+    get "/currencies?scope=all"
+
+    _(last_response.body).must_equal(global_before)
+    _(Oj.load(last_response.body).map { |c| c["iso_code"] }).wont_include("ADP")
+  end
+
+  it "preserves provider filtering with scope all" do
+    get "/currencies?providers=ecb"
+    expected = last_response.body
+
+    get "/currencies?providers=ecb&scope=all"
+
+    _(last_response).must_be(:ok?)
+    assert_conform_schema(200)
+    _(last_response.body).must_equal(expected)
+  end
+
+  it "includes base currencies in currencies list" do
+    get "/currencies?scope=all"
+    eur = json.find { |c| c["iso_code"] == "EUR" }
+
+    _(eur).wont_be_nil
+  end
+
+  it "returns a single rate pair" do
+    get "/rate/EUR/USD"
+
+    _(last_response).must_be(:ok?)
+    _(json["base"]).must_equal("EUR")
+    _(json["quote"]).must_equal("USD")
+    _(json["rate"]).must_be_kind_of(Float)
+    _(json["date"]).wont_be_nil
+  end
+
+  it "returns a single rate pair for a historical date" do
+    get "/rate/EUR/USD?date=#{historical_date}"
+
+    _(last_response).must_be(:ok?)
+    _(json["date"]).must_equal(historical_date)
+    _(json["base"]).must_equal("EUR")
+    _(json["quote"]).must_equal("USD")
+  end
+
+  it "handles case-insensitive currency codes in rate" do
+    get "/rate/eur/usd"
+
+    _(last_response).must_be(:ok?)
+    _(json["base"]).must_equal("EUR")
+    _(json["quote"]).must_equal("USD")
+  end
+
+  it "filters by provider in single rate" do
+    get "/rate/EUR/USD?providers=ECB"
+
+    _(last_response).must_be(:ok?)
+    _(json["base"]).must_equal("EUR")
+    _(json["quote"]).must_equal("USD")
+  end
+
+  it "returns 422 for unknown currency pair" do
+    get "/rate/EUR/XYZ"
+
+    _(last_response.status).must_equal(422)
+  end
+
+  it "sets Vary header on NDJSON responses" do
+    get "/rates", {}, { "HTTP_ACCEPT" => "application/x-ndjson" }
+
+    _(last_response).must_be(:ok?)
+    _(last_response.headers["Vary"]).must_equal("Accept")
+  end
+
+  it "prefers CSV extension over NDJSON accept header" do
+    get "/rates.csv", {}, { "HTTP_ACCEPT" => "application/x-ndjson" }
+
+    _(last_response).must_be(:ok?)
+    _(last_response.content_type).must_include("text/csv")
+  end
+
+  it "returns NDJSON when requested" do
+    get(
+      "/rates?from=#{range_start}&to=#{range_end}",
+      {},
+      { "HTTP_ACCEPT" => "application/x-ndjson" },
+    )
+
+    _(last_response).must_be(:ok?)
+    _(last_response.content_type).must_include("application/x-ndjson")
+    lines = last_response.body.strip.split("\n")
+
+    _(lines.length).must_be(:>, 1)
+    parsed = Oj.load(lines.first)
+
+    _(parsed["date"]).wont_be_nil
+    _(parsed["rate"]).wont_be_nil
+  end
+
+  it "returns NDJSON for single-date queries when requested" do
+    get "/rates", {}, { "HTTP_ACCEPT" => "application/x-ndjson" }
+
+    _(last_response).must_be(:ok?)
+    _(last_response.content_type).must_include("application/x-ndjson")
+    lines = last_response.body.strip.split("\n")
+    parsed = Oj.load(lines.first)
+
+    _(parsed["date"]).wont_be_nil
+  end
+
+  it "streams a valid JSON array for range queries" do
+    get "/rates?from=#{range_start}&to=#{range_end}"
+
+    _(last_response).must_be(:ok?)
+    _(last_response.content_type).must_include("application/json")
+    parsed = Oj.load(last_response.body)
+
+    _(parsed).must_be_kind_of(Array)
+    _(parsed.first["date"]).wont_be_nil
+  end
+
+  it "iterates over range results" do
+    query = Versions::V2::RateQuery.new("from" => range_start, "to" => range_end)
+    records = []
+    query.each { |r| records << r }
+
+    _(records).wont_be_empty
+    _(records.first).must_include(:date)
+    _(records.first).must_include(:rate)
+  end
+
+  it "returns rates in alphabetical order by quote" do
+    get "/rates"
+
+    _(last_response).must_be(:ok?)
+    quotes = json.map { |r| r["quote"] }
+
+    _(quotes).must_equal(quotes.sort)
+  end
+
+  it "keeps the latest snapshot alphabetical when carry-forward surfaces an older-dated quote" do
+    latest = Fixtures.latest_date
+    Rate.where(quote: "SEK", date: latest).delete
+
+    get "/rates"
+
+    _(last_response).must_be(:ok?)
+    quotes = json.map { |r| r["quote"] }
+    sek_row = json.find { |r| r["quote"] == "SEK" }
+
+    _(sek_row).wont_be_nil
+    _(sek_row["date"]).must_be(:<, latest.to_s)
+    _(quotes).must_equal(quotes.sort)
+  end
+
+  it "excludes pegged currencies when providers filter is set" do
+    get "/rates?providers=ecb"
+
+    _(last_response).must_be(:ok?)
+    quotes = json.map { |r| r["quote"] }
+
+    _(quotes).wont_include("BMD")
+    _(quotes).wont_include("FKP")
+    _(quotes).wont_include("BTN")
+  end
+
+  it "filters pegged currencies by quotes param" do
+    get "/rates?quotes=USD,BMD"
+
+    _(last_response).must_be(:ok?)
+    quotes = json.map { |r| r["quote"] }.uniq.sort
+
+    _(quotes).must_equal(["BMD", "USD"])
+  end
+
+  it "returns providers" do
+    get "/providers"
+
+    _(last_response).must_be(:ok?)
+    assert_conform_schema(200)
+    ecb = json.find { |p| p["key"] == "ECB" }
+
+    _(ecb["name"]).must_equal("European Central Bank")
+    _(ecb["start_date"]).wont_be_nil
+    _(ecb["end_date"]).wont_be_nil
+    _(ecb["currencies"]).must_include("USD")
+  end
+
+  it "returns structured provider metadata" do
+    get "/providers"
+
+    ecb = json.find { |p| p["key"] == "ECB" }
+
+    _(ecb["rate_type"]).must_equal("reference rate")
+    _(ecb["pivot_currency"]).must_equal("EUR")
+    _(ecb["country_code"]).must_equal("EU")
+    _(ecb).wont_include("description")
+  end
+
+  it "includes publishes_missed per provider" do
+    get "/providers"
+
+    ecb = json.find { |p| p["key"] == "ECB" }
+
+    _(ecb).must_include("publishes_missed")
+    _(ecb["publishes_missed"]).must_be_kind_of(Integer)
+    _(ecb["publishes_missed"]).must_be(:>=, 0)
+  end
+
+  it "includes publish_cadence per provider" do
+    get "/providers"
+
+    ecb = json.find { |p| p["key"] == "ECB" }
+
+    _(ecb).must_include("publish_cadence")
+    _(ecb["publish_cadence"]).must_equal("daily")
+  end
+
+  it "excludes providers without rates" do
+    get "/providers"
+
+    keys = json.map { |p| p["key"] }
+    without_rates = (Provider.all.map(&:key) - Rate.distinct.select_map(:provider)).sample
+
+    _(keys).wont_include(without_rates)
+  end
+
+  it "expands pegged currencies in rates" do
+    get "/rates?base=EUR"
+
+    _(last_response).must_be(:ok?)
+    quotes = json.map { |r| r["quote"] }
+
+    _(quotes).must_include("BMD")
+  end
+
+  it "derives correct rate for pegged currency" do
+    get "/rates?base=EUR"
+
+    usd = json.find { |r| r["quote"] == "USD" }
+    bmd = json.find { |r| r["quote"] == "BMD" }
+
+    _(bmd["rate"]).must_equal(usd["rate"])
+  end
+
+  it "derives correct rate for non-1:1 peg" do
+    get "/rates?base=EUR"
+
+    usd = json.find { |r| r["quote"] == "USD" }
+    ang = json.find { |r| r["quote"] == "ANG" }
+
+    expected = (usd["rate"] * 1.79)
+
+    _(ang["rate"]).must_be_close_to(expected, 0.01)
+  end
+
+  it "expands GBP-pegged currencies" do
+    get "/rates?base=EUR"
+
+    quotes = json.map { |r| r["quote"] }
+
+    _(quotes).must_include("FKP")
+    _(quotes).must_include("GGP")
+  end
+
+  it "expands INR-pegged currencies" do
+    get "/rates?base=EUR"
+
+    quotes = json.map { |r| r["quote"] }
+
+    _(quotes).must_include("BTN")
+  end
+
+  it "resolves pegged base currency" do
+    get "/rates?base=BMD"
+
+    _(last_response).must_be(:ok?)
+    _(json).wont_be_empty
+    _(json.first["base"]).must_equal("BMD")
+
+    eur = json.find { |r| r["quote"] == "EUR" }
+
+    _(eur).wont_be_nil
+    _(eur["rate"]).must_be_kind_of(Float)
+  end
+
+  it "returns anchor currency as quote when base is pegged" do
+    get "/rate/GGP/GBP"
+
+    _(last_response).must_be(:ok?)
+    _(json["base"]).must_equal("GGP")
+    _(json["quote"]).must_equal("GBP")
+    _(json["rate"]).must_equal(1.0)
+  end
+
+  it "returns anchor currency with non-unity peg rate" do
+    get "/rate/ANG/USD"
+
+    _(last_response).must_be(:ok?)
+    _(json["base"]).must_equal("ANG")
+    _(json["quote"]).must_equal("USD")
+    _(json["rate"]).must_be_close_to(1.0 / 1.79, 0.001)
+  end
+
+  it "excludes pegs when providers filter is set" do
+    # BMD pegs 1:1 to USD; ECB does not publish BMD. Pegs are a source of rate data, so scoping ?providers= to ECB
+    # excludes pegs along with all other unlisted sources.
+    get "/rates?base=BMD&providers=ecb"
+
+    _(last_response).must_be(:ok?)
+    _(json).must_be_empty
+  end
+
+  it "includes pegged currencies in currencies list" do
+    get "/currencies?scope=all"
+
+    _(last_response).must_be(:ok?)
+    bmd = json.find { |c| c["iso_code"] == "BMD" }
+
+    _(bmd).wont_be_nil
+    _(bmd["name"]).must_equal("Bermudian Dollar")
+    _(bmd["start_date"]).wont_be_nil
+    _(bmd["end_date"]).wont_be_nil
+  end
+
+  it "returns peg metadata for pegged currency detail" do
+    get "/currency/bmd"
+
+    _(last_response).must_be(:ok?)
+    _(json["iso_code"]).must_equal("BMD")
+    _(json["peg"]).wont_be_nil
+    _(json["peg"]["base"]).must_equal("USD")
+    _(json["peg"]["rate"]).must_equal(1.0)
+    _(json["peg"]["authority"]).must_equal("Bermuda Monetary Authority")
+  end
+
+  it "always includes providers for pegged currency detail" do
+    get "/currency/bmd"
+
+    _(last_response).must_be(:ok?)
+    _(json["providers"]).must_be_kind_of(Array)
+  end
+
+  it "returns providers for non-pegged currency detail" do
+    get "/currency/usd"
+
+    _(last_response).must_be(:ok?)
+    _(json["providers"]).must_be_kind_of(Array)
+    _(json).wont_include("peg")
+  end
+
+  it "reports each provider's frequency" do
+    get "/providers"
+
+    _(last_response).must_be(:ok?)
+    _(json.map { |p| p["frequency"] }.uniq).must_equal(["daily"])
+    assert_conform_schema(200)
+  end
+
+  describe "provider routes" do
+    # /providers/<key>/<path> is an alias of /<path>?providers=<key>: same bytes, same headers.
+    def assert_alias(path, query = "", env = {})
+      headers = ["Content-Type", "Content-Disposition", "cache-control", "ETag", "Vary"]
+      sep = query.empty? ? "" : "&"
+      get("/#{path}?providers=ecb#{sep}#{query}", {}, env)
+      canonical = last_response
+      get(query.empty? ? "/providers/ecb/#{path}" : "/providers/ecb/#{path}?#{query}", {}, env)
+
+      _(last_response.status).must_equal(canonical.status)
+      _(last_response.body).must_equal(canonical.body)
+      _(last_response.headers.to_h.slice(*headers)).must_equal(canonical.headers.to_h.slice(*headers))
+    end
+
+    it "serves latest rates" do
+      assert_alias("rates")
+      _(last_response).must_be(:ok?)
+      assert_conform_schema(200)
+    end
+
+    it "serves a specific date" do
+      assert_alias("rates", "date=#{historical_date}")
+      assert_conform_schema(200)
+    end
+
+    it "serves a date range" do
+      assert_alias("rates", "from=#{range_start}&to=#{range_end}")
+      assert_conform_schema(200)
+    end
+
+    it "rebases and filters quotes" do
+      assert_alias("rates", "base=USD&quotes=EUR,GBP")
+      assert_conform_schema(200)
+    end
+
+    it "serves weekly rollups" do
+      assert_alias("rates", "from=#{year_start}&to=#{year_end}&group=week")
+      assert_conform_schema(200)
+    end
+
+    it "serves CSV" do
+      assert_alias("rates.csv", "from=#{range_start}&to=#{range_end}")
+      _(last_response.content_type).must_include("text/csv")
+    end
+
+    it "serves NDJSON" do
+      assert_alias("rates", "from=#{range_start}&to=#{range_end}", { "HTTP_ACCEPT" => "application/x-ndjson" })
+      _(last_response.content_type).must_include("application/x-ndjson")
+    end
+
+    it "serves a single pair" do
+      assert_alias("rate/EUR/USD")
+      _(json["base"]).must_equal("EUR")
+      assert_conform_schema(200)
+    end
+
+    it "serves a single pair on a date" do
+      assert_alias("rate/EUR/USD", "date=#{historical_date}")
+      _(json["date"]).must_equal(historical_date)
+    end
+
+    it "serves a single provider entry" do
+      get "/providers"
+      entry = Oj.load(last_response.body).find { |p| p["key"] == "ECB" }
+      get "/providers/ecb"
+
+      _(last_response).must_be(:ok?)
+      _(Oj.load(last_response.body)).must_equal(entry)
+      assert_conform_schema(200)
+    end
+
+    it "returns 404 for an unknown provider entry" do
+      get "/providers/nope"
+
+      _(last_response.status).must_equal(404)
+    end
+
+    it "is case-insensitive on the provider key" do
+      get "/providers/ecb/rates"
+      lower = last_response.body
+      get "/providers/ECB/rates"
+
+      _(last_response.body).must_equal(lower)
+    end
+
+    it "returns 404 for an unknown provider" do
+      get "/providers/nope/rates"
+
+      _(last_response.status).must_equal(404)
+      assert_conform_schema(404)
+    end
+
+    it "returns 404 for a pair the provider cannot derive" do
+      get "/providers/boc/rate/CAD/SEK"
+
+      _(last_response.status).must_equal(404)
+    end
+
+    it "rejects a providers param" do
+      get "/providers/ecb/rates?providers=boc"
+
+      _(last_response.status).must_equal(422)
+      _(json["message"]).must_include("providers")
+    end
+  end
+
+  describe "trailing path segments" do
+    [
+      "/rates",
+      "/rate/EUR/USD",
+      "/currency/usd",
+      "/currencies",
+      "/providers/ecb/rates",
+      "/providers/ecb/rate/EUR/USD",
+    ].each do |path|
+      it "rejects #{path}/latest and #{path}/" do
+        get path
+
+        _(last_response).must_be(:ok?)
+
+        ["#{path}/latest", "#{path}/"].each do |extra|
+          get extra
+
+          _(last_response.status).must_equal(404)
+          _(json).must_equal("status" => 404, "message" => "not found")
+        end
+      end
+    end
+  end
+end

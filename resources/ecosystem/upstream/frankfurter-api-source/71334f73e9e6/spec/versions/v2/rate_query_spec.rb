@@ -1,0 +1,1113 @@
+# frozen_string_literal: true
+
+require_relative "../../helper"
+require "monthly_rate"
+require "versions/v2/rate_query"
+
+module Versions
+  describe V2::RateQuery do
+    describe "provider frequency" do
+      let(:date) { Fixtures.latest_date }
+
+      def with_monthly_provider(rows_on:)
+        Provider.dataset.insert(key: "TST", name: "Test", frequency: "monthly")
+        Provider.load_cache
+        Rate.dataset.multi_insert([
+          { provider: "TST", date: rows_on, base: "EUR", quote: "USD", mid: 9.0 },
+          { provider: "TST", date: rows_on, base: "EUR", quote: "GBP", mid: 8.0 },
+        ])
+        MonthlyRate.dataset.insert(
+          bucket_date: Date.new(rows_on.year, rows_on.month, 1), provider: "TST", base: "EUR", quote: "USD", rate: 9.0,
+        )
+        yield
+      ensure
+        # The around-hook rollback runs after this ensure, so drop the row before reloading the static cache.
+        Provider.dataset.where(key: "TST").delete
+        Provider.load_cache
+      end
+
+      it "keeps a monthly provider out of the unfiltered blend" do
+        with_monthly_provider(rows_on: date) do
+          record = V2::RateQuery.new(base: "EUR", quotes: "USD", date: date.to_s, expand: "providers").to_a.first
+
+          _(record[:providers].map { |p| p[:key] }).wont_include("TST")
+          _(record[:rate]).must_be(:<, 5)
+        end
+      end
+
+      it "keeps a monthly provider out of rollups" do
+        with_monthly_provider(rows_on: date) do
+          from = (date << 2).to_s
+          records = V2::RateQuery.new(base: "EUR", quotes: "USD", from:, to: date.to_s, group: "month",
+                                      expand: "providers",).to_a
+
+          _(records.flat_map { |r| r[:providers].map { |p| p[:key] } }.uniq).wont_include("TST")
+        end
+      end
+
+      it "keeps a monthly provider out of the materialized blend" do
+        with_monthly_provider(rows_on: date) do
+          BlendedRate.rebuild
+          rate = BlendedRate.where(quote: "GBP").order(Sequel.desc(:date)).first[:rate]
+
+          _(rate).must_be(:<, 5)
+        end
+      end
+
+      it "serves a monthly provider's 40-day-old value when asked for it by name" do
+        with_monthly_provider(rows_on: date - 40) do
+          record = V2::RateQuery.new(providers: "TST", base: "EUR", quotes: "USD", date: date.to_s).to_a.first
+
+          _(record[:rate]).must_equal(9.0)
+          _(record[:date]).must_equal((date - 40).to_s)
+        end
+      end
+
+      it "still forgets a daily provider after two weeks" do
+        record = V2::RateQuery.new(providers: "ECB", base: "EUR", quotes: "USD", date: (date + 30).to_s).to_a
+
+        _(record).must_be_empty
+      end
+    end
+
+    describe "single-provider path" do
+      let(:date) { Fixtures.latest_date }
+      let(:stored) { Rate.where(provider: "ECB", date:).to_h { |r| [[r.base, r.quote], r.rate] } }
+
+      it "echoes the provider's published digits in its native base" do
+        records = V2::RateQuery.new(providers: "ECB", base: "EUR", date: date.to_s).to_a.reject { |r| r[:quote] == "EUR" }
+
+        _(records.size).must_equal(stored.size)
+        records.each { |r| _(r[:rate]).must_equal(stored[["EUR", r[:quote]]]) }
+      end
+
+      it "crosses a non-native base through the provider's own base in one division" do
+        record = V2::RateQuery.new(providers: "ECB", base: "GBP", quotes: "JPY", date: date.to_s).to_a.first
+
+        _(record[:rate]).must_equal(query_round("JPY", stored[["EUR", "JPY"]] / stored[["EUR", "GBP"]]))
+      end
+
+      it "keeps rows the provider cannot bridge to USD" do
+        Rate.dataset.multi_insert([
+          { provider: "TST", date:, base: "EUR", quote: "GBP", mid: 0.86 },
+          { provider: "TST", date:, base: "EUR", quote: "JPY", mid: 160.0 },
+        ])
+
+        records = V2::RateQuery.new(providers: "TST", base: "GBP", date: date.to_s).to_a
+        by_quote = records.to_h { |r| [r[:quote], r[:rate]] }
+
+        _(by_quote.keys.sort).must_equal(["EUR", "GBP", "JPY"])
+        _(by_quote["JPY"]).must_equal(query_round("JPY", 160.0 / 0.86))
+        _(by_quote["EUR"]).must_equal(query_round("EUR", 1 / 0.86))
+        _(by_quote["GBP"]).must_equal(1.0)
+      end
+
+      it "keeps one record per pair when an older base still bridges the quote" do
+        Rate.dataset.multi_insert([
+          { provider: "TST", date: date - 1, base: "USD", quote: "LTL", mid: 2.8387 },
+          { provider: "TST", date: date - 1, base: "EUR", quote: "LTL", mid: 3.4528 },
+          { provider: "TST", date:, base: "EUR", quote: "USD", mid: 1.2043 },
+        ])
+
+        records = V2::RateQuery.new(providers: "TST", base: "USD", quotes: "EUR", date: date.to_s).to_a
+
+        _(records.size).must_equal(1)
+        _(records.first[:date]).must_equal(date.to_s)
+        _(records.first[:rate]).must_equal(query_round("EUR", 1 / 1.2043))
+      end
+
+      it "serves a pegged base from the provider's own rates" do
+        Rate.dataset.multi_insert([
+          { provider: "TST", date:, base: "EUR", quote: "AED", mid: 4.0 },
+          { provider: "TST", date:, base: "EUR", quote: "USD", mid: 1.09 },
+        ])
+
+        records = V2::RateQuery.new(providers: "TST", base: "AED", date: date.to_s).to_a
+        by_quote = records.to_h { |r| [r[:quote], r[:rate]] }
+
+        _(by_quote["USD"]).must_equal(query_round("USD", 1.09 / 4.0))
+        _(by_quote["EUR"]).must_equal(query_round("EUR", 1 / 4.0))
+      end
+
+      it "still expands providers" do
+        record = V2::RateQuery.new(providers: "ECB", base: "GBP", quotes: "JPY", date: date.to_s, expand: "providers")
+          .to_a.first
+
+        _(record[:providers].size).must_equal(1)
+        _(record[:providers].first[:key]).must_equal("ECB")
+        _(record[:providers].first[:date]).must_equal(date.to_s)
+        _(record[:providers].first[:rate]).must_equal(record[:rate])
+      end
+
+      it "emits one record per published date across a non-native range" do
+        from = Fixtures.business_day(5)
+        records = V2::RateQuery.new(providers: "ECB", base: "GBP", quotes: "JPY", from: from.to_s, to: date.to_s).to_a
+
+        published = Rate.where(provider: "ECB", date: from..date).select_map(:date).uniq.size
+
+        _(records.map { |r| r[:date] }.uniq.size).must_equal(published)
+      end
+
+      def query_round(_quote, value)
+        V2::RateQuery.new({}).send(:round, value)
+      end
+    end
+
+    it "raises on invalid date" do
+      _ { V2::RateQuery.new(date: "not-a-date") }.must_raise(V2::RateQuery::ValidationError)
+    end
+
+    it "raises on conflicting date params" do
+      date = Fixtures.latest_date.to_s
+
+      _ { V2::RateQuery.new(date:, from: (Fixtures.latest_date - 30).to_s) }.must_raise(V2::RateQuery::ValidationError)
+    end
+
+    it "raises on invalid group" do
+      _ { V2::RateQuery.new(group: "day") }.must_raise(V2::RateQuery::ValidationError)
+    end
+
+    it "accepts valid group" do
+      range_start = (Fixtures.latest_date - 90).to_s
+      range_end = Fixtures.latest_date.to_s
+      query = V2::RateQuery.new(from: range_start, to: range_end, group: "month")
+
+      _(query.to_a).wont_be_empty
+    end
+
+    it "filters by quotes" do
+      query = V2::RateQuery.new(quotes: "USD,GBP")
+      quotes = query.to_a.map { |r| r[:quote] }.uniq.sort
+
+      _(quotes).must_equal(["GBP", "USD"])
+    end
+
+    it "returns empty array for dates before dataset" do
+      query = V2::RateQuery.new(date: "1901-01-01")
+
+      _(query.to_a).must_be_empty
+    end
+
+    it "raises on invalid base currency" do
+      _ { V2::RateQuery.new(base: "FOO") }.must_raise(V2::RateQuery::ValidationError)
+    end
+
+    it "raises on invalid quote currency" do
+      _ { V2::RateQuery.new(quotes: "USD,FOO") }.must_raise(V2::RateQuery::ValidationError)
+    end
+
+    it "raises on invalid base and quotes together" do
+      error = _ { V2::RateQuery.new(base: "FOO", quotes: "BAR") }.must_raise(V2::RateQuery::ValidationError)
+      _(error.message).must_include("FOO")
+      _(error.message).must_include("BAR")
+    end
+
+    describe "deadline enforcement" do
+      let(:range_start) { (Fixtures.latest_date - 30).to_s }
+      let(:range_end) { Fixtures.latest_date.to_s }
+
+      it "raises between chunks of a daily range when the deadline has passed" do
+        query = V2::RateQuery.new({ from: range_start, to: range_end }, 0)
+
+        _ { query.to_a }.must_raise(RequestTimeout::Error)
+      end
+
+      it "raises between chunks of a rollup range when the deadline has passed" do
+        query = V2::RateQuery.new({ from: range_start, to: range_end, group: "month" }, 0)
+
+        _ { query.to_a }.must_raise(RequestTimeout::Error)
+      end
+
+      it "does not bound single-date queries" do
+        query = V2::RateQuery.new({ date: range_end, quotes: "USD" }, 0)
+
+        _(query.to_a).wont_be_empty
+      end
+
+      it "completes ranges within the deadline" do
+        query = V2::RateQuery.new({ from: range_start, to: range_end }, 1000)
+
+        _(query.to_a).wont_be_empty
+      end
+
+      # Pins the check inside the chunk loop: a regression that hoists it to the loop entry would check once for the
+      # whole range and let a long compute run past its deadline.
+      it "checks the deadline before every chunk of a multi-chunk range" do
+        query = V2::RateQuery.new(from: (Fixtures.latest_date - 200).to_s, to: Fixtures.latest_date.to_s)
+        checks = 0
+        query.stub(:check_deadline!, -> { checks += 1 }) do
+          query.to_a
+        end
+
+        _(checks).must_be(:>, 1)
+      end
+
+      it "serves the current chunk but stops the range when the deadline expires mid-compute" do
+        query = V2::RateQuery.new(from: (Fixtures.latest_date - 200).to_s, to: Fixtures.latest_date.to_s)
+        emitted = []
+
+        error = _ do
+          query.each do |record|
+            emitted << record
+            # Expire the deadline while the first chunk streams; the check between chunks must trip.
+            query.instance_variable_set(:@deadline, 0)
+          end
+        end.must_raise(RequestTimeout::Error)
+
+        _(error.message).must_include("timeout")
+        _(emitted).wont_be_empty
+      end
+    end
+
+    describe "heavy compute slots" do
+      let(:range_start) { (Fixtures.latest_date - 200).to_s }
+      let(:range_end) { Fixtures.latest_date.to_s }
+      let(:slots) { HeavySlots.new(1) }
+
+      # providers= keeps the range on the live path regardless of the materialized table.
+      def heavy_query(**params)
+        V2::RateQuery.new(providers: "ECB", from: range_start, to: range_end, **params)
+      end
+
+      def with_slots(&)
+        V2::RateQuery.stub(:heavy_slots, slots, &)
+      end
+
+      it "refuses a heavy range while every slot is held and admits one once it is released" do
+        with_slots do
+          paused = heavy_query.each
+          paused.next
+
+          _(slots.held).must_equal(1)
+          _ { heavy_query.to_a }.must_raise(HeavySlots::Busy)
+
+          loop { paused.next }
+
+          _(slots.held).must_equal(0)
+          _(heavy_query.to_a).wont_be_empty
+        end
+      end
+
+      it "fails fast with a message that names the retry delay" do
+        with_slots do
+          slots.try_acquire
+          error = _ { heavy_query.to_a }.must_raise(HeavySlots::Busy)
+
+          _(error.message).must_include(HeavySlots::RETRY_AFTER_SECONDS.to_s)
+        end
+      end
+
+      it "releases the slot after a complete enumeration" do
+        with_slots do
+          _(heavy_query.to_a).wont_be_empty
+          _(slots.held).must_equal(0)
+        end
+      end
+
+      it "releases the slot when the deadline expires mid-compute" do
+        with_slots do
+          query = heavy_query
+
+          _ do
+            query.each { query.instance_variable_set(:@deadline, 0) }
+          end.must_raise(RequestTimeout::Error)
+
+          _(slots.held).must_equal(0)
+        end
+      end
+
+      it "releases the slot when the compute raises" do
+        with_slots do
+          query = heavy_query
+
+          query.stub(:emit_blended, ->(*) { raise "boom" }) do
+            _ { query.to_a }.must_raise(RuntimeError)
+          end
+
+          _(slots.held).must_equal(0)
+        end
+      end
+
+      # An enumerator abandoned mid-stream (client disconnect) never runs its ensure, so the route returns the slot
+      # through release_slot; a second call must be a no-op.
+      it "releases an abandoned enumeration's slot on release_slot, once" do
+        with_slots do
+          query = heavy_query
+          query.each.next
+
+          _(slots.held).must_equal(1)
+
+          query.release_slot
+          query.release_slot
+
+          _(slots.held).must_equal(0)
+        end
+      end
+
+      it "leaves cheap shapes untouched while every slot is held" do
+        BlendedRate.rebuild
+        with_slots do
+          slots.try_acquire
+
+          _(V2::RateQuery.new(from: range_start, to: range_end).to_a).wont_be_empty
+          _(V2::RateQuery.new(from: range_start, to: range_end, group: "week").to_a).wont_be_empty
+          _(V2::RateQuery.new(from: range_start, to: range_end, group: "month", providers: "ECB").to_a)
+            .wont_be_empty
+          _(V2::RateQuery.new({}).to_a).wont_be_empty
+          _(V2::RateQuery.new(providers: "ECB").to_a).wont_be_empty
+          _(V2::RateQuery.new(date: range_end).to_a).wont_be_empty
+          _(V2::RateQuery.new(date: range_end, expand: "providers").to_a).wont_be_empty
+          _(slots.held).must_equal(1)
+        end
+      end
+    end
+
+    describe "daily range cap for live-path shapes" do
+      # Validation is date arithmetic only, so fixed dates keep these deterministic.
+      let(:cap_end) { "2026-01-15" }
+      let(:at_cap_start) { "2021-01-15" }
+      let(:over_cap_start) { "2021-01-14" }
+
+      it "allows plain daily ranges of any length once the table is ready" do
+        BlendedRate.rebuild
+
+        query = V2::RateQuery.new(from: "1999-01-04", to: cap_end)
+
+        _(query.range?).must_equal(true)
+      end
+
+      it "allows long quotes-filtered ranges of any width once the table is ready" do
+        BlendedRate.rebuild
+
+        query = V2::RateQuery.new(from: "1999-01-04", to: cap_end, quotes: "USD,GBP,JPY,CHF,SEK,NOK")
+
+        _(query.range?).must_equal(true)
+      end
+
+      it "keeps the cap on plain long ranges while the table is not ready, with no quotes exemption" do
+        _(BlendedRate.ready?).must_equal(false)
+
+        _ { V2::RateQuery.new(from: over_cap_start, to: cap_end) }
+          .must_raise(V2::RateQuery::ValidationError)
+        _ { V2::RateQuery.new(from: over_cap_start, to: cap_end, quotes: "USD,GBP") }
+          .must_raise(V2::RateQuery::ValidationError)
+      end
+
+      it "rejects long ranges naming more than 5 providers even with a small quotes list" do
+        providers = ["ECB", "BOC", "BOJ", "FED", "SNB", "BOE"].join(",")
+
+        _ { V2::RateQuery.new(from: over_cap_start, to: cap_end, providers:, quotes: "USD") }
+          .must_raise(V2::RateQuery::ValidationError)
+      end
+
+      it "rejects expand=providers ranges longer than 5 years without a quotes filter" do
+        error = _ { V2::RateQuery.new(from: over_cap_start, to: cap_end, expand: "providers") }
+          .must_raise(V2::RateQuery::ValidationError)
+
+        _(error.message).must_include("quotes=")
+        _(error.message).must_include("group=week or group=month")
+        _(error.message).must_include("split the range")
+      end
+
+      it "rejects providers= ranges longer than 5 years without a quotes filter" do
+        _ { V2::RateQuery.new(from: over_cap_start, to: cap_end, providers: "ECB,BOC") }
+          .must_raise(V2::RateQuery::ValidationError)
+      end
+
+      it "allows a single provider any range without a quotes filter" do
+        query = V2::RateQuery.new(from: over_cap_start, to: cap_end, providers: "ECB")
+
+        _(query.range?).must_equal(true)
+      end
+
+      it "allows a single provider any range with more than 5 quotes" do
+        query = V2::RateQuery.new(from: over_cap_start, to: cap_end, providers: "ECB",
+                                  quotes: "USD,GBP,JPY,CHF,SEK,NOK",)
+
+        _(query.range?).must_equal(true)
+      end
+
+      it "rejects provider-unbounded expand=providers long ranges even with a small quotes list" do
+        _ { V2::RateQuery.new(from: over_cap_start, to: cap_end, expand: "providers", quotes: "USD") }
+          .must_raise(V2::RateQuery::ValidationError)
+      end
+
+      it "allows expand=providers long ranges when providers= bounds the fetch and quotes is small" do
+        query = V2::RateQuery.new(
+          from: over_cap_start, to: cap_end, expand: "providers", providers: "ECB,BOC", quotes: "USD",
+        )
+
+        _(query.range?).must_equal(true)
+      end
+
+      it "rejects long capped ranges when quotes lists more than 5 currencies" do
+        _ { V2::RateQuery.new(from: over_cap_start, to: cap_end, providers: "ECB,BOC", quotes: "USD,GBP,JPY,CHF,SEK,NOK") }
+          .must_raise(V2::RateQuery::ValidationError)
+      end
+
+      it "counts distinct currencies, not raw quotes entries" do
+        query = V2::RateQuery.new(from: over_cap_start, to: cap_end, providers: "ECB,BOC",
+                                  quotes: "USD,USD,GBP,GBP,JPY,JPY",)
+
+        _(query.range?).must_equal(true)
+      end
+
+      it "counts a future to= only up to today" do
+        query = V2::RateQuery.new(from: (Date.today << 12).to_s, to: (Date.today >> 120).to_s, providers: "ECB,BOC")
+
+        _(query.range?).must_equal(true)
+      end
+
+      it "rejects a long past capped range regardless of a future to=" do
+        _ { V2::RateQuery.new(from: (Date.today << 61).to_s, to: (Date.today >> 120).to_s, providers: "ECB,BOC") }
+          .must_raise(V2::RateQuery::ValidationError)
+      end
+
+      it "allows long capped ranges when quotes lists 5 or fewer currencies" do
+        query = V2::RateQuery.new(from: over_cap_start, to: cap_end, providers: "ECB,BOC",
+                                  quotes: "USD,GBP,JPY,CHF,SEK",)
+
+        _(query.range?).must_equal(true)
+      end
+
+      it "allows long capped ranges at weekly or monthly granularity" do
+        query = V2::RateQuery.new(from: over_cap_start, to: cap_end, providers: "ECB,BOC", group: "month")
+
+        _(query.range?).must_equal(true)
+      end
+
+      it "allows capped ranges of exactly 5 years" do
+        query = V2::RateQuery.new(from: at_cap_start, to: cap_end, providers: "ECB,BOC")
+
+        _(query.range?).must_equal(true)
+      end
+
+      it "does not cap single-date or latest queries" do
+        query = V2::RateQuery.new(date: "2001-01-15", providers: "ECB")
+
+        _(query.range?).must_equal(false)
+      end
+    end
+
+    describe "materialized blend dispatch" do
+      let(:from) { (Fixtures.latest_date - 10).to_s }
+      let(:to) { Fixtures.latest_date.to_s }
+
+      # Deleting recent raw rows after the rebuild makes the two paths distinguishable: only the table still knows those
+      # dates. The oldest rows stay, so ready? holds.
+      def delete_recent_raw_rows!
+        Rate.dataset.where(date: (Fixtures.latest_date - 10)..Fixtures.latest_date).delete
+      end
+
+      it "serves plain daily ranges from the table" do
+        BlendedRate.rebuild
+        delete_recent_raw_rows!
+
+        results = V2::RateQuery.new(from:, to:).to_a
+
+        _(results.map { |r| r[:date] }.max).must_equal(to)
+      end
+
+      it "keeps providers= and expand=providers ranges on the live path" do
+        BlendedRate.rebuild
+        delete_recent_raw_rows!
+
+        _(V2::RateQuery.new(from:, to:, providers: "ECB").to_a.map { |r| r[:date] }).wont_include(to)
+        _(V2::RateQuery.new(from:, to:, expand: "providers").to_a.map { |r| r[:date] }).wont_include(to)
+      end
+
+      it "falls back to the live path while the table is empty" do
+        _(BlendedRate.dataset.count).must_equal(0)
+
+        results = V2::RateQuery.new(from:, to:).to_a
+
+        _(results).wont_be_empty
+      end
+
+      it "falls back to the live path while the table is only partially refreshed" do
+        BlendedRate.refresh((Fixtures.latest_date - 2)..Fixtures.latest_date)
+
+        _(BlendedRate.dataset.count).must_be(:>, 0)
+        _(BlendedRate.ready?).must_equal(false)
+
+        early = Fixtures.business_day(200)
+        results = V2::RateQuery.new(from: (early - 5).to_s, to: early.to_s).to_a
+
+        _(results).wont_be_empty
+      end
+    end
+
+    describe "materialized blend dispatch for latest and single-date" do
+      include Roundable
+
+      # Tampering a stored row makes the two paths distinguishable: only the table knows the tampered value.
+      def tamper!(quote, date, rate)
+        BlendedRate.where(quote:, date:).update(rate:)
+      end
+
+      it "serves latest from the table" do
+        BlendedRate.rebuild
+        tamper!("GBP", Fixtures.latest_date, 999.0)
+
+        gbp = V2::RateQuery.new(base: "USD", quotes: "GBP").to_a.find { |r| r[:quote] == "GBP" }
+
+        _(gbp[:rate]).must_equal(999.0)
+        _(gbp[:date]).must_equal(Fixtures.latest_date.to_s)
+      end
+
+      it "serves explicit single dates from the table" do
+        BlendedRate.rebuild
+        date = Fixtures.business_day(30)
+        tamper!("GBP", date, 999.0)
+
+        gbp = V2::RateQuery.new(base: "USD", quotes: "GBP", date: date.to_s).to_a.find { |r| r[:quote] == "GBP" }
+
+        _(gbp[:rate]).must_equal(999.0)
+      end
+
+      it "keeps providers= and expand=providers latest on the live path" do
+        BlendedRate.rebuild
+        tamper!("GBP", Fixtures.latest_date, 999.0)
+
+        with_providers = V2::RateQuery.new(base: "USD", quotes: "GBP", providers: "ECB,BOC").to_a
+
+        _(with_providers.map { |r| r[:rate] }).wont_include(999.0)
+
+        expanded = V2::RateQuery.new(base: "USD", quotes: "GBP", expand: "providers").to_a
+        gbp = expanded.find { |r| r[:quote] == "GBP" }
+
+        _(gbp[:rate]).wont_equal(999.0)
+        _(gbp[:providers]).wont_be_nil
+      end
+
+      it "falls back to the live path while the table is not ready" do
+        _(BlendedRate.dataset.count).must_equal(0)
+
+        _(V2::RateQuery.new(quotes: "GBP").to_a).wont_be_empty
+      end
+
+      # The correction #573 exists for: a carried-forward row freezes at the value blended on its own observation date
+      # instead of drifting as later days re-decay it against the batch clock.
+      it "serves canonical anchor-date values for carried-forward quotes" do
+        ecb_last = Fixtures.business_day(8)
+        boc_last = Fixtures.business_day(4)
+        Rate.where(provider: "ECB", quote: "GBP").where { date > ecb_last }.delete
+        Rate.where(provider: "BOC", quote: "GBP").where { date > boc_last }.delete
+        BlendedRate.rebuild
+
+        canonical = BlendedRate.first(quote: "GBP", date: boc_last).rate
+        table = V2::RateQuery.new(base: "USD", quotes: "GBP").to_a.find { |r| r[:quote] == "GBP" }
+
+        _(table[:date]).must_equal(boc_last.to_s)
+        _(table[:rate]).must_equal(round(canonical))
+
+        live_query = V2::RateQuery.new(base: "USD", quotes: "GBP")
+        live_query.force_live = true
+        live = live_query.to_a.find { |r| r[:quote] == "GBP" }
+
+        _(live[:date]).must_equal(boc_last.to_s)
+        _(live[:rate]).wont_equal(table[:rate])
+      end
+
+      it "serves pegged request bases from the table via derive" do
+        BlendedRate.rebuild
+        tamper!("GBP", Fixtures.latest_date, 999.0)
+        peg = Peg.find("AED")
+
+        results = V2::RateQuery.new(base: "AED", quotes: "GBP,USD").to_a
+        gbp = results.find { |r| r[:quote] == "GBP" }
+        usd = results.find { |r| r[:quote] == "USD" }
+
+        _(gbp[:rate]).must_equal(round(999.0 / peg.rate))
+        _(usd[:rate]).must_equal(round(1 / peg.rate))
+      end
+
+      it "fails the response when a rebuild wipes the table mid-read" do
+        BlendedRate.rebuild
+        query = V2::RateQuery.new(base: "USD", quotes: "GBP")
+
+        ready_calls = 0
+
+        BlendedRate.stub(:ready?, -> { (ready_calls += 1) == 1 }) do
+          _ { query.to_a }.must_raise(RuntimeError)
+        end
+      end
+    end
+
+    describe "pivot-frame canonicalization" do
+      # Latest used to blend a single-frame batch directly in the requested base (the fast path) while the same shape as
+      # a range blended through the pivot, so the two disagreed about the same data. One frame everywhere (#573).
+      it "blends single-frame live batches through the pivot like ranges" do
+        date = Fixtures.latest_date
+        Rate.dataset.delete
+        [["AAA", 1.10, 0.90], ["BBB", 1.20, 0.80]].each do |provider, usd, gbp|
+          Rate.dataset.insert(date:, base: "EUR", quote: "USD", mid: usd, provider:)
+          Rate.dataset.insert(date:, base: "EUR", quote: "GBP", mid: gbp, provider:)
+        end
+
+        shape = { base: "EUR", quotes: "GBP", providers: "AAA,BBB" }
+        latest = V2::RateQuery.new(shape).to_a.find { |r| r[:quote] == "GBP" }
+        range = V2::RateQuery.new(shape.merge(from: date.to_s, to: date.to_s)).to_a.find { |r| r[:quote] == "GBP" }
+
+        _(latest[:rate]).must_equal(range[:rate])
+      end
+    end
+
+    describe "single-day queries" do
+      it "includes next-day provider observations in the implicit latest snapshot" do
+        tomorrow = Date.today + 1
+        day_after = Date.today + 2
+
+        Rate.where(provider: "ECB", base: "EUR", quote: "USD", date: [tomorrow, day_after]).delete
+        Rate.dataset.insert(date: tomorrow, base: "EUR", quote: "USD", mid: 9.99, provider: "ECB")
+        Rate.dataset.insert(date: day_after, base: "EUR", quote: "USD", mid: 8.88, provider: "ECB")
+
+        query = V2::RateQuery.new(providers: "ECB", quotes: "USD")
+        usd = query.to_a.find { |r| r[:base] == "EUR" && r[:quote] == "USD" }
+
+        _(usd).wont_be_nil
+        _(usd[:date]).must_equal(tomorrow.to_s)
+        _(usd[:rate]).must_equal(9.99)
+      end
+
+      it "keeps explicit dates and open-ended ranges bounded by today" do
+        today = Date.today
+        tomorrow = today + 1
+
+        Rate.where(provider: "ECB", base: "EUR", quote: "USD", date: tomorrow).delete
+        Rate.dataset.insert(date: tomorrow, base: "EUR", quote: "USD", mid: 9.99, provider: "ECB")
+
+        explicit = V2::RateQuery.new(date: today.to_s, providers: "ECB", quotes: "USD").to_a
+        open_range = V2::RateQuery.new(from: today.to_s, providers: "ECB", quotes: "USD").to_a
+
+        _(explicit.map { |r| r[:date] }).wont_include(tomorrow.to_s)
+        _(open_range.map { |r| r[:date] }).wont_include(tomorrow.to_s)
+      end
+
+      it "snap each pair to its most recent publication when the requested date is silent" do
+        sunday = Fixtures.recent_sunday
+        friday = Fixtures.preceding_friday(sunday)
+        query = V2::RateQuery.new(date: sunday.to_s)
+
+        _(query.to_a.first[:date]).must_equal(friday.to_s)
+      end
+
+      it "stamp each row with its pair's actual observation date" do
+        stale_date = Fixtures.latest_date - 5
+        Rate.dataset.insert(date: stale_date, base: "EUR", quote: "RON", mid: 4.97, provider: "ECB")
+
+        query = V2::RateQuery.new(date: Fixtures.latest_date.to_s)
+        results = query.to_a
+
+        ron = results.find { |r| r[:base] == "EUR" && r[:quote] == "RON" }
+        usd = results.find { |r| r[:base] == "EUR" && r[:quote] == "USD" }
+
+        _(ron[:date]).must_equal(stale_date.to_s)
+        _(usd[:date]).must_equal(Fixtures.latest_date.to_s)
+      end
+    end
+
+    describe "range queries" do
+      let(:monday) { Fixtures.gap_boundary_monday }
+
+      it "emit rows for a pair only on days that pair was actually published" do
+        friday_before = monday - 3
+        saturday = monday - 2
+        sunday = monday - 1
+        friday_after = monday + 4
+
+        Rate.dataset.insert(date: monday, base: "EUR", quote: "RON", mid: 4.97, provider: "ECB")
+
+        query = V2::RateQuery.new(from: friday_before.to_s, to: friday_after.to_s)
+        results = query.to_a
+
+        dates = results.map { |r| r[:date] }
+
+        _(dates).wont_include(saturday.to_s)
+        _(dates).wont_include(sunday.to_s)
+
+        ron_rows = results.select { |r| r[:base] == "EUR" && r[:quote] == "RON" }
+
+        _(ron_rows.size).must_equal(1)
+        _(ron_rows.first[:date]).must_equal(monday.to_s)
+      end
+
+      it "surface a silent pair's most recent publication via carry-forward" do
+        range_end = monday + 5
+        pre_range_date = monday - 5
+        in_range_date = monday + 2
+        Rate.dataset.insert(date: pre_range_date, base: "EUR", quote: "RON", mid: 4.97, provider: "ECB")
+        Rate.dataset.insert(date: in_range_date, base: "EUR", quote: "RON", mid: 4.95, provider: "ECB")
+
+        query = V2::RateQuery.new(from: monday.to_s, to: range_end.to_s)
+        ron_dates = query.to_a.select { |r| r[:base] == "EUR" && r[:quote] == "RON" }.map { |r| r[:date] }.sort
+
+        _(ron_dates).must_equal([pre_range_date.to_s, in_range_date.to_s])
+      end
+
+      it "snap back to the most recent prior active day when the range starts globally silent" do
+        prior_friday = monday - 3
+        saturday = monday - 2
+        sunday = monday - 1
+
+        partial_dates = V2::RateQuery.new(from: sunday.to_s, to: monday.to_s, quotes: "USD").to_a
+          .map { |r| r[:date] }.uniq.sort
+
+        _(partial_dates).must_include(prior_friday.to_s)
+        _(partial_dates).must_include(monday.to_s)
+
+        fully_silent_dates = V2::RateQuery.new(from: saturday.to_s, to: sunday.to_s, quotes: "USD").to_a
+          .map { |r| r[:date] }.uniq
+
+        _(fully_silent_dates).must_equal([prior_friday.to_s])
+      end
+
+      it "carry forward silent providers into the blend" do
+        date = Fixtures.latest_date
+        Rate.dataset.where(provider: "BOC", date: date).delete
+
+        with_boc = V2::RateQuery.new(from: (date - 3).to_s, to: date.to_s, quotes: "USD").to_a
+        Rate.dataset.where(provider: "BOC").delete
+        without_boc = V2::RateQuery.new(from: (date - 3).to_s, to: date.to_s, quotes: "USD").to_a
+
+        with_row = with_boc.find { |r| r[:date] == date.to_s }
+        without_row = without_boc.find { |r| r[:date] == date.to_s }
+
+        _(with_row).wont_be_nil
+        _(without_row).wont_be_nil
+        _(with_row[:rate]).wont_equal(without_row[:rate])
+      end
+    end
+
+    it "returns the same rates for a date whether queried individually or in a range" do
+      date = Fixtures.latest_date
+      Rate.dataset.where(provider: "BOC", date: date).delete
+
+      single = V2::RateQuery.new(date: date.to_s, quotes: "USD").to_a
+      range = V2::RateQuery.new(from: (date - 3).to_s, to: date.to_s, quotes: "USD").to_a
+        .select { |r| r[:date] == date.to_s }
+
+      _(single).wont_be_empty
+      _(range).wont_be_empty
+
+      _(range.first[:rate]).must_equal(single.first[:rate])
+    end
+
+    it "returns the same rates for a date with providers scope" do
+      date = Fixtures.latest_date
+      single = V2::RateQuery.new(date: date.to_s, providers: "ECB", quotes: "USD").to_a
+      range = V2::RateQuery.new(from: (date - 3).to_s, to: date.to_s, providers: "ECB", quotes: "USD").to_a
+        .select { |r| r[:date] == date.to_s }
+
+      _(single).wont_be_empty
+      _(range).wont_be_empty
+
+      _(range.first[:rate]).must_equal(single.first[:rate])
+    end
+
+    describe "with expand=providers" do
+      it "is omitted by default" do
+        query = V2::RateQuery.new(date: Fixtures.latest_date.to_s, quotes: "USD")
+        results = query.to_a
+
+        _(results).wont_be_empty
+        _(results.first.key?(:providers)).must_equal(false)
+      end
+
+      it "adds providers list to blended rows as {key, date, rate} objects" do
+        query = V2::RateQuery.new(date: Fixtures.latest_date.to_s, quotes: "USD", expand: "providers")
+        results = query.to_a
+
+        _(results).wont_be_empty
+        providers = results.first[:providers]
+
+        _(providers).must_be_kind_of(Array)
+        _(providers).wont_be_empty
+        _(providers.first).must_be_kind_of(Hash)
+        _(providers.first.keys.sort).must_equal([:date, :key, :rate])
+        _(providers.first[:key]).must_be_kind_of(String)
+        _(providers.first[:date]).must_be_kind_of(String)
+        _(providers.first[:rate]).must_be_kind_of(Numeric)
+      end
+
+      it "marks all providers excluded on peg-snapped rows" do
+        date = Fixtures.latest_date
+        Rate.dataset.insert(provider: "ECB", date:, base: "EUR", quote: "AED", mid: 3.97)
+
+        query = V2::RateQuery.new(date: date.to_s, base: "USD", quotes: "AED", expand: "providers")
+        results = query.to_a
+
+        _(results).wont_be_empty
+        _(results.first[:rate]).must_equal(3.6725)
+        providers = results.first[:providers]
+
+        _(providers).wont_be_empty
+        _(providers.all? { |p| p[:excluded] == true }).must_equal(true)
+        _(providers.all? { |p| p[:date] }).must_equal(true)
+      end
+
+      it "works with rollup queries" do
+        range_start = (Fixtures.latest_date - 90).to_s
+        range_end = Fixtures.latest_date.to_s
+        query = V2::RateQuery.new(from: range_start, to: range_end, group: "week", quotes: "USD", expand: "providers")
+        results = query.to_a
+
+        _(results).wont_be_empty
+        providers = results.first[:providers]
+
+        _(providers).must_be_kind_of(Array)
+        _(providers).wont_be_empty
+        _(providers.first.keys.sort).must_equal([:date, :key, :rate])
+      end
+
+      it "raises on unknown expand value" do
+        _ { V2::RateQuery.new(expand: "weights") }.must_raise(V2::RateQuery::ValidationError)
+      end
+    end
+
+    describe "peg gap filling" do
+      # BTN is pegged 1:1 to INR (since 1974). Fixtures have ECB providing INR. Add a provider that starts covering BTN
+      # only recently, leaving older dates to be filled by the peg.
+      before do
+        cutoff = Fixtures.business_day(30)
+        days = []
+        date = Fixtures.latest_date
+        while date >= cutoff
+          days << date unless date.saturday? || date.sunday?
+          date -= 1
+        end
+
+        records = days.map do |date|
+          { provider: "TEST", date:, base: "EUR", quote: "BTN", mid: 90.0 }
+        end
+        Rate.dataset.multi_insert(records)
+      end
+
+      it "fills dates before provider coverage with peg-derived rates" do
+        early_date = Fixtures.business_day(60)
+        query = V2::RateQuery.new(date: early_date.to_s, quotes: "BTN")
+        results = query.to_a
+
+        _(results).wont_be_empty
+        _(results.first[:quote]).must_equal("BTN")
+      end
+
+      it "uses provider rates when available" do
+        recent_date = Fixtures.latest_date.to_s
+        query = V2::RateQuery.new(date: recent_date, quotes: "BTN")
+        results = query.to_a
+
+        _(results).wont_be_empty
+        _(results.first[:quote]).must_equal("BTN")
+      end
+    end
+
+    describe "?providers= with pegged base" do
+      it "returns empty (peg layer is bypassed when the source set is several providers)" do
+        recent_date = Fixtures.latest_date.to_s
+        query = V2::RateQuery.new(date: recent_date, providers: "ECB,BOC", base: "AED", quotes: "USD")
+
+        _(query.to_a).must_be_empty
+      end
+
+      it "returns empty for ranges too, which always take the pivot path" do
+        to = Fixtures.latest_date
+        query = V2::RateQuery.new(from: (to - 5).to_s, to: to.to_s, providers: "ECB,BOC", base: "AED", quotes: "USD")
+
+        _(query.to_a).must_be_empty
+      end
+    end
+
+    describe "#derive" do
+      let(:date) { Date.parse("2024-01-15") }
+
+      def call_derive(rows, target:)
+        V2::RateQuery.allocate.send(:derive, rows, target: target)
+      end
+
+      it "returns [] when target is not in input" do
+        rows = [{ date:, base: "USD", quote: "EUR", rate: 0.93 }]
+
+        _(call_derive(rows, target: "GBP")).must_equal([])
+      end
+
+      it "returns [] when input is empty" do
+        _(call_derive([], target: "GBP")).must_equal([])
+      end
+
+      it "rebases each row to target by division and appends target->pivot row" do
+        rows = [
+          { date:, base: "USD", quote: "EUR", rate: 0.93, providers: [{ key: "ECB", rate: 0.93 }] },
+          { date:, base: "USD", quote: "GBP", rate: 0.79, providers: [{ key: "ECB", rate: 0.79 }] },
+        ]
+
+        result = call_derive(rows, target: "EUR")
+        gbp = result.find { |r| r[:quote] == "GBP" }
+        usd = result.find { |r| r[:quote] == "USD" }
+
+        _(gbp[:base]).must_equal("EUR")
+        _(gbp[:rate]).must_be_close_to(0.79 / 0.93)
+        _(gbp[:providers].first[:rate]).must_be_close_to(0.79 / 0.93)
+        _(usd[:base]).must_equal("EUR")
+        _(usd[:rate]).must_be_close_to(1.0 / 0.93)
+        _(usd[:providers].first[:rate]).must_be_close_to(1.0 / 0.93)
+      end
+
+      it "drops the target row from output (no base->base row)" do
+        rows = [
+          { date:, base: "USD", quote: "EUR", rate: 0.93 },
+          { date:, base: "USD", quote: "GBP", rate: 0.79 },
+        ]
+
+        result = call_derive(rows, target: "EUR")
+
+        _(result.find { |r| r[:quote] == "EUR" }).must_be_nil
+      end
+
+      it "produces exact reciprocals between any two non-pivot quotes" do
+        rows = [
+          { date:, base: "USD", quote: "EUR", rate: 0.93 },
+          { date:, base: "USD", quote: "GBP", rate: 0.79 },
+        ]
+
+        eur_view = call_derive(rows, target: "EUR")
+        gbp_view = call_derive(rows, target: "GBP")
+        eur_to_gbp = eur_view.find { |r| r[:quote] == "GBP" }[:rate]
+        gbp_to_eur = gbp_view.find { |r| r[:quote] == "EUR" }[:rate]
+
+        _(eur_to_gbp * gbp_to_eur).must_be_close_to(1.0, 1e-12)
+      end
+    end
+
+    describe "native-precision passthrough" do
+      include Roundable
+
+      # Pick a stored rate whose native precision exceeds what magnitude-based rounding would emit (round(rate) !=
+      # rate). Selecting merely by decimal count is not a valid witness: a value like 79.966 sits in the 3-decimal band,
+      # so rounding is a no-op and cannot distinguish passthrough.
+      let(:native_row) do
+        Rate.where(provider: "ECB", base: "EUR", quote: "PHP").all.find do |r|
+          round(r[:rate]) != r[:rate]
+        end
+      end
+
+      it "returns the verbatim stored rate for single-provider query on native-direction pair" do
+        _(native_row).wont_be_nil
+        query = V2::RateQuery.new(date: native_row[:date].to_s, providers: "ECB", base: "EUR", quotes: "PHP")
+        results = query.to_a
+
+        # The stored value differs from what rounding would emit, so this proves the passthrough fired.
+        _(query.round(native_row[:rate])).wont_equal(native_row[:rate])
+        _(results.first[:rate]).must_equal(native_row[:rate])
+      end
+
+      it "still rounds for a single-provider query on reciprocal direction" do
+        _(native_row).wont_be_nil
+        query = V2::RateQuery.new(date: native_row[:date].to_s, providers: "ECB", base: "PHP", quotes: "EUR")
+        results = query.to_a
+
+        expected_rate = query.round(1.0 / native_row[:rate])
+
+        _(results.first[:rate]).must_equal(expected_rate)
+      end
+
+      it "still rounds for multi-provider or blended queries" do
+        _(native_row).wont_be_nil
+        query = V2::RateQuery.new(date: native_row[:date].to_s, base: "EUR", quotes: "PHP")
+        results = query.to_a
+
+        rate = results.first[:rate]
+
+        _(rate).must_equal(query.round(rate))
+      end
+
+      it "returns verbatim rate in expand=providers for single-provider native query" do
+        _(native_row).wont_be_nil
+        query = V2::RateQuery.new(
+          date: native_row[:date].to_s,
+          providers: "ECB",
+          base: "EUR",
+          quotes: "PHP",
+          expand: "providers",
+        )
+        results = query.to_a
+
+        _(query.round(native_row[:rate])).wont_equal(native_row[:rate])
+        _(results.first[:rate]).must_equal(native_row[:rate])
+
+        provider_rate = results.first[:providers].find { |p| p[:key] == "ECB" }[:rate]
+
+        _(provider_rate).must_equal(native_row[:rate])
+      end
+
+      it "still rounds rollup (averaged) rates even for a single provider" do
+        range_start = (Fixtures.latest_date - 90).to_s
+        range_end = Fixtures.latest_date.to_s
+        query = V2::RateQuery.new(
+          from: range_start,
+          to: range_end,
+          group: "week",
+          providers: "ECB",
+          base: "EUR",
+          quotes: "PHP",
+        )
+        results = query.to_a
+
+        _(results).wont_be_empty
+        results.each do |record|
+          _(record[:rate]).must_equal(query.round(record[:rate]))
+        end
+      end
+    end
+
+    describe "csv_filename" do
+      it "names latest rates after the base" do
+        _(V2::RateQuery.new({}).csv_filename).must_equal("EUR-rates_latest.csv")
+      end
+
+      it "names a single pair over a range" do
+        query = V2::RateQuery.new(base: "usd", quotes: "eur", from: "2024-01-01", to: "2024-12-31")
+
+        _(query.csv_filename).must_equal("USD-EUR_2024-01-01_2024-12-31.csv")
+      end
+
+      it "names several quotes after the base" do
+        query = V2::RateQuery.new(quotes: "USD,GBP", date: "2024-05-01")
+
+        _(query.csv_filename).must_equal("EUR-rates_2024-05-01.csv")
+      end
+
+      it "prefixes a single provider" do
+        query = V2::RateQuery.new(providers: "ecb", date: "2024-05-01")
+
+        _(query.csv_filename).must_equal("ECB_EUR-rates_2024-05-01.csv")
+      end
+
+      it "leaves several providers unprefixed" do
+        query = V2::RateQuery.new(providers: "ECB,BOC", date: "2024-05-01")
+
+        _(query.csv_filename).must_equal("EUR-rates_2024-05-01.csv")
+      end
+
+      it "ends an open range today" do
+        query = V2::RateQuery.new(from: "2024-01-01")
+
+        _(query.csv_filename).must_equal("EUR-rates_2024-01-01_#{Date.today}.csv")
+      end
+
+      it "suffixes rollups" do
+        weekly = V2::RateQuery.new(from: "2024-01-01", to: "2024-12-31", group: "week")
+        monthly = V2::RateQuery.new(from: "2024-01-01", to: "2024-12-31", group: "month")
+
+        _(weekly.csv_filename).must_equal("EUR-rates_2024-01-01_2024-12-31_weekly.csv")
+        _(monthly.csv_filename).must_equal("EUR-rates_2024-01-01_2024-12-31_monthly.csv")
+      end
+
+      it "strips header-unsafe characters from provider keys" do
+        query = V2::RateQuery.new(providers: %(x"; y), date: "2024-05-01")
+
+        _(query.csv_filename).must_equal("XY_EUR-rates_2024-05-01.csv")
+      end
+    end
+  end
+end

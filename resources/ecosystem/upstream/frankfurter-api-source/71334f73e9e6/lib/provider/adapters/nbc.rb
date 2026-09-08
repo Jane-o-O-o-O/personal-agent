@@ -1,0 +1,133 @@
+# frozen_string_literal: true
+
+require "nokogiri"
+
+require "provider/adapters/adapter"
+
+class Provider < Sequel::Model(:providers)
+  module Adapters
+    # National Bank of Cambodia. Publishes daily reference rates for ~29 currencies against the Cambodian riel (KHR),
+    # Mon-Fri ~16:30 Asia/Phnom Penh.
+    #
+    # The page is form-based: a GET returns a hidden CSRF token (tk) and sets a session cookie; a POST with `exdate`,
+    # `tk`, `view=View` returns that date's HTML table. The token rotates per request, so every historical fetch is a
+    # GET-then-POST round trip.
+    #
+    # Rates are quoted as `<CCY>/KHR` with a unit multiplier (1, 100, 1000) and bid/ask/average columns. We use the
+    # published `average` column as the mid and divide by the unit to normalize to per-1 rates. The cross-rate table
+    # omits USD; we read the headline "KHR / USD" official exchange rate separately.
+    #
+    # Records are returned in NBC's native direction — foreign currency as base, KHR as quote — matching the convention
+    # used by other pivot-in-quote adapters (e.g. NBG, BBK).
+    #
+    # SDR is published under the non-ISO label "SDR" and rewritten to XDR (the ISO 4217 code for Special Drawing Rights)
+    # on emit.
+    class NBC < Adapter
+      BASE_URL = "https://www.nbc.gov.kh/english/economic_research/exchange_rate.php"
+      SYMBOL_PATTERN = %r{\A([A-Z]{3})/KHR\z}
+      OER_PATTERN = /\A(\d+)\z/
+      CODE_ALIASES = { "SDR" => "XDR" }.freeze
+
+      class << self
+        # Per-day endpoint with CSRF round-trip — keep chunks tiny.
+        def backfill_range = 1
+      end
+
+      def fetch(after: nil, upto: nil)
+        end_date = upto || Date.today
+        dataset = []
+
+        after.upto(end_date) do |date|
+          next if date.sunday?
+
+          dataset.concat(fetch_date(date))
+        end
+
+        dataset
+      end
+
+      def parse(html, date:)
+        # Holidays and Saturdays render "There is no data available." within the normal page chrome.
+        return [] if empty_response?(html)
+        raise "NBC: no rates table in response for #{date}" unless html.include?("<table")
+
+        doc = Nokogiri::HTML.parse(html)
+
+        records = doc.css("tr").filter_map do |row|
+          cells = row.css("td")
+          next if cells.length < 6
+
+          code = cells[1].text.strip[SYMBOL_PATTERN, 1]
+          next unless code
+
+          unit = Integer(cells[2].text.strip, exception: false)
+          next unless unit&.nonzero?
+
+          average = Float(cells[5].text.strip.delete(","), exception: false)
+          next unless average&.nonzero?
+
+          base = CODE_ALIASES.fetch(code, code)
+          { date:, base:, quote: "KHR", rate: average / unit }
+        end
+
+        oer_rate = extract_oer(doc)
+        records << { date:, base: "USD", quote: "KHR", rate: oer_rate } if oer_rate
+
+        records
+      end
+
+      private
+
+      def extract_oer(doc)
+        doc.css("font").each do |font|
+          parent_text = font.parent&.text.to_s
+          next unless parent_text.include?("KHR") && parent_text.include?("USD")
+
+          digits = font.text.strip[OER_PATTERN, 1]
+          next unless digits
+
+          rate = Float(digits)
+          return rate if rate.nonzero?
+        end
+        nil
+      end
+
+      def empty_response?(html)
+        html.include?("There is no data available")
+      end
+
+      # CloudFront's WAF intermittently 403s the POST; the client raises instead of a response body that would parse as
+      # an empty (holiday) day.
+      def fetch_date(date)
+        sleep(0.5)
+        page, cookies = load_page
+        token = extract_token(page)
+        raise "NBC: CSRF token not found on landing page" unless token
+
+        parse(post_date(date:, token:, cookies:).to_s, date:)
+      end
+
+      def extract_token(html)
+        doc = Nokogiri::HTML.parse(html)
+        input = doc.at_css("input[name='tk']")
+        input&.[]("value")
+      end
+
+      def load_page
+        response = http.get(BASE_URL)
+        cookies = response.headers.get("Set-Cookie").map { |c| c.split(";").first }.join("; ")
+        [response.to_s, cookies]
+      end
+
+      def post_date(date:, token:, cookies:)
+        headers = { "Referer" => BASE_URL }
+        headers["Cookie"] = cookies unless cookies.empty?
+
+        http.headers(headers).post(
+          BASE_URL,
+          form: { "exdate" => date.strftime("%Y-%m-%d"), "tk" => token, "view" => "View" },
+        )
+      end
+    end
+  end
+end

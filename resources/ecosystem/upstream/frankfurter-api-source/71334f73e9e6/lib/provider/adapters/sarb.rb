@@ -1,0 +1,83 @@
+# frozen_string_literal: true
+
+require "oj"
+
+require "provider/adapters/adapter"
+
+class Provider
+  module Adapters
+    # South African Reserve Bank. Publishes daily weighted-average exchange rates for 24 currencies. USD, GBP, EUR are
+    # quoted as ZAR per foreign unit (foreign base); all others as foreign per ZAR (ZAR base).
+    class SARB < Adapter
+      BASE_URL = "https://custom.resbank.co.za/SarbWebApi/WebIndicators/Shared/GetTimeseriesObservations"
+
+      SERIES = {
+        "EXCX135D" => ["USD", "ZAR"],
+        "EXCZ001D" => ["GBP", "ZAR"],
+        "EXCZ002D" => ["EUR", "ZAR"],
+        "EXCB080D" => ["ZAR", "AUD"],
+        "EXCB051D" => ["ZAR", "BWP"],
+        "EXCB036D" => ["ZAR", "BRL"],
+        "EXCB031D" => ["ZAR", "CAD"],
+        "EXCB121D" => ["ZAR", "CNY"],
+        "EXCB003D" => ["ZAR", "DKK"],
+        "EXCB122D" => ["ZAR", "HKD"],
+        "EXCB123D" => ["ZAR", "INR"],
+        "EXCB094D" => ["ZAR", "ILS"],
+        "EXCB120D" => ["ZAR", "JPY"],
+        "EXCB059D" => ["ZAR", "KES"],
+        "EXCB063D" => ["ZAR", "MWK"],
+        "EXCB081D" => ["ZAR", "NZD"],
+        "EXCB013D" => ["ZAR", "NOK"],
+        "EXCB015D" => ["ZAR", "SEK"],
+        "EXCB016D" => ["ZAR", "CHF"],
+        "EXCB126D" => ["ZAR", "TWD"],
+        "EXCB115D" => ["ZAR", "THB"],
+        "EXCB071D" => ["ZAR", "ZMW"],
+        "EXCB118D" => ["ZAR", "KRW"],
+      }.freeze
+
+      # The kwacha series runs under ZMW from 2000 without restating the 2013 rebasing: 612.34 per rand on 2012-12-31,
+      # 0.6188 on 2013-01-02. Rows before the rebasing are old kwacha.
+      PREDECESSORS = {
+        "ZMW" => ["ZMK", Date.new(2013, 1, 1)],
+      }.freeze
+
+      class << self
+        def backfill_range = 365
+      end
+
+      def fetch(after: nil, upto: nil)
+        start_date = after.to_s
+        end_date = (upto || Date.today).to_s
+
+        SERIES.flat_map do |code, (base, quote)|
+          sleep(0.2)
+          fetch_series(code, start_date, end_date, base:, quote:)
+        end
+      end
+
+      def parse(json, base:, quote:)
+        observations = Oj.load(json, mode: :strict)
+
+        observations.filter_map do |obs|
+          value = obs["Value"]
+          next if value.nil? || value.to_s.strip.empty?
+
+          rate = Float(value)
+          next if rate.zero?
+
+          date = Date.parse(obs["Period"])
+          { date:, base: historical_code(base, date), quote: historical_code(quote, date), rate: }
+        end
+      end
+
+      private
+
+      def fetch_series(code, start_date, end_date, base:, quote:)
+        response = http.get("#{BASE_URL}/#{code}/#{start_date}/#{end_date}").to_s
+        parse(response, base:, quote:)
+      end
+    end
+  end
+end

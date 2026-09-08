@@ -1,0 +1,340 @@
+# Changelog
+
+All notable changes to the Frankfurter API will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased]
+
+## [2.6.1] - 2026-10-02
+
+### Changed
+
+- Retired currencies use CLDR names with year ranges instead of '(old)'. (#742)
+
+### Fixed
+
+- Backfill no longer skips a day at each window boundary. (#739)
+- National Bank of the Kyrgyz Republic backfills up to today. (#739)
+- Retired and non-ISO currency labels in CBU, BOTA, NBP and BOI history. (#740)
+- Bank of Israel pre-euro rates published per 10, 100 or 1000 units. (#740)
+- Legacy currencies quoted past their redenomination. (#740)
+- Banca d'Italia's old afghani quotes, labelled AFN until April 2004. (#741)
+- Czech National Bank backfill no longer fails when a window holds whole years. (#743)
+- HMRC, IMF, DNB, MAS and CBAR full backfills no longer fail at their coverage start. (#744)
+- Successor currencies quoted under retired codes in NBU, BNA, BAM, BDI, CBG, CBU, LB, NBP and BOTA history. (#745)
+- National Bank of the Kyrgyz Republic no longer re-dates its frozen BYR rate each week. (#745)
+- National Bank of the Republic of North Macedonia's ECU quotes, labelled XBA until May 1999. (#747)
+- National Bank of the Republic of Belarus history from July 2016. (#748)
+- Bulgarian lev rates from the National Bank of the Republic of Belarus, to December 2025. (#748)
+- National Bank of Kazakhstan history from November 1999. (#748)
+- Bank of Tanzania history from June 1999. (#748)
+- Full backfills keep the first days of CBAR, HNB and BCCH history. (#748)
+- Banco Central de Costa Rica history from 1983. (#750)
+- One-day provider typos no longer skew blends. (#749)
+- Bank of Lithuania's old zloty, ruble, lev, leu and metical quotes, labelled with the new codes. (#751)
+- Central Bank of Armenia history for the currencies it no longer quotes. (#751)
+- Central Bank of Armenia's pre-2005 tenge and 2000 Tajik ruble rates, published per 10 or 100 units. (#751)
+- Finnish markka, Greek drachma, litas, lats and koruna no longer blend past their euro changeover. (#751)
+- Old Belarusian ruble quotes labelled BYN in National Bank of Kazakhstan and Central Bank of Armenia history. (#752)
+- Central Bank of Armenia's Romanian leu from October 2005 and Turkmen manat from April 2010. (#753)
+- Bank of Lithuania history from June 1993. (#754)
+- Bank of Lithuania history for the retired currencies it quoted. (#754)
+- Bank of Lithuania's 1995 Turkmen manat rows that repeat its Russian ruble rate. (#754)
+- Bank of Lithuania's Belarusian ruble rates before the August 1994 denomination. (#754)
+- Autoridade Monetária de Macau's interest rate, stored as a currency LIQ to October 2012. (#762)
+- Czech National Bank's 1991 Belgian franc and dinar quotes, labelled BEC and YUD. (#762)
+- Czech National Bank's clearing ECU (XCU) of 1993 to 1995, missing from the currency catalogue. (#762)
+- Natsionalnyi Bank Ukrainy's somoni quotes, labelled ZAL from November 2000 to November 2002. (#762)
+
+Existing installs keep the days the old backfill skipped, since backfill resumes from the newest stored date. Run
+`bundle exec rake backfill FULL=1` once after upgrading to fill them; it refetches from each provider's coverage start
+and skips rows already stored, so it is safe but slow.
+
+Blends keep their old values for the relabelled history and the screened typos until rebuilt. Run
+`bundle exec rake blend:rebuild` once after upgrading; it rebuilds in place, so queries keep reading the tables while it
+runs.
+
+## [2.6.0] - 2026-09-30
+
+### Added
+
+- CSV downloads named after the query.
+- Query-specific history coverage. (#730)
+- Japan Customs (JPC) as a data provider. (#715)
+- Banky Foiben'i Madagasikara (BFM) as a data provider. (#400)
+- Bank of Mauritius (BOMU) as a data provider. (#370)
+- Central Bank of Bosnia and Herzegovina (CBBH) as a data provider. (#376)
+- European Commission (INFOREURO) as a data provider. (#713)
+- Bank for International Settlements (BIS) as a data provider. (#714)
+- COMESA Dollar (CMD) peg. (#706)
+- RBA trade-weighted index on provider routes. (#695)
+- COMESA Dollar (CMD). (#699)
+- HM Revenue & Customs (HMRC) as a data provider. (#172)
+
+### Fixed
+
+- National Bank of Moldova backfills on fresh installs, skipping days without metal prices. (#733)
+- Provider-filtered currency lists and coverage dates. (#728)
+- Reserve Bank of Malawi Special Drawing Rights quotes as XDR. (#708)
+- Bank Negara Malaysia Special Drawing Rights quotes as XDR. (#709)
+- Reserve Bank of Australia Special Drawing Rights quotes as XDR. (#704)
+- Non-currency series excluded from multi-provider blends. (#698)
+- Ecuadorian sucre metadata and retirement cutoff. (#697)
+- Bank of Tanzania Special Drawing Rights quotes as XDR. (#696)
+- Historical and unknown currency quotes on provider routes. (#667)
+- 404 for trailing path segments in V2. (#684)
+- Validation of unsupported currency scopes in V2. (#678)
+- Strict YYYY-MM-DD date validation in V2. (#677)
+- UST leone rates around the 2022 redenomination. (#666)
+- Latest rates for providers that publish in arrears. (#685)
+
+### Removed
+
+- Banco Central de Reserva del Perú (BCRP) as a data provider. (#607)
+
+## [2.5.1] - 2026-09-10
+
+### Fixed
+
+- UST entered the blend because `frequency` reset to daily on every start. (#656)
+
+## [2.5.0] - 2026-09-10
+
+### Added
+
+- U.S. Department of the Treasury (UST) as a data provider. (#647)
+- `frequency` on `/v2/providers`. (#646)
+- Per-provider routes under `/v2/providers/{provider}`. (#643)
+- Nicaraguan córdoba (NIO) peg. (#604)
+
+### Changed
+
+- No 5-year cap on single-provider daily ranges. (#644)
+- Single-provider rates cross through the provider's own base. (#645)
+- Live daily ranges are throttled; excess requests get a 503 with `Retry-After`. (#650)
+
+### Removed
+
+- Banco Central de Nicaragua (BCN) as a data provider. (#604)
+
+### Fixed
+
+- Peg rates no longer override provider rates before the peg took effect. (#603)
+
+## [2.4.0] - 2026-09-09
+
+### Added
+
+- Bank of Zambia (BOZ) as a data provider. (#389)
+- Central Bank of Kuwait (CBKKW) as a data provider. (#447)
+- Banque du Liban (BdL) as a data provider. (#381)
+- Central Bank of Seychelles (CBSSC) as a data provider. (#404)
+- Central Bank of Oman (CBO) as a data provider. (#448)
+- Banco Central de Venezuela (BCV) as a data provider. (#435)
+- Central Bank of the Republic of Azerbaijan (CBAR) as a data provider. (#606)
+- Central Bank of Trinidad and Tobago (CBTT) as a data provider. (#378)
+- Centrale Bank van Suriname (CBvS) as a data provider. (#426)
+- China Foreign Exchange Trade System (CFETS) as a data provider. (#605)
+- Palestine Monetary Authority (PMA) as a data provider. (#454)
+- Banque Centrale du Congo (BCCCD) as a data provider. (#398)
+- Banco de Moçambique (BM) as a data provider. (#386)
+- Banco Central de Reserva del Perú (BCRP) as a data provider. (#607)
+- Deprecation and Link headers (RFC 9745) on V1 responses pointing to V2.
+- Observation dates in V2 `expand=providers` payloads.
+- Base currency identity records (`USD/USD = 1`) in V2 rate responses. (#538)
+
+### Changed
+
+- Full-history date ranges on V2 rates are now served in seconds from a precomputed blend, lifting the 5-year cap. (#569, #570)
+- V2 latest rates now include provider observations dated one day ahead of the service date for next-day publishers.
+
+### Fixed
+
+- Canonical rate consistency across single-date, latest, and range query shapes. (#570, #573)
+- V2 range queries return 503 on timeout instead of computing indefinitely. (#569)
+- Relabelled historical predecessor currencies (AZM, TMM, ZMK, RUR, BRR, TJR) previously reported under current codes. (#621, #623, #624)
+- Restored stalled provider feeds for BCBO, BCT, BNR, CBE, and SBP. (#547, #548, #564, #576, #580)
+- Ingest precision and rounding fixes for CBK, TCMB, and BI feeds. (#579, #584, #585)
+- Fixed Docker healthcheck failure under load. (#556)
+- Date-relative V2 responses expire from CDN caches at UTC midnight instead of after 24 hours. (#541)
+
+## [2.3.5] - 2026-06-25
+
+### Changed
+
+- Bangko Sentral ng Pilipinas (BSP) now contributes only its official USD/PHP reference rate. (#533)
+
+## [2.3.4] - 2026-06-25
+
+### Fixed
+
+- Single-provider V2 queries now preserve the source's native precision instead of rounding to magnitude bands. (#534)
+
+## [2.3.3] - 2026-06-22
+
+### Fixed
+
+- Restored Reserve Bank of Vanuatu (RBV) rates after bundling missing intermediate TLS certificates.
+- Restored Central Bank of Samoa (CBS) rates after handling unescaped spaces in source filenames.
+- Labelled pre-1999 Sveriges Riksbank euro rates as ECU (XEU) instead of EUR.
+- Prevented ingestion of euro-denominated rates dated before euro inception (1999-01-04).
+- Retired legacy currencies (ATS, BEF, DEM, ESP, FRF, ITL, NLG, PTE) at their respective euro changeover dates.
+- Weekly and monthly time series no longer omit the current, in-progress period. (#521)
+
+## [2.3.2] - 2026-06-13
+
+### Fixed
+
+- Prevented ingestion of stray future-dated rates that froze incremental provider updates.
+
+## [2.3.1] - 2026-06-11
+
+### Fixed
+
+- Docker containers no longer terminate on startup when the scheduler staggers provider backfills. (#514)
+
+## [2.3.0] - 2026-06-11
+
+### Added
+
+- Banco Central de Bolivia (BCBO) multi-currency basket and commodity reference prices (XAU, XAG, XDR).
+- Multi-architecture Docker image builds (`linux/amd64` and `linux/arm64`). (#140)
+
+### Fixed
+
+- Sped up long `/v2/rates` time-series exports with a sliding calculation window.
+- Added `stale-while-revalidate` and `stale-if-error` caching directives to time-series exports.
+- Fixed 500 errors on date ranges crossing Lithuania's 2015 euro changeover.
+- Restored Central Bank of Samoa (CBS) rates following daily filename updates.
+
+## [2.2.0] - 2026-06-01
+
+### Added
+
+- Bangko Sentral ng Pilipinas (BSP) as a data provider.
+- Banco Central de Bolivia (BCBO) as a data provider.
+- Added `publish_cadence` metadata to `/v2/providers`.
+
+### Fixed
+
+- Set CBC publish cadence to monthly to avoid inaccurate missed publish counts.
+- Restored Bank of Tanzania (BOTA) rates after handling CSRF token validation.
+
+## [2.1.1] - 2026-05-29
+
+### Fixed
+
+- Restored alphabetical quote sorting for latest `/v2/rates` responses with carried-forward rates.
+
+## [2.1.0] - 2026-05-24
+
+### Added
+
+- Banco Central de Cuba (BCC) as a data provider.
+- Banque Nationale du Rwanda (BNRRW) as a data provider.
+- Banco Nacional de Angola (BNA) as a data provider.
+- Central Bank of Iraq (CBI) as a data provider.
+- Bank of Algeria (BoA) as a data provider.
+- Central Bank of Egypt (CBE) as a data provider. (#366)
+- Maldives Monetary Authority (MMA) as a data provider.
+- Banco Central del Paraguay (BCP) as a data provider.
+- State Bank of Pakistan (SBP) as a data provider.
+- Central Bank of Sri Lanka (CBSL) as a data provider.
+- National Bank of Cambodia (NBC) as a data provider.
+- Banque Centrale de Tunisie (BCT) as a data provider.
+- National Bank of Tajikistan (NBT) as a data provider.
+- National Bank of the Kyrgyz Republic (NBKR) as a data provider.
+- Bank of Mongolia (BOM) as a data provider.
+- Central Bank of Nigeria (CBN) as a data provider.
+- National Bank of Ethiopia (NBE) as a data provider.
+- National Reserve Bank of Tonga (NRBT) as a data provider.
+- Central Bank of Samoa (CBS) as a data provider.
+- Autoridade Monetária de Macau (AMCM) as a data provider.
+- Central Bank of Liberia (CBLLR) as a data provider.
+- Reserve Bank of Fiji (RBF) as a data provider.
+- Da Afghanistan Bank (DAB) as a data provider.
+- Central Bank of The Gambia (CBG) as a data provider.
+- Reserve Bank of Malawi (RBM) as a data provider.
+- Reserve Bank of Vanuatu (RBV) as a data provider.
+- Banque de la République du Burundi (BRB) as a data provider.
+- Support for Turkmenistani manat (TMT) peg to USD.
+
+### Changed
+
+- Standardized Special Drawing Rights under the ISO 4217 code `XDR`.
+
+### Fixed
+
+- Sorted `/v2/rates` date-range responses chronologically.
+- Dropped non-positive rates on ingest to avoid 500 errors.
+- Dropped defunct ISO 4217 currency codes past their retirement dates on ingest.
+
+## [2.0.2] - 2026-05-21
+
+### Fixed
+
+- Ensure `/v2/rates` date-range queries return the same rates as `/v2/rates?date=…` for any given date.
+
+## [2.0.1] - 2026-05-19
+
+### Fixed
+
+- Prevented duplicate first row in `/v2/rates` date-range queries.
+
+## [2.0.0] - 2026-05-18
+
+New multi-provider API at `/v2/`. The v1 API is unchanged and remains available indefinitely at `/v1/`.
+
+### Migrating from v1
+
+- Change your base URL from `/v1/latest` to `/v2/rates`.
+- Rates are now an array of `{"date", "base", "quote", "rate"}` objects instead of `{"base", "date", "rates": {"USD": 1.23}}`.
+- The `symbols` parameter is renamed to `quotes`.
+- `from` and `to` are used for date ranges.
+- JSONP is not supported in v2.
+
+### Added
+
+- Blended exchange rates from 50+ institutional providers at `/v2/rates`. (#343)
+- Single pair endpoints at `/v2/rate/{base}/{quote}` and `/v2/rate/{base}/{quote}/{date}`.
+- Provider and currency metadata endpoints at `/v2/providers` and `/v2/currencies`.
+- Support for precious metals (XAU, XAG, XPT, XPD) and IMF Special Drawing Rights (XDR). (#333, #335)
+- Historical currency coverage for pre-euro and pre-redenomination codes.
+- Query-time pegged currency resolution with exact peg anchors. (#323)
+- Individual provider breakdowns via `expand=providers`. (#323)
+- Provider filtering with `providers` query parameter.
+- Time-series downsampling via `group` (`week` or `month`).
+- CSV and NDJSON streaming responses.
+- Outlier detection and recency-weighted rate blending.
+- Stamped observation dates on rates without range carry-forward. (#338)
+- Strict query parameter validation (422 on unknown parameters).
+
+## [1.0.0] - 2024-12-04
+
+### Changed
+
+- Added API versioning to URL path (`/v1/`).
+- Migrated database storage from PostgreSQL to SQLite.
+- Moved domain to <https://api.frankfurter.dev>.
+
+[Unreleased]: https://github.com/lineofflight/frankfurter/compare/v2.6.1...HEAD
+[2.6.1]: https://github.com/lineofflight/frankfurter/compare/v2.6.0...v2.6.1
+[2.6.0]: https://github.com/lineofflight/frankfurter/compare/v2.5.1...v2.6.0
+[2.5.1]: https://github.com/lineofflight/frankfurter/compare/v2.5.0...v2.5.1
+[2.5.0]: https://github.com/lineofflight/frankfurter/compare/v2.4.0...v2.5.0
+[2.4.0]: https://github.com/lineofflight/frankfurter/compare/v2.3.5...v2.4.0
+[2.3.5]: https://github.com/lineofflight/frankfurter/compare/v2.3.4...v2.3.5
+[2.3.4]: https://github.com/lineofflight/frankfurter/compare/v2.3.3...v2.3.4
+[2.3.3]: https://github.com/lineofflight/frankfurter/compare/v2.3.2...v2.3.3
+[2.3.2]: https://github.com/lineofflight/frankfurter/compare/v2.3.1...v2.3.2
+[2.3.1]: https://github.com/lineofflight/frankfurter/compare/v2.3.0...v2.3.1
+[2.3.0]: https://github.com/lineofflight/frankfurter/compare/v2.2.0...v2.3.0
+[2.2.0]: https://github.com/lineofflight/frankfurter/compare/v2.1.1...v2.2.0
+[2.1.1]: https://github.com/lineofflight/frankfurter/compare/v2.1.0...v2.1.1
+[2.1.0]: https://github.com/lineofflight/frankfurter/compare/v2.0.2...v2.1.0
+[2.0.2]: https://github.com/lineofflight/frankfurter/compare/v2.0.1...v2.0.2
+[2.0.1]: https://github.com/lineofflight/frankfurter/compare/v2.0.0...v2.0.1
+[2.0.0]: https://github.com/lineofflight/frankfurter/compare/v1.0.0...v2.0.0
+[1.0.0]: https://github.com/lineofflight/frankfurter/releases/tag/v1.0.0

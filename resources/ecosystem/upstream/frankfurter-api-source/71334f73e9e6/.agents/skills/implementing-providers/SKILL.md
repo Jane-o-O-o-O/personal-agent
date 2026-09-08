@@ -1,0 +1,190 @@
+---
+description: Use when adding a new exchange rate data provider, implementing a provider from a GitHub issue, when the user mentions a new central bank or data source, or when working on any issue labeled "provider". Also use when asked to backfill, fix, or update an existing provider.
+---
+
+# Adding a New Provider
+
+Checklist for adding a new exchange rate data provider. Each step references an existing provider as a pattern to follow.
+
+## Before You Start
+
+- Identify the API endpoint and authentication requirements
+- **Verify the API is accessible** — make a test request and confirm you get a 200 response with valid data. If the API returns 403, times out, or is otherwise inaccessible, **stop here**. Do not proceed with a hand-crafted cassette or fake data.
+- **Read the API docs** — understand pagination, date filtering, and rate limiting. Some APIs require specific params for date ranges (e.g., HKMA needs `choose=end_of_day` for `from`/`to` to work). Getting this right avoids downloading the entire dataset on every request.
+- Confirm the base currency and available quote currencies
+- Check the publish schedule (timezone, frequency, days of week)
+- Determine the earliest available date for historical data (goes in `coverage_start` in the seed file)
+
+### Go/no-go: does the provider backfill meaningfully?
+
+Before writing code, confirm the provider has a usable historical archive. If not, **don't implement it** — forward-only providers accumulate permanent gaps each year and the maintenance cost outweighs the value.
+
+Stop and skip the provider if either of these is true:
+
+- **Live page only, no historical endpoint.** Every year (or whenever the scheduler misses a window) leaves a permanent hole. Even a fresh deploy is forward-only from day one.
+- **Archive exists but lags badly.** An archive that's months behind the live page means anything between the last archive entry and "now" is permanently lost if we don't catch it live.
+
+If the provider has a real archive (downloadable history reaching back years, not just the current snapshot), proceed. Note `coverage_start` from the earliest archive date and continue with the checklist.
+
+### Licence: when terms block a provider
+
+Find the source's terms or legal page and record it as `terms_url` (null if there is none). Read it. A licence blocks a provider only when it explicitly forbids what Frankfurter does: free redistribution of published official rates, with attribution, by a non-commercial open-source service.
+
+**Proceed** on any of these:
+
+- Attribution-only terms.
+- Non-commercial-only clauses. Frankfurter has no paid tier and no API key, so "may be used for non-commercial purposes with acknowledgement" describes us rather than excludes us.
+- Generic "no reproduction or distribution without written permission" boilerplate. Nearly every state-affiliated site carries it; it is aimed at commercial resale of market data, and a published reference rate is an official announcement, not a data product.
+
+In the last case, ship with attribution and send a short courtesy notice to the institution's general contact: who we are, what we republish, and that we will remove it on request. Do not hold the PR on a reply. Quote the clause in the PR's License section so the call is on record.
+
+**Stop** only when the terms single out what we do (free or non-commercial redistribution, aggregators, APIs, automated access) or when the institution has already asked us to stop.
+
+A takedown request is handled like any other provider loss: remove the adapter, seed, cassette and rows, and note it on the provider's issue.
+
+## Implementation Checklist
+
+### 1. Adapter class — `lib/provider/adapters/<key>.rb`
+
+Inherit from `Provider::Adapters::Adapter`. See any existing adapter for the pattern (e.g. `lib/provider/adapters/boi.rb`).
+
+Required:
+- `fetch(after: nil, upto: nil)` — fetches from the source API, returns an array of records
+- Each record: `{ date:, base:, quote:, rate: }` (no `provider:` — the Provider model stamps that during import)
+- **Rate direction**: match the provider's native convention. `pivot_currency` may appear as either `base` or `quote` depending on the source — don't invert.
+  - ECB publishes `1 EUR = X foreign`, pivot EUR goes in `base` (see `lib/provider/adapters/ecb.rb`).
+  - NBG and BBK publish `1 foreign = X pivot`, pivot goes in `quote` (see `lib/provider/adapters/nbg.rb` and `lib/provider/adapters/bbk.rb`).
+  - Store what the provider returns. Inverting in the adapter invites direction bugs and diverges from the blender's expectations.
+  - **Direction is per row, not per provider.** A single feed may mix both orientations, and that is fine: record each row as published rather than normalizing the odd ones to match the majority. SARB quotes USD, GBP and EUR as ZAR-per-foreign but everything else as foreign-per-ZAR; CBK publishes KES-per-foreign except for its East African cross rates; FRED and CBC carry a per-series `[quote, base]` map. `BaseConversion` inverts and cross-converts at query time, and `RateScopes` matches the pivot on either side, so nothing downstream needs a uniform orientation.
+  - Normalizing costs real precision. `1/x` almost never terminates, so inverting at ingest turns an exact published figure into a repeating decimal and stores it. It also defeats the passthrough contract in `RateQuery#emit_records`, which echoes stored digits for pairs the provider published and rounds everything else: the stored orientation *is* the provenance, so a computed reciprocal stored as a row inherits echo privileges it has not earned.
+
+Optional class methods (inside `class << self`):
+- `backfill_range = N` — if the API needs chunked requests (e.g. max 100 results per call). The base class `fetch_each` uses this to iterate in windows.
+- `def api_key = ENV["X_API_KEY"] || raise("no API key")` — if the API requires authentication. This is not a blocker — implement the adapter regardless. It activates when the key is configured at deploy time.
+
+Notes:
+- Adapters have **no `key` or `name`** — Provider model owns identity. The adapter class name must match the provider key (e.g., `Provider::Adapters::ECB` for key `"ECB"`).
+- **Keys never contain hyphens.** When the bare acronym would collide with another provider, smush in a country-code suffix instead of hyphenating. Hyphens break Ruby constant naming and complicate file paths.
+- The `base` and `quote` in each record are determined by the data, not a class method
+- `parse` is a convention (not enforced by the base class) — most adapters define a `parse` method for unit-testable parsing, called from `fetch`
+- Handle unit multipliers (per-100, per-1000) by dividing to normalize to per-1-unit rates. Guard against zero units before dividing.
+- If the source publishes buy and sell prices instead of a reference rate, coerce them with the base class's `midpoint(buy, sell)`, not `(buy + sell) / 2.0`. The mid is our own synthesis, so it has no published digits to echo, and float arithmetic leaves noise in the low ones that single-provider responses show verbatim (#579).
+- **Do not rescue errors** — let HTTP errors, timeouts, parse failures, and other exceptions bubble up. The scheduler handles retries; swallowing errors silently hides broken providers.
+- **Per-day APIs**: Some APIs only return rates for a single date per request. A full backfill from e.g. 2000 means ~6,800 requests. Use `backfill_range` to chunk into small windows (e.g. 30 days) and add a `sleep` between requests to be polite. The base class `fetch_each` handles the iteration loop. See `lib/provider/adapters/nbg.rb` for a working example.
+
+#### The `http` client
+
+The base class provides a private `http` method (an `HTTP::Client` from the `http` gem): call `http.get(url)` or `http.post(url, ...)` rather than reaching for `Net::HTTP` or another client. It's pre-configured with a `User-Agent`, connect/write/read timeouts, and retriable 429s (Retry-After is honored automatically, so adapters never need to handle rate limiting themselves).
+
+- **Non-2xx raises.** Any response outside the 2xx range raises `HTTP::StatusError`, including redirects to a moved or retired page. There's no silent empty-array fallback: a bad response must fail the fetch, not look like a genuine no-data day.
+- **Tolerate specific statuses at the call site**, not by rescuing broadly. See `lib/provider/adapters/nbp.rb`, which expects 404 for date ranges with no working days:
+  ```ruby
+  def fetch_rates(table_url, start_date, end_date)
+    parse(http.get("#{table_url}/#{start_date}/#{end_date}/?format=json").to_s)
+  rescue HTTP::StatusError => e
+    raise unless e.response.code == 404
+
+    []
+  end
+  ```
+- **Semantic failures** (the response is 200 but doesn't contain what the adapter expects: a missing download link, an empty workbook) raise `RuntimeError` with a message that names the provider and what went wrong, e.g. `raise "no workbook link on #{DATA_URL}"` (see `lib/provider/adapters/cbs.rb`).
+- **Timeouts**: the shared client sets connect 10s, write 60s, read 120s. The read deadline is per socket read (it resets on every chunk), so slow-but-steady downloads never trip it; only a server silent for over two minutes does. No per-adapter tuning.
+- **Exotic patterns**: reach for these only when a provider needs them:
+  - Custom TLS trust: pass a per-request `ssl_context` (see `lib/provider/adapters/boa.rb`, `rbv.rb`).
+  - `http.persistent(BASE_URL) { |client| ... }` for endpoints that misbehave across separate connections, or where you want exact parity with a legacy single-connection flow (see `lib/provider/adapters/bota.rb`).
+  - Cookie-based login legs: read `response.headers.get("Set-Cookie")` off the first response and forward it on the next request (see `lib/provider/adapters/cbe.rb`, `mas.rb`, `bi.rb`, `nbc.rb`).
+
+#### Redenominated and relabelled currencies
+
+Archives often label a currency's whole history with its current ISO code. Before trusting a code, dump one file per year and look for a 1000x-plus jump in a value at a known redenomination date. Two flavours, handled differently:
+
+- **Restated series.** The source converted old values into the successor unit. ECB and TCMB publish pre-2005 TRY as TRL divided by a million, so 2004 reads `EUR/TRY 1.829`. Relay as published: it is what the issuing bank itself reports, and the series is continuous.
+- **Relabelled only.** The values are the predecessor's magnitudes under the successor code. CBAR's 2005-12-30 file quotes `1 USD = 4593 "AZN"`, old manat; LB's AZN series is the same. Map the code back to the predecessor by date in the adapter with a `PREDECESSORS` table (see `lib/provider/adapters/cbar.rb`, `lb.rb`):
+  ```ruby
+  PREDECESSORS = { "AZN" => ["AZM", Date.new(2006, 1, 9)] }.freeze
+  ```
+  Key each entry on the *source's* switch date, which can trail the official one (LB kept quoting old manat until 2006-01-09), and verify it against the rows either side. Check the nominal at the same time: CBAR's TRL rows say Nominal 1 but price 1000 TRL.
+
+Two more things the relabel needs:
+
+Current databases also have `blended_weekly_rates` and `blended_monthly_rates`. For new repair migrations, invalidate complete affected grouped buckets in the same transaction as provider rollup changes, including old bucket dates that disappear. Startup population or a subsequent `rake blend:rebuild` fills the gaps. Insert-driven refresh cannot repair omitted dates. Follow `AGENTS.md`'s "Replacing provider history" procedure for delete-and-refetch repairs; do not delete only the three provider tables.
+
+- `db/seeds/currency_patches.json` must know the predecessor for it to enter the blend and catalogue. Unknown codes are stored and served by provider routes, and provider health flags them. The Money gem lacks some historical codes (AZM, RUR); add a full entry.
+- Rows already stored under the wrong code stay put: the insert is `ON CONFLICT DO NOTHING` and the corrected rows have a different key. Relabel them in place with a migration (see `db/migrate/027_relabel_lb_old_manat.rb`), which runs itself at container start. No re-backfill: the values were right, only the code was wrong. The migration has four parts, because three tables derive from `rates`:
+  1. `UPDATE rates` scoped to provider, code and date range.
+  2. Rollups: delete the provider's `weekly_rates` and `monthly_rates` for both codes and re-insert from `rates` with `Bucket.week` / `Bucket.month`, the way `Provider#refresh_rollup` does. A bucket straddling the cutover holds both codes.
+  3. Summaries: `currencies` and `currency_coverages` only ever widen on insert, so recompute both codes from `rates`.
+  4. Blend: `blended_rates` refreshes on insert only. Where the provider was the *sole* contributor for the code, `UPDATE` the quote; the stored value is a pure function of those rows and a recompute gives the same bytes. Where other providers already quote the successor, `BlendedRate.refresh` the window plus the 14-day carry-forward lookback past the provider's last old-unit row. Check contributor sets with `SELECT provider, MIN(date) FROM rates WHERE base = ? OR quote = ? GROUP BY provider`.
+
+  Verify against a prod backup: apply the migration to a copy, recompute the blend from scratch over the affected years on a second copy, and diff `blended_rates`. Zero rows either way, or the migration is wrong.
+
+`db/seeds/nascent_currencies.json` applies globally, including restated series, so it is reserved for universal relabels such as pre-1999 EUR to XEU. Before inception, ingestion uses the configured predecessor and drops the row only if none is known. Keep provider-specific switch dates in the adapter.
+
+Non-ISO labels (`SDR` for XDR) go through an `ALIASES` map rather than the predecessor table.
+
+### 2. Tests — `spec/provider/adapters/<key>_spec.rb`
+
+Follow the pattern in `spec/provider/adapters/boi_spec.rb` or `spec/provider/adapters/bccr_spec.rb`:
+
+- VCR cassette setup in `before`/`after` blocks
+- Integration test: `adapter.fetch(after:, upto:)`, assert dataset is non-empty and has expected structure
+- Parse unit tests: call `parse` directly with inline fixture data
+- Test edge cases: unit multipliers, empty values, invalid data
+
+VCR cassettes (`spec/vcr_cassettes/<key>.yml`) are auto-created on the first live test run. Pin dates in tests — never use `Date.today` with VCR. **Never hand-craft or fabricate cassettes** — they must be recorded from a live API response. Use narrow date ranges in integration tests (3-5 days) to keep cassettes small and test runs fast.
+
+**Avoiding time bombs**: Always pass explicit `upto:` dates in tests, even when the provider defaults to `Date.today`. If `upto` is omitted, the fetch will reach into unrecorded months and hit VCR errors on the 1st of the next month. Similarly, avoid assertions with hardcoded bounds on date counts (e.g. `<= 13` months) that break at month boundaries.
+
+### 3. Seed provider metadata — `db/seeds/providers/<key>.json`
+
+Create a single JSON file (not an array) with: `key`, `name`, `description`, `pivot_currency`, `data_url`, `terms_url` (nullable), `publish_schedule` (5-field cron expression in UTC, e.g. `"*/30 14-16 * * 1-5"` for daily Mon-Fri with a 3-hour polling window starting at 14:00 UTC; `null` for providers without a recurring cadence), `publish_cadence` (one of `"daily"`, `"weekly"`, `"monthly"`, or `null` for historical-only providers; dispatches `publishes_missed` to the right algorithm — per-fire-day count for daily, ISO-week bucket for weekly, year-month bucket for monthly), `coverage_start` (earliest date for historical data, or null if unknown). Each provider has its own file — no shared file to conflict on.
+
+The adapter class is auto-discovered from `lib/provider/adapters/` — no need to edit any wiring files.
+
+### 4. Verify
+
+```bash
+APP_ENV=test bundle exec rake spec                    # All tests pass
+APP_ENV=test bundle exec rake rubocop                 # No lint issues
+bundle exec rake db:seed                              # Provider appears in seed data
+bundle exec rake backfill[<key>]                      # Live backfill works
+```
+
+**Dry-run the backfill before shipping.** VCR tests only cover narrow date ranges. A real backfill exercises chunked iteration, API rate limits, and date range constraints that specs won't catch. Test at least one full `backfill_range` chunk against the live API to confirm the adapter works end-to-end — especially to verify the API's maximum allowed date range matches your `backfill_range` setting.
+
+### 5. Sanity-check rates (before deploy)
+
+After local backfill, compare the new provider's rates against an independent source **before pushing or deploying**. This catches direction bugs (base/quote swapped), unit errors (per-100 not normalized), or stale data before they reach production.
+
+**Quick check — cross-reference with ECB rates in the local DB:**
+
+```ruby
+# In a console or one-liner: compare a sample of the new provider's rates against ECB
+new_rates = Rate.where(provider: "<KEY>").where(date: Date.today - 7..Date.today).all
+ecb_rates = Rate.where(provider: "ECB").where(date: Date.today - 7..Date.today).all
+# Rebase both to EUR and compare overlapping quotes
+```
+
+**External check — use the `wise-api` skill** to compare against Wise mid-market rates. Sample a few major currency pairs (EUR/USD, EUR/GBP, EUR/JPY) and check deviation:
+
+| Deviation | Assessment |
+|-----------|-----------|
+| < 0.5% | Good — normal institutional vs real-time spread |
+| 0.5-1% | Acceptable for less-liquid pairs |
+| > 1% | Investigate — possible direction or unit error |
+| > 5% | Almost certainly a bug (e.g. base/quote inverted) |
+
+**What to look for:**
+- Rates that are the reciprocal of expected (base/quote swapped) — see 'Rate direction' principle above
+- Rates that are 10x or 100x off (unit multiplier not normalized)
+- Rates that match another provider exactly but on wrong dates (date parsing bug)
+
+## Extending an existing adapter
+
+When you widen an existing adapter to emit new record shapes (a new currency, a new pair, a new report block), `Provider#backfill` resumes from `last_synced` — so already-synced environments only fetch the new shape from the current date forward. To populate history, hand-backfill once at deploy:
+
+```ruby
+Provider["KEY"].backfill(after: Date.new(YYYY, M, D))
+```
+
+A fresh DB doesn't need this — it starts from `coverage_start`.

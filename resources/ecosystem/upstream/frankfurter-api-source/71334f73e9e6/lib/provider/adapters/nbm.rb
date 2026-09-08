@@ -1,0 +1,103 @@
+# frozen_string_literal: true
+
+require "ox"
+
+require "provider/adapters/adapter"
+
+class Provider
+  module Adapters
+    # National Bank of Moldova (Banca Națională a Moldovei). Publishes daily rates for 30+ currencies against MDL, plus
+    # daily reference prices for gold and silver. Date-parameterized XML endpoints, one request per day. Metals come
+    # from official_metal_rates in MDL per gram; values are normalized to per troy ounce here.
+    class NBM < Adapter
+      FX_URL = "https://www.bnm.md/en/official_exchange_rates"
+      METAL_URL = "https://www.bnm.md/en/official_metal_rates"
+
+      METAL_CODES = ["XAU", "XAG"].freeze
+
+      class << self
+        def backfill_range = 30
+      end
+
+      def fetch(after: nil, upto: nil)
+        end_date = upto || Date.today
+        dataset = []
+
+        first = true
+        (after..end_date).each do |date|
+          next if date.saturday? || date.sunday?
+
+          sleep(0.5) unless first
+          first = false
+          dataset.concat(fetch_date(date))
+
+          sleep(0.5)
+          dataset.concat(fetch_metals_date(date))
+        end
+
+        dataset
+      end
+
+      def parse(xml)
+        doc = Ox.load(xml)
+        val_curs = doc.locate("ValCurs").first
+        raise "NBM: ValCurs root missing from FX XML" unless val_curs
+
+        date_str = val_curs[:Date]
+        raise "NBM: Date attribute missing from ValCurs" unless date_str
+
+        date = Date.strptime(date_str, "%d.%m.%Y")
+
+        val_curs.locate("Valute").filter_map do |v|
+          code = v.locate("CharCode").first&.text
+          next unless code&.match?(/\A[A-Z]{3}\z/)
+
+          nominal = v.locate("Nominal").first&.text.to_f
+          value = v.locate("Value").first&.text.to_f
+          next if value.zero? || nominal.zero?
+
+          { date:, base: code, quote: "MDL", rate: value / nominal }
+        end
+      end
+
+      def parse_metals(xml)
+        doc = Ox.load(xml)
+        metal_price = doc.locate("MetalPrice").first
+        raise "NBM: MetalPrice root missing from metals XML" unless metal_price
+
+        date_str = metal_price[:Date]
+        raise "NBM: Date attribute missing from MetalPrice" unless date_str
+
+        date = Date.strptime(date_str, "%d.%m.%Y")
+        # NBM prices metals on weekends too; skip them to mirror the FX path.
+        return [] if date.saturday? || date.sunday?
+
+        metal_price.locate("Metal").filter_map do |m|
+          code = m.locate("CharCode").first&.text
+          next unless METAL_CODES.include?(code)
+
+          nominal = m.locate("Nominal").first&.text.to_f
+          value = m.locate("Value").first&.text.to_f
+          next if value.zero? || nominal.zero?
+
+          { date:, base: code, quote: "MDL", rate: (value / nominal) * GRAMS_PER_TROY_OUNCE }
+        end
+      end
+
+      private
+
+      def fetch_date(date)
+        parse(http.get(FX_URL, params: { get_xml: 1, date: date.strftime("%d.%m.%Y") }).to_s)
+      end
+
+      # The metals endpoint answers 404 for dates before its coverage (e.g. 1999, 2010), so treat that as no metals.
+      def fetch_metals_date(date)
+        response = http.use(ensure_success: { ignore: [404, 429] })
+          .get(METAL_URL, params: { get_xml: 1, date: date.strftime("%d.%m.%Y") })
+        return [] if response.code == 404
+
+        parse_metals(response.to_s)
+      end
+    end
+  end
+end

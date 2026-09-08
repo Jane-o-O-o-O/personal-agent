@@ -1,0 +1,75 @@
+# frozen_string_literal: true
+
+require "json"
+
+require "provider/adapters/adapter"
+
+class Provider
+  module Adapters
+    # Bank Negara Malaysia daily exchange rates. Data available from 2006-01-03. Historical rates are fetched
+    # per-currency per-month.
+    class BNM < Adapter
+      BASE_URL = "https://api.bnm.gov.my/public/exchange-rate"
+      SESSION = "0900"
+      HEADERS = { "Accept" => "application/vnd.BNM.API.v1+json" }.freeze
+      ALIASES = { "SDR" => "XDR" }.freeze
+
+      class << self
+        def backfill_range = 30
+      end
+
+      def fetch(after: nil, upto: nil)
+        start_date = Date.parse(after.to_s)
+        end_date = upto || Date.today
+        currencies = fetch_currencies
+        currencies.flat_map { |code| fetch_currency(code, start_date, end_date) }
+      end
+
+      private
+
+      def fetch_currencies
+        response = http.headers(HEADERS).get(BASE_URL, params: { session: SESSION }).to_s
+        data = JSON.parse(response)
+        data["data"].map { |item| item["currency_code"] }
+      end
+
+      def fetch_currency(code, start_date, end_date)
+        records = []
+        each_month(start_date, end_date) do |year, month|
+          response = http.headers(HEADERS).get(
+            "#{BASE_URL}/#{code}/year/#{year}/month/#{month}",
+            params: { session: SESSION },
+          ).to_s
+          data = JSON.parse(response)
+          currency_data = data["data"]
+          next if currency_data.nil? || currency_data.is_a?(Array)
+
+          unit = currency_data["unit"] || 1
+          rates = currency_data["rate"]
+          rates = [rates] unless rates.is_a?(Array)
+
+          rates.each do |rate|
+            mid = rate["middle_rate"]
+            next unless mid
+
+            date = Date.parse(rate["date"])
+            next if date > end_date
+
+            records << { date:, base: ALIASES.fetch(code, code), quote: "MYR", rate: mid / unit }
+          end
+
+          sleep(1)
+        end
+        records
+      end
+
+      def each_month(start_date, end_date)
+        date = Date.new(start_date.year, start_date.month, 1)
+        while date <= end_date
+          yield date.year, date.month
+          date = date.next_month
+        end
+      end
+    end
+  end
+end

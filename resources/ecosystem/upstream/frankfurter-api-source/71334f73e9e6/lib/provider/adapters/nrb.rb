@@ -1,0 +1,74 @@
+# frozen_string_literal: true
+
+require "json"
+
+require "provider/adapters/adapter"
+
+class Provider
+  module Adapters
+    # Nepal Rastra Bank. Publishes daily buy/sell rates for 22 currencies against NPR. Mid-market rate computed as
+    # average of buy and sell. Rates with unit
+    # > 1 (e.g. JPY per 10) are normalized by dividing by unit.
+    class NRB < Adapter
+      BASE_URL = "https://www.nrb.org.np/api/forex/v1/rates"
+
+      class << self
+        def backfill_range = 90
+      end
+
+      def fetch(after: nil, upto: nil)
+        end_date = upto || Date.today
+        dataset = []
+        page = 1
+
+        loop do
+          sleep(0.5) if page > 1
+          response = http.get(BASE_URL, params: {
+            from: after.to_s,
+            to: end_date.to_s,
+            page: page,
+            per_page: 100,
+          },).to_s
+          data = JSON.parse(response)
+          payload = data.dig("data", "payload")
+          dataset.concat(parse(payload))
+
+          pagination = data["pagination"] || {}
+          break if page >= (pagination["pages"] || 1)
+
+          page += 1
+        end
+
+        dataset
+      end
+
+      def parse(payload)
+        payload = JSON.parse(payload) if payload.is_a?(String)
+        raise "NRB: expected payload array from forex API, got #{payload.class}" unless payload.is_a?(Array)
+
+        payload.flat_map do |day|
+          begin
+            date = Date.parse(day["date"])
+          rescue Date::Error
+            next []
+          end
+          rates = day["rates"] || []
+
+          rates.filter_map do |entry|
+            iso = entry.dig("currency", "iso3")
+            unit = Integer(entry.dig("currency", "unit") || 1)
+            buy = entry["buy"]
+            sell = entry["sell"]
+            next unless buy && sell
+
+            mid = midpoint(Float(buy), Float(sell))
+            rate = mid / unit
+            next if rate.zero?
+
+            { date:, base: iso, quote: "NPR", rate:, **prices(bid: buy, ask: sell, unit:) }
+          end
+        end
+      end
+    end
+  end
+end

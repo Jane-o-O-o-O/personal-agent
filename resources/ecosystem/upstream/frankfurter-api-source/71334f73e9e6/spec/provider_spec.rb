@@ -1,0 +1,783 @@
+# frozen_string_literal: true
+
+require_relative "helper"
+require "currency"
+require "provider"
+require "provider/adapters/adapter"
+
+describe Provider do
+  let(:provider) { Provider.first }
+
+  describe "schema" do
+    let(:columns) { Provider.db.schema(:providers).map(&:first) }
+
+    it "has publish_schedule, publish_cadence, and no publish_time or publish_days" do
+      _(columns).must_include(:publish_schedule)
+      _(columns).must_include(:publish_cadence)
+      _(columns).wont_include(:publish_time)
+      _(columns).wont_include(:publish_days)
+    end
+
+    it "seeds every provider with publish_schedule, publish_cadence, and valid cron" do
+      require "fugit"
+      dir = File.expand_path("../db/seeds/providers", __dir__)
+      Dir["#{dir}/*.json"].each do |path|
+        data = JSON.parse(File.read(path))
+
+        _(data).must_include("publish_schedule")
+        _(data).must_include("publish_cadence")
+        _(data).wont_include("publish_time")
+        _(data).wont_include("publish_days")
+        _([nil, "daily", "weekly", "monthly", "quarterly"]).must_include(data["publish_cadence"])
+        _([nil, "daily", "weekly", "monthly", "quarterly"]).must_include(data["frequency"])
+        _(data["publish_cadence"].nil?).must_equal(data["publish_schedule"].nil?)
+        next if data["publish_schedule"].nil?
+
+        parsed = Fugit::Cron.parse(data["publish_schedule"])
+
+        _(parsed).wont_be_nil("#{File.basename(path)}: invalid cron #{data["publish_schedule"].inspect}")
+      end
+    end
+  end
+
+  describe "#adapter" do
+    it "finds adapter by key" do
+      stub_adapter = Class.new(Provider::Adapters::Adapter)
+      Provider::Adapters.const_set(:STUB, stub_adapter)
+
+      stub_provider = Provider.new do |p|
+        p.key = "STUB"
+        p.name = "Stub"
+      end
+
+      _(stub_provider.adapter).must_equal(Provider::Adapters::STUB)
+    ensure
+      Provider::Adapters.send(:remove_const, :STUB) if Provider::Adapters.const_defined?(:STUB)
+    end
+
+    it "resolves all seeded providers" do
+      require "provider/adapters"
+
+      Provider.all.each do |provider|
+        _(Provider::Adapters.const_defined?(provider.key)).must_equal(true)
+      end
+    end
+  end
+
+  describe ".seed" do
+    it "keeps a key only some seed files carry" do
+      Provider.seed
+
+      _(Provider["UST"].frequency).must_equal("quarterly")
+      _(Provider["ECB"].frequency).must_equal("daily")
+      _(Provider.non_blending_keys).must_include("UST")
+    end
+  end
+
+  describe "#frequency" do
+    it "defaults to daily, blends, and carries forward two weeks" do
+      provider = Provider.new { |p| p.key = "EXAMPLE" }
+
+      _(provider.frequency).must_equal("daily")
+      _(provider.blends?).must_equal(true)
+      _(provider.lookback_days).must_equal(14)
+    end
+
+    it "keeps monthly and quarterly values out of the blend and carries them across their period" do
+      monthly = Provider.new { |p| p.frequency = "monthly" }
+      quarterly = Provider.new { |p| p.frequency = "quarterly" }
+
+      _(monthly.blends?).must_equal(false)
+      _(monthly.lookback_days).must_equal(45)
+      _(quarterly.blends?).must_equal(false)
+      _(quarterly.lookback_days).must_equal(120)
+    end
+
+    it "widens the carry-forward window to the publish cadence when values arrive in arrears" do
+      in_arrears = Provider.new { |p| p.publish_cadence = "monthly" }
+      weekly = Provider.new { |p| p.publish_cadence = "weekly" }
+      unscheduled = Provider.new { |p| p.publish_cadence = nil }
+
+      _(in_arrears.blends?).must_equal(true)
+      _(in_arrears.lookback_days).must_equal(45)
+      _(weekly.lookback_days).must_equal(14)
+      _(unscheduled.lookback_days).must_equal(14)
+    end
+
+    it "lists the keys of providers that do not blend" do
+      Provider.dataset.insert(key: "TST", name: "Test", frequency: "monthly")
+      Provider.load_cache
+
+      _(Provider.non_blending_keys).must_include("TST")
+    ensure
+      Provider.dataset.where(key: "TST").delete
+      Provider.load_cache
+    end
+  end
+
+  describe "#publishes_missed" do
+    def build_provider(schedule, cadence: "daily")
+      Provider.new do |p|
+        p.key = "EXAMPLE"
+        p.name = "Example"
+        p.publish_schedule = schedule
+        p.publish_cadence = cadence if schedule
+      end
+    end
+
+    it "returns nil when publish_schedule is nil" do
+      provider = build_provider(nil, cadence: nil)
+
+      provider.stub(:end_date, "2026-04-01") do
+        _(provider.publishes_missed(reference_date: Date.new(2026, 4, 20))).must_be_nil
+      end
+    end
+
+    it "returns nil when end_date is nil" do
+      provider = build_provider("*/30 14-16 * * 1-5")
+
+      provider.stub(:end_date, nil) do
+        _(provider.publishes_missed(reference_date: Date.new(2026, 4, 20))).must_be_nil
+      end
+    end
+
+    it "raises ArgumentError when publish_cadence is unrecognised" do
+      bad = build_provider("*/30 14-16 * * 1-5", cadence: "biweekly")
+
+      bad.stub(:end_date, "2026-04-01") do
+        _ { bad.publishes_missed(reference_date: Date.new(2026, 4, 20)) }.must_raise(ArgumentError)
+      end
+    end
+
+    describe "with daily cadence, Mon-Fri publishing (ECB-style)" do
+      let(:mon_fri) { build_provider("*/30 14-16 * * 1-5") }
+
+      it "returns 0 when end_date is Friday and reference is the following Monday" do
+        # Fri 2026-04-17 to Mon 2026-04-20 exclusive: only Sat 18 and Sun 19 sit between — neither is a publish day.
+        mon_fri.stub(:end_date, "2026-04-17") do
+          _(mon_fri.publishes_missed(reference_date: Date.new(2026, 4, 20))).must_equal(0)
+        end
+      end
+
+      it "counts weekdays missed between end_date and reference" do
+        # Last update Mon 2026-04-13, reference Fri 2026-04-17 exclusive: Tue 14, Wed 15, Thu 16 = 3.
+        mon_fri.stub(:end_date, "2026-04-13") do
+          _(mon_fri.publishes_missed(reference_date: Date.new(2026, 4, 17))).must_equal(3)
+        end
+      end
+
+      it "ignores weekends" do
+        # Fri 2026-04-10 exclusive to Mon 2026-04-20 exclusive: Mon-Fri 13,14,15,16,17 = 5.
+        mon_fri.stub(:end_date, "2026-04-10") do
+          _(mon_fri.publishes_missed(reference_date: Date.new(2026, 4, 20))).must_equal(5)
+        end
+      end
+    end
+
+    describe "with daily cadence, seven-day publishing" do
+      let(:daily) { build_provider("*/30 14-16 * * *") }
+
+      it "counts every day between end_date and reference" do
+        # (2026-04-10, 2026-04-20) exclusive = 9 days.
+        daily.stub(:end_date, "2026-04-10") do
+          _(daily.publishes_missed(reference_date: Date.new(2026, 4, 20))).must_equal(9)
+        end
+      end
+    end
+
+    describe "with daily cadence, Mondays-only cron" do
+      let(:mondays) { build_provider("*/30 21-23 * * 1") }
+
+      it "counts only Mondays between end_date and reference" do
+        # Mon 2026-04-06 exclusive to Fri 2026-04-24 exclusive: Mondays are 13, 20 = 2.
+        mondays.stub(:end_date, "2026-04-06") do
+          _(mondays.publishes_missed(reference_date: Date.new(2026, 4, 24))).must_equal(2)
+        end
+      end
+    end
+
+    describe "with weekly cadence (FRED-style, Monday publishing covers prior ISO week)" do
+      let(:fred) { build_provider("*/30 21-23 * * 1", cadence: "weekly") }
+
+      it "returns 0 when end_date is in the week FRED's last batch covered" do
+        # Today 2026-04-21 (Tue). Last Monday fire Apr 20 covers prior ISO week Apr 13-19. end_date = 2026-04-19 → same
+        # ISO week bucket as Apr 13 → 0 missed.
+        fred.stub(:end_date, "2026-04-19") do
+          _(fred.publishes_missed(reference_date: Date.new(2026, 4, 21))).must_equal(0)
+        end
+      end
+
+      it "returns 0 when end_date's ISO week matches expected coverage bucket" do
+        # end_date = Saturday 2026-04-18 (same ISO week as Apr 13-19). Still 0 missed.
+        fred.stub(:end_date, "2026-04-18") do
+          _(fred.publishes_missed(reference_date: Date.new(2026, 4, 21))).must_equal(0)
+        end
+      end
+
+      it "returns 1 when end_date is one ISO week behind expected" do
+        # end_date in week Apr 6-12; expected = week Apr 13-19 → 1 missed.
+        fred.stub(:end_date, "2026-04-12") do
+          _(fred.publishes_missed(reference_date: Date.new(2026, 4, 21))).must_equal(1)
+        end
+      end
+
+      it "returns 0 on Sunday before Monday batch arrives (expected is 2 weeks ago)" do
+        # Today Sun 2026-04-19. Last Mon fire Apr 13 covers prior week Apr 6-12. end_date = Apr 12 (covered) → 0.
+        fred.stub(:end_date, "2026-04-12") do
+          _(fred.publishes_missed(reference_date: Date.new(2026, 4, 19))).must_equal(0)
+        end
+      end
+
+      it "reports 1 missed on Monday morning when prior week's batch did not arrive" do
+        # Today Mon 2026-04-20 (FRED's first publish day of this ISO week). end_date Sun 2026-04-12 = end of ISO week
+        # Apr 6-12; expected = ISO week Apr 13-19 → 1 missed.
+        fred.stub(:end_date, "2026-04-12") do
+          _(fred.publishes_missed(reference_date: Date.new(2026, 4, 20))).must_equal(1)
+        end
+      end
+    end
+
+    describe "with monthly cadence (HKMA-style, day-of-month publishing covers prior month)" do
+      let(:hkma) { build_provider("*/30 1-10 3-12 * *", cadence: "monthly") }
+
+      it "returns 0 when current with March data and today is past April's window" do
+        hkma.stub(:end_date, "2026-03-31") do
+          _(hkma.publishes_missed(reference_date: Date.new(2026, 4, 20))).must_equal(0)
+        end
+      end
+
+      it "returns 0 when current with March data and today is before April's window" do
+        hkma.stub(:end_date, "2026-03-31") do
+          _(hkma.publishes_missed(reference_date: Date.new(2026, 4, 2))).must_equal(0)
+        end
+      end
+
+      it "returns 0 when last business day is not last calendar day (March 30 edge)" do
+        # Nov 30 2025 was a Sunday; last HKMA date was Nov 29. Should still count as Nov covered.
+        hkma.stub(:end_date, "2025-11-29") do
+          _(hkma.publishes_missed(reference_date: Date.new(2025, 12, 15))).must_equal(0)
+        end
+      end
+
+      it "returns 1 when April batch did not arrive and today is past May's window" do
+        hkma.stub(:end_date, "2026-03-31") do
+          _(hkma.publishes_missed(reference_date: Date.new(2026, 5, 15))).must_equal(1)
+        end
+      end
+
+      it "returns 2 when two monthly batches are missed" do
+        hkma.stub(:end_date, "2026-01-31") do
+          _(hkma.publishes_missed(reference_date: Date.new(2026, 4, 20))).must_equal(2)
+        end
+      end
+
+      it "reports 1 missed on the first publish day of the window when prior month did not arrive" do
+        # Today Apr 3 = first day of HKMA's publish window (DOM 3-12). end_date Feb 28; expected = March → 1 missed.
+        hkma.stub(:end_date, "2026-02-28") do
+          _(hkma.publishes_missed(reference_date: Date.new(2026, 4, 3))).must_equal(1)
+        end
+      end
+    end
+
+    describe "with quarterly cadence (Treasury-style, fires early in the quarter)" do
+      let(:ust) { build_provider("0 12 1-10 1,4,7,10 *", cadence: "quarterly") }
+
+      it "returns 0 when the latest quarter-end is the last one due" do
+        ust.stub(:end_date, "2026-03-31") do
+          _(ust.publishes_missed(reference_date: Date.new(2026, 5, 20))).must_equal(0)
+        end
+      end
+
+      it "counts each quarter missed once its window has started" do
+        ust.stub(:end_date, "2025-09-30") do
+          _(ust.publishes_missed(reference_date: Date.new(2026, 5, 20))).must_equal(2)
+        end
+      end
+    end
+
+    describe "with monthly cadence on a daily weekday schedule (CBC-style)" do
+      # CBC polls a multi-currency open-data file refreshed in monthly batches in arrears: April's daily rows all land
+      # in early May. The schedule stays daily so the scheduler keeps polling and catches each batch promptly, but the
+      # cadence is monthly so the pre-batch lag is not counted as missed.
+      it "reports no missed publishes once the cadence is monthly" do
+        cbc = build_provider("*/30 8-10 * * 1-5", cadence: "monthly")
+
+        # end_date Apr 30, today late May: April is the latest expected bucket until the May batch is due, so nothing is
+        # missed.
+        cbc.stub(:end_date, "2026-04-30") do
+          _(cbc.publishes_missed(reference_date: Date.new(2026, 5, 29))).must_equal(0)
+        end
+      end
+
+      it "would report a large count under the old daily cadence" do
+        cbc = build_provider("*/30 8-10 * * 1-5", cadence: "daily")
+
+        # Same end_date and reference, but daily cadence counts every weekday since the last data date — the false
+        # pre-batch peak.
+        cbc.stub(:end_date, "2026-04-30") do
+          _(cbc.publishes_missed(reference_date: Date.new(2026, 5, 29))).must_be(:>=, 20)
+        end
+      end
+    end
+  end
+
+  describe "#backfill" do
+    let(:provider) { Provider[key: "BCB"].dup }
+    let(:fetched_params) { [] }
+    let(:import_date) { Date.today }
+
+    let(:adapter) do
+      params = fetched_params
+      d = import_date
+      Class.new(Provider::Adapters::Adapter) do
+        define_method(:fetch) do |after: nil, upto: nil|
+          params << { after:, upto: }
+          [{ date: d, base: "EUR", quote: "USD", rate: 1.1 }]
+        end
+      end
+    end
+
+    it "imports fetched records" do
+      provider.stub(:adapter, adapter) do
+        provider.backfill
+      end
+
+      record = Rate.where(provider: provider.key, date: import_date).first
+
+      _(record.base).must_equal("EUR")
+      _(record.quote).must_equal("USD")
+      _(record.rate).must_equal(1.1)
+    end
+
+    it "upserts without duplicating" do
+      provider.stub(:adapter, adapter) do
+        provider.backfill
+        provider.backfill(after: Date.today - 1)
+      end
+
+      _(Rate.where(provider: provider.key, date: import_date).count).must_equal(1)
+    end
+
+    describe "from coverage_start" do
+      let(:coverage_start) { Date.today - 10 }
+
+      it "fetches the coverage start day on a first backfill" do
+        exclusive_adapter = Class.new(Provider::Adapters::Adapter) do
+          define_method(:fetch) do |after: nil, upto: nil|
+            ((after + 1)..(upto || Date.today)).map { |date| { date:, base: "EUR", quote: "USD", rate: 1.1 } }
+          end
+        end
+
+        provider.stub(:coverage_start, coverage_start) do
+          provider.stub(:adapter, exclusive_adapter) { provider.backfill }
+        end
+
+        _(Rate.where(provider: provider.key).min(:date)).must_equal(coverage_start.to_s)
+      end
+
+      it "stores nothing dated before coverage_start" do
+        # An adapter that reads after as inclusive also returns the day before coverage_start.
+        stray_adapter = Class.new(Provider::Adapters::Adapter) do
+          define_method(:fetch) do |after: nil, upto: nil|
+            (after..(upto || Date.today)).map { |date| { date:, base: "EUR", quote: "USD", rate: 1.1 } }
+          end
+        end
+
+        provider.stub(:coverage_start, coverage_start) do
+          provider.stub(:adapter, stray_adapter) { provider.backfill(after: coverage_start) }
+        end
+
+        _(Rate.where(provider: provider.key).min(:date)).must_equal(coverage_start.to_s)
+      end
+    end
+
+    describe "when the adapter revises published values in place" do
+      # HMRC may correct a monthly customs rate mid-month. If the correction replaces the row in its file rather than
+      # adding one with a later start date, insert-only backfill keeps the stale figure. Surface the drift.
+      let(:revising_adapter) { Class.new(adapter) { def self.revises? = true } }
+
+      before do
+        Rate.create(provider: provider.key, date: import_date, base: "EUR", quote: "USD", mid: 1.0)
+      end
+
+      it "warns when a fetched value differs from the stored row" do
+        logged = nil
+        Log.stub(:warn, ->(message) { logged = message }) do
+          provider.stub(:adapter, revising_adapter) { provider.backfill(after: import_date - 1) }
+        end
+
+        _(logged).must_include("#{provider.key}: 1 stored rate differs from source")
+        _(logged).must_include("#{import_date} EUR/USD stored 1.0 fetched 1.1")
+      end
+
+      it "keeps the stored value" do
+        Log.stub(:warn, ->(_) {}) do
+          provider.stub(:adapter, revising_adapter) { provider.backfill(after: import_date - 1) }
+        end
+
+        _(Rate.where(provider: provider.key, date: import_date, quote: "USD").first.rate).must_equal(1.0)
+      end
+
+      it "stays quiet for an adapter that does not revise" do
+        logged = nil
+        Log.stub(:warn, ->(message) { logged = message }) do
+          provider.stub(:adapter, adapter) { provider.backfill(after: import_date - 1) }
+        end
+
+        _(logged).must_be_nil
+      end
+    end
+
+    it "keeps a forward-dated row for an adapter with a publication lead" do
+      ahead = Date.today + 14
+      leading_adapter = Class.new(Provider::Adapters::Adapter) do
+        def self.lead_days = 31
+
+        define_method(:fetch) do |**|
+          [{ date: ahead, base: "EUR", quote: "USD", rate: 1.1 }]
+        end
+      end
+
+      provider.stub(:adapter, leading_adapter) do
+        provider.backfill
+      end
+
+      _(Rate.where(provider: provider.key, date: ahead).count).must_equal(1)
+    end
+
+    it "retains unrecognised currency codes" do
+      bad_adapter = Class.new(Provider::Adapters::Adapter) do
+        define_method(:fetch) do |**|
+          [
+            { date: Date.today, base: "EUR", quote: "USD", rate: 1.1 },
+            { date: Date.today, base: "EUR", quote: "SDR", rate: 1.5 },
+          ]
+        end
+      end
+
+      provider.stub(:adapter, bad_adapter) do
+        provider.backfill
+      end
+
+      _(Rate.where(provider: provider.key, quote: "SDR").count).must_equal(1)
+    end
+
+    it "excludes non-positive rates" do
+      bad_adapter = Class.new(Provider::Adapters::Adapter) do
+        define_method(:fetch) do |**|
+          [
+            { date: Date.today, base: "EUR", quote: "USD", rate: 1.1 },
+            { date: Date.today, base: "EUR", quote: "GBP", rate: 0.0 },
+            { date: Date.today, base: "EUR", quote: "JPY", rate: -1.0 },
+          ]
+        end
+      end
+
+      provider.stub(:adapter, bad_adapter) do
+        provider.backfill
+      end
+
+      _(Rate.where(provider: provider.key, date: Date.today, quote: "USD").count).must_equal(1)
+      _(Rate.where(provider: provider.key, date: Date.today, quote: "GBP").count).must_equal(0)
+      _(Rate.where(provider: provider.key, date: Date.today, quote: "JPY").count).must_equal(0)
+    end
+
+    it "strips float noise from synthesized rates on the way in" do
+      # An adapter that coerces buy/sell to a mid, or rescales per unit, hands over the raw result of float arithmetic.
+      # Single-provider responses echo stored digits verbatim, so noise stored here reaches the API (#579).
+      noisy_adapter = Class.new(Provider::Adapters::Adapter) do
+        define_method(:fetch) do |**|
+          [
+            { date: Date.today, base: "EUR", quote: "USD", rate: (181.5264 + 181.76) / 2.0 },
+            { date: Date.today, base: "EUR", quote: "GBP", rate: 744.92 / 100.0 },
+          ]
+        end
+      end
+
+      provider.stub(:adapter, noisy_adapter) do
+        provider.backfill
+      end
+
+      _(Rate.where(provider: provider.key, quote: "USD", date: Date.today).first.rate).must_equal(181.6432)
+      _(Rate.where(provider: provider.key, quote: "GBP", date: Date.today).first.rate).must_equal(7.4492)
+    end
+
+    it "keeps every digit a provider actually publishes" do
+      precise_adapter = Class.new(Provider::Adapters::Adapter) do
+        define_method(:fetch) do |**|
+          [{ date: Date.today, base: "EUR", quote: "USD", rate: 0.0001234567891 }]
+        end
+      end
+
+      provider.stub(:adapter, precise_adapter) do
+        provider.backfill
+      end
+
+      _(Rate.where(provider: provider.key, quote: "USD", date: Date.today).first.rate).must_equal(0.0001234567891)
+    end
+
+    it "drops records dated implausibly far in the future" do
+      # A single stray future-dated row (source typo, or a pre-seeded spreadsheet row) must not be stored: it would
+      # hijack last_synced (= max date) and freeze incremental backfill behind an unreachable cursor.
+      future_adapter = Class.new(Provider::Adapters::Adapter) do
+        define_method(:fetch) do |**|
+          [
+            { date: Date.today, base: "EUR", quote: "USD", rate: 1.1 },
+            { date: Date.today + 365, base: "EUR", quote: "GBP", rate: 0.85 },
+          ]
+        end
+      end
+
+      provider.stub(:adapter, future_adapter) do
+        provider.backfill
+      end
+
+      _(Rate.where(provider: provider.key, quote: "USD", date: Date.today).count).must_equal(1)
+      _(Rate.where(provider: provider.key, quote: "GBP").count).must_equal(0)
+    end
+
+    it "keeps records dated within the near-future grace window" do
+      # Providers in far-eastern time zones (e.g. Tonga UTC+13) and forward value-date conventions legitimately publish
+      # a rate dated one day ahead of the UTC backfill clock; those must still be ingested.
+      near_future_adapter = Class.new(Provider::Adapters::Adapter) do
+        define_method(:fetch) do |**|
+          [{ date: Date.today + 1, base: "EUR", quote: "USD", rate: 1.1 }]
+        end
+      end
+
+      provider.stub(:adapter, near_future_adapter) do
+        provider.backfill
+      end
+
+      _(Rate.where(provider: provider.key, quote: "USD", date: Date.today + 1).count).must_equal(1)
+    end
+
+    it "retains records dated on or after a defunct currency's terminal date" do
+      defunct_adapter = Class.new(Provider::Adapters::Adapter) do
+        define_method(:fetch) do |**|
+          [
+            # Retain the source's observations after BYR retired on 2016-07-01.
+            { date: Date.new(2016, 7, 1), base: "EUR", quote: "BYR", rate: 22000.0 },
+            { date: Date.new(2017, 1, 1), base: "BYR", quote: "USD", rate: 0.00005 },
+            # Keep: before terminal date
+            { date: Date.new(2016, 6, 30), base: "EUR", quote: "BYR", rate: 22000.0 },
+            # Keep: unrelated record
+            { date: Date.new(2016, 7, 1), base: "EUR", quote: "USD", rate: 1.1 },
+          ]
+        end
+      end
+
+      provider.stub(:adapter, defunct_adapter) do
+        provider.backfill
+      end
+
+      _(Rate.where(provider: provider.key, quote: "BYR", date: Date.new(2016, 7, 1)).count).must_equal(1)
+      _(Rate.where(provider: provider.key, base: "BYR", date: Date.new(2017, 1, 1)).count).must_equal(1)
+      _(Rate.where(provider: provider.key, quote: "BYR", date: Date.new(2016, 6, 30)).count).must_equal(1)
+      _(Rate.where(provider: provider.key, quote: "USD", date: Date.new(2016, 7, 1)).count).must_equal(1)
+    end
+
+    it "leaves records for codes not in the terminal-date table unchanged" do
+      neutral_adapter = Class.new(Provider::Adapters::Adapter) do
+        define_method(:fetch) do |**|
+          [
+            { date: Date.today, base: "EUR", quote: "USD", rate: 1.1 },
+            { date: Date.today, base: "EUR", quote: "GBP", rate: 0.85 },
+          ]
+        end
+      end
+
+      provider.stub(:adapter, neutral_adapter) do
+        provider.backfill
+      end
+
+      _(Rate.where(provider: provider.key, date: Date.today).count).must_equal(2)
+    end
+
+    it "ingests XDR" do
+      xdr_adapter = Class.new(Provider::Adapters::Adapter) do
+        define_method(:fetch) do |**|
+          [
+            { date: Date.today, base: "EUR", quote: "USD", rate: 1.1 },
+            { date: Date.today, base: "EUR", quote: "XDR", rate: 0.8 },
+          ]
+        end
+      end
+
+      provider.stub(:adapter, xdr_adapter) do
+        provider.backfill
+      end
+
+      _(Rate.where(provider: provider.key, quote: "XDR").count).must_equal(1)
+    end
+
+    it "requests a debounced cache purge when new rates are inserted" do
+      cache_purged = false
+      Cache.stub(:purge_debounced, -> { cache_purged = true }) do
+        provider.stub(:adapter, adapter) do
+          provider.backfill
+        end
+      end
+
+      _(cache_purged).must_equal(true)
+    end
+
+    it "refreshes the materialized blend over the inserted window before purging" do
+      calls = []
+      windows = []
+      Cache.stub(:purge_debounced, -> { calls << :purge }) do
+        BlendedRate.stub(:refresh, lambda { |window|
+          calls << :refresh
+          windows << window
+        },) do
+          provider.stub(:adapter, adapter) do
+            provider.backfill
+          end
+        end
+      end
+
+      _(calls).must_equal([:refresh, :purge])
+      _(windows.first.begin).must_equal(import_date)
+      _(windows.first.end).must_equal(import_date + CarryForward::LOOKBACK_DAYS)
+    end
+
+    it "writes blended rows for inserted dates" do
+      provider.stub(:adapter, adapter) do
+        provider.backfill
+      end
+
+      _(BlendedRate.where(date: import_date).count).must_be(:>, 0)
+    end
+
+    { "weekly" => "JPC", "monthly" => "BIS" }.each do |frequency, key|
+      describe "with #{frequency} observations" do
+        let(:provider) { Provider[key].dup }
+        let(:import_date) { Date.new(2025, 1, 31) }
+
+        it "imports source history and coverage without refreshing daily blends" do
+          refreshed = []
+          purged = false
+          BlendedRate.stub(:refresh, ->(window) { refreshed << window }) do
+            Cache.stub(:purge_debounced, -> { purged = true }) do
+              provider.stub(:adapter, adapter) { provider.backfill }
+            end
+          end
+
+          _(refreshed).must_be_empty
+          _(Rate.where(provider: key, date: import_date).first.rate).must_equal(1.1)
+          _(WeeklyRate.where(provider: key, bucket_date: "2025-01-29").first.rate).must_equal(1.1)
+          _(MonthlyRate.where(provider: key, bucket_date: "2025-01-01").first.rate).must_equal(1.1)
+          coverages = CurrencyCoverage.where(provider_key: key).order(:iso_code)
+
+          _(coverages.select_map(:iso_code).join(",")).must_equal("EUR,USD")
+          coverages.each do |coverage|
+            _(coverage.start_date).must_equal(import_date)
+            _(coverage.end_date).must_equal(import_date)
+          end
+          _(purged).must_equal(true)
+        end
+      end
+    end
+
+    it "does not request a cache purge when no new rates are inserted" do
+      provider.stub(:adapter, adapter) do
+        provider.backfill
+      end
+
+      cache_purged = false
+      Cache.stub(:purge_debounced, -> { cache_purged = true }) do
+        provider.stub(:adapter, adapter) do
+          provider.backfill(after: import_date - 1)
+        end
+      end
+
+      _(cache_purged).must_equal(false)
+    end
+
+    it "skips when already up to date" do
+      Rate.dataset.insert(
+        date: Date.today, provider: provider.key, base: "EUR", quote: "USD", mid: 1.1,
+      )
+
+      called = false
+      boom = Class.new(Provider::Adapters::Adapter) do
+        define_method(:fetch) do |**|
+          called = true
+          []
+        end
+      end
+
+      provider.stub(:adapter, boom) do
+        provider.backfill
+      end
+
+      _(called).must_equal(false)
+    end
+
+    it "chunks when adapter has backfill_range" do
+      since = Date.today - 90
+      Rate.dataset.insert(
+        date: since, provider: provider.key, base: "EUR", quote: "USD", mid: 1.0,
+      )
+
+      ranged_adapter = Class.new(adapter) do
+        class << self
+          def backfill_range = 30
+        end
+      end
+
+      provider.stub(:adapter, ranged_adapter) do
+        provider.backfill
+      end
+
+      _(fetched_params.length).must_equal(4)
+      _(fetched_params[0][:after]).must_equal(since)
+      _(fetched_params[0][:upto]).must_equal(since + 29)
+      _(fetched_params[-1][:upto]).must_be_nil
+    end
+
+    it "refreshes currencies and currency coverages" do
+      Currency.dataset.delete
+      CurrencyCoverage.dataset.delete
+
+      provider.stub(:adapter, adapter) do
+        provider.backfill
+      end
+
+      _(CurrencyCoverage.where(provider_key: provider.key).count).must_be(:>, 0)
+      _(Currency.where(iso_code: "USD").count).must_equal(1)
+      _(Currency.where(iso_code: "EUR").count).must_equal(1)
+    end
+
+    it "stores per-provider date ranges in coverages" do
+      CurrencyCoverage.dataset.delete
+
+      provider.stub(:adapter, adapter) do
+        provider.backfill
+      end
+
+      coverage = CurrencyCoverage.where(provider_key: provider.key, iso_code: "USD").first
+
+      _(coverage.start_date.to_s).must_equal(import_date.to_s)
+      _(coverage.end_date.to_s).must_equal(import_date.to_s)
+    end
+
+    it "contains any adapter error" do
+      error_adapter = Class.new(Provider::Adapters::Adapter) do
+        define_method(:fetch) do |**|
+          raise "boom"
+        end
+      end
+
+      logged = nil
+      Log.stub(:error, ->(message) { logged = message }) do
+        provider.stub(:adapter, error_adapter) do
+          provider.backfill
+        end
+      end
+
+      _(logged).must_equal("#{provider.key}: RuntimeError: boom, skipping")
+      _(Rate.where(provider: provider.key, date: import_date).count).must_equal(0)
+    end
+  end
+end

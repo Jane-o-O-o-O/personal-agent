@@ -1,0 +1,159 @@
+# frozen_string_literal: true
+
+require_relative "../../helper"
+require "provider/adapters/bota"
+
+class Provider < Sequel::Model(:providers)
+  module Adapters
+    describe BOTA do
+      before do
+        VCR.insert_cassette("bota", match_requests_on: [:method, :uri])
+      end
+
+      after { VCR.eject_cassette }
+
+      let(:adapter) { BOTA.new }
+
+      it "fetches rates with date range" do
+        dataset = adapter.fetch(after: Date.new(2026, 5, 19), upto: Date.new(2026, 5, 19))
+
+        _(dataset).wont_be_empty
+      end
+
+      it "fetches multiple currencies per date" do
+        dataset = adapter.fetch(after: Date.new(2026, 5, 19), upto: Date.new(2026, 5, 19))
+        dates = dataset.map { |r| r[:date] }.uniq
+        sample = dataset.select { |r| r[:date] == dates.first }
+
+        _(sample.size).must_be(:>, 1)
+      end
+
+      it "performs the antiforgery token flow and returns rates for a known date" do
+        dataset = adapter.fetch(after: Date.new(2026, 5, 19), upto: Date.new(2026, 5, 19))
+        usd = dataset.find { |r| r[:date] == Date.new(2026, 5, 19) && r[:base] == "USD" }
+
+        _(usd).wont_be_nil
+        _(usd[:quote]).must_equal("TZS")
+        _(usd[:rate]).must_equal(2602.0545)
+      end
+
+      it "parses HTML table with correct base and quote" do
+        html = <<~HTML
+          <html><body>
+          <table><tbody>
+          <tr>
+            <td>1</td><td>USD</td><td>2568.72</td><td>2594.41</td><td>2581.57</td><td>24-Mar-26</td>
+          </tr>
+          </tbody></table>
+          </body></html>
+        HTML
+
+        records = adapter.parse(html)
+
+        _(records.length).must_equal(1)
+        _(records.first[:base]).must_equal("USD")
+        _(records.first[:quote]).must_equal("TZS")
+        _(records.first[:rate]).must_equal(2581.57)
+        _(records.first[:date]).must_equal(Date.new(2026, 3, 24))
+      end
+
+      it "normalizes SDR to XDR without changing the published observation" do
+        html = <<~HTML
+          <table><tbody>
+          <tr><td>35</td><td>SDR</td><td>3589.4684</td><td>3625.3631</td><td>3607.4158</td><td>18-Sep-26</td></tr>
+          </tbody></table>
+        HTML
+
+        _(adapter.parse(html)).must_equal([
+          { date: Date.new(2026, 9, 18), base: "XDR", quote: "TZS", rate: 3607.4158 },
+        ])
+      end
+
+      it "maps the MXM label to the old metical" do
+        html = <<~HTML
+          <table><tbody>
+          <tr><td>757</td><td>MXM</td><td>0.0599</td><td>0.0605</td><td>0.0602</td><td>01-Jul-99</td></tr>
+          </tbody></table>
+        HTML
+
+        _(adapter.parse(html)).must_equal([
+          { date: Date.new(1999, 7, 1), base: "MZM", quote: "TZS", rate: 0.0602 },
+        ])
+      end
+
+      it "relabels the kwacha published under ZMK" do
+        html = <<~HTML
+          <table><tbody>
+          <tr><td>40</td><td>ZMK</td><td>111.1036</td><td>112.2202</td><td>111.6619</td><td>21-Jun-25</td></tr>
+          </tbody></table>
+        HTML
+
+        _(adapter.parse(html)).must_equal([
+          { date: Date.new(2025, 6, 21), base: "ZMW", quote: "TZS", rate: 111.6619 },
+        ])
+      end
+
+      it "excludes GOLD and defunct currencies" do
+        html = <<~HTML
+          <html><body>
+          <table><tbody>
+          <tr><td>1</td><td>USD</td><td>2568.72</td><td>2594.41</td><td>2581.57</td><td>24-Mar-26</td></tr>
+          <tr><td>2</td><td>GOLD</td><td>1000.00</td><td>2000.00</td><td>1500.00</td><td>24-Mar-26</td></tr>
+          <tr><td>3</td><td>ATS</td><td>100.00</td><td>200.00</td><td>150.00</td><td>24-Mar-26</td></tr>
+          <tr><td>4</td><td>NLG</td><td>100.00</td><td>200.00</td><td>150.00</td><td>24-Mar-26</td></tr>
+          <tr><td>5</td><td>MZM</td><td>100.00</td><td>200.00</td><td>150.00</td><td>24-Mar-26</td></tr>
+          <tr><td>6</td><td>ZWD</td><td>100.00</td><td>200.00</td><td>150.00</td><td>24-Mar-26</td></tr>
+          <tr><td>7</td><td>CUC</td><td>100.00</td><td>200.00</td><td>150.00</td><td>24-Mar-26</td></tr>
+          <tr><td>8</td><td>EUR</td><td>2950.95</td><td>2980.46</td><td>2965.70</td><td>24-Mar-26</td></tr>
+          </tbody></table>
+          </body></html>
+        HTML
+
+        records = adapter.parse(html)
+        currencies = records.map { |r| r[:base] }
+
+        _(currencies).must_include("USD")
+        _(currencies).must_include("EUR")
+        _(currencies).wont_include("GOLD")
+        _(currencies).wont_include("ATS")
+        _(currencies).wont_include("NLG")
+        _(currencies).wont_include("MZM")
+        _(currencies).wont_include("ZWD")
+        _(currencies).wont_include("CUC")
+        _(records.length).must_equal(2)
+      end
+
+      it "handles rates with commas in numbers" do
+        html = <<~HTML
+          <html><body>
+          <table><tbody>
+          <tr><td>1</td><td>GOLD</td><td>11,759,124.79</td><td>11,876,716.04</td><td>11,817,920.42</td><td>24-Mar-26</td></tr>
+          <tr><td>2</td><td>JPY</td><td>17.1234</td><td>17.2946</td><td>17.2090</td><td>24-Mar-26</td></tr>
+          </tbody></table>
+          </body></html>
+        HTML
+
+        records = adapter.parse(html)
+
+        # GOLD is excluded
+        _(records.length).must_equal(1)
+        _(records.first[:base]).must_equal("JPY")
+        _(records.first[:rate]).must_equal(17.209)
+      end
+    end
+
+    describe "BOTA without an antiforgery token" do
+      before do
+        VCR.insert_cassette("bota_no_token", match_requests_on: [:method, :uri])
+      end
+
+      after { VCR.eject_cassette }
+
+      it "raises instead of silently returning no rates" do
+        assert_raises(RuntimeError) do
+          BOTA.new.fetch(after: Date.new(2026, 5, 19), upto: Date.new(2026, 5, 19))
+        end
+      end
+    end
+  end
+end

@@ -1,0 +1,78 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+$stdout.sync = true
+
+require "rufus-scheduler"
+require_relative "../boot"
+require "blended_rate"
+require "blended_weekly_rate"
+require "blended_monthly_rate"
+require "cache"
+require "provider"
+require "provider/adapters"
+
+dry_run = ARGV.include?("--dry-run")
+
+scheduler = Rufus::Scheduler.new(max_work_threads: DB.pool.max_size) unless dry_run
+
+# Trailing edge of the purge debounce: flush a purge the backfills coalesced once its window expires.
+scheduler.every("60s") { Cache.purge_pending } unless dry_run
+
+# Re-blend the trailing window at UTC midnight: a forward-dated observation blended earlier froze that day's decay
+# weights (WeightedAverage caps its reference date at today), so each new date needs a recompute. Ingest accepts value
+# dates up to two days ahead, hence through tomorrow (#570). Purge after, so edges do not revalidate stale blends into a
+# fresh day.
+unless dry_run
+  scheduler.cron("0 0 * * *") do
+    BlendedRate.refresh((Date.today - 1)..(Date.today + 1))
+    Cache.purge_debounced
+  end
+end
+
+# Materialize the blend on installs that have never built it (first deploy of this feature, or a self-hosted upgrade).
+# Until it completes, plain ranges fall back to capped live compute; the purge afterwards drops any responses cached off
+# that fallback. Retry after transient failures; Rufus logs the exception and keeps the recurring job scheduled.
+# Unschedule on successful population, including legitimately empty grouped buckets that cannot produce a USD blend.
+unless dry_run
+  scheduler.every("5m", first_in: "30s", overlap: false) do |job|
+    unless BlendedRate.ready?
+      begin
+        BlendedRate.rebuild
+      ensure
+        # A late failure can leave committed materialization ready, causing the retry to skip this rebuild.
+        Cache.purge_debounced
+      end
+    end
+    [BlendedWeeklyRate, BlendedMonthlyRate].each do |model|
+      Cache.purge_debounced if model.populate.positive?
+    end
+    job.unschedule
+  end
+end
+
+# Backfill all providers on startup (staggered to avoid thundering herd)
+Provider.all.shuffle.each_with_index do |provider, index|
+  if dry_run
+    puts "startup: backfill[#{provider.key.downcase}]"
+  else
+    scheduler.in("#{index * 2}s") do
+      provider.backfill
+    end
+  end
+end
+
+# Schedule each provider based on its publish_schedule cron expression.
+Provider.all.each do |provider|
+  next unless provider.publish_schedule
+
+  if dry_run
+    puts "cron: #{provider.publish_schedule} backfill[#{provider.key.downcase}]"
+  else
+    scheduler.cron(provider.publish_schedule, overlap: false) do
+      provider.backfill
+    end
+  end
+end
+
+scheduler.join unless dry_run

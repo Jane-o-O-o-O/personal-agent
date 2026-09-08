@@ -1,0 +1,118 @@
+# frozen_string_literal: true
+
+require_relative "../../helper"
+require "provider/adapters/cbu"
+
+class Provider < Sequel::Model(:providers)
+  module Adapters
+    describe CBU do
+      before do
+        VCR.insert_cassette("cbu", match_requests_on: [:method, :host])
+      end
+
+      after { VCR.eject_cassette }
+
+      let(:adapter) { CBU.new }
+
+      it "fetches rates with date range" do
+        dataset = adapter.fetch(after: Date.new(2026, 4, 1), upto: Date.new(2026, 4, 3))
+
+        _(dataset).wont_be_empty
+      end
+
+      it "fetches multiple currencies per date" do
+        dataset = adapter.fetch(after: Date.new(2026, 4, 1), upto: Date.new(2026, 4, 3))
+        dates = dataset.map { |r| r[:date] }.uniq
+        sample = dataset.select { |r| r[:date] == dates.first }
+
+        _(sample.size).must_be(:>, 1)
+      end
+
+      it "parses JSON correctly" do
+        json = <<~JSON
+          [
+            {"id":69,"Code":"840","Ccy":"USD","CcyNm_EN":"US Dollar","Nominal":"1","Rate":"12194.21","Diff":"-16.5","Date":"01.04.2026"},
+            {"id":21,"Code":"978","Ccy":"EUR","CcyNm_EN":"Euro","Nominal":"1","Rate":"13984.32","Diff":"-51.89","Date":"01.04.2026"}
+          ]
+        JSON
+        records = adapter.parse(json)
+
+        _(records.length).must_equal(2)
+        _(records.first[:base]).must_equal("USD")
+        _(records.first[:quote]).must_equal("UZS")
+        _(records.first[:rate]).must_be_close_to(12194.21, 0.01)
+      end
+
+      it "normalizes rate by nominal" do
+        json = <<~JSON
+          [{"id":1,"Code":"360","Ccy":"IDR","CcyNm_EN":"Indonesian Rupiah","Nominal":"10","Rate":"7.18","Diff":"0","Date":"01.04.2026"}]
+        JSON
+        records = adapter.parse(json)
+
+        _(records.first[:rate]).must_be_close_to(0.718, 0.001)
+      end
+
+      it "skips zero rates" do
+        json = <<~JSON
+          [{"id":1,"Code":"840","Ccy":"USD","CcyNm_EN":"US Dollar","Nominal":"1","Rate":"0","Diff":"0","Date":"01.04.2026"}]
+        JSON
+        records = adapter.parse(json)
+
+        _(records).must_be_empty
+      end
+
+      it "restores the old ruble code before CBU's first new-ruble bulletin" do
+        json = <<~JSON
+          [
+            {"id":1,"Code":"810","Ccy":"RUB","CcyNm_EN":"Russian Ruble","Nominal":"1000","Rate":"13.46","Diff":"0","Date":"30.12.1997"},
+            {"id":1,"Code":"643","Ccy":"RUB","CcyNm_EN":"Russian Ruble","Nominal":"1","Rate":"13.48","Diff":"0","Date":"06.01.1998"}
+          ]
+        JSON
+        records = adapter.parse(json)
+
+        _(records.map { |r| r[:base] }).must_equal(["RUR", "RUB"])
+        _(records.first[:rate]).must_be_close_to(0.01346, 1e-9)
+      end
+
+      it "relabels the new lira published under TRL" do
+        json = <<~JSON
+          [
+            {"id":1,"Code":"792","Ccy":"TRL","CcyNm_EN":"Turkish Lira","Nominal":"1","Rate":"0.00078","Diff":"0","Date":"28.12.2004"},
+            {"id":1,"Code":"792","Ccy":"TRL","CcyNm_EN":"Turkish Lira","Nominal":"1","Rate":"787.09","Diff":"0","Date":"04.01.2005"}
+          ]
+        JSON
+        records = adapter.parse(json)
+
+        _(records.map { |r| [r[:base], r[:rate]] }).must_equal([["TRL", 0.00078], ["TRY", 787.09]])
+      end
+
+      it "maps the SDR label to XDR" do
+        json = <<~JSON
+          [
+            {"id":1,"Code":"001","Ccy":"SDR","CcyNm_EN":"Special Drawing Rights","Nominal":"1","Rate":"2044.11","Diff":"","Date":"16.09.2008"},
+            {"id":22,"Code":"960","Ccy":"XDR","CcyNm_EN":"Special Drawing Rights","Nominal":"1","Rate":"2044.11","Diff":"","Date":"16.09.2008"}
+          ]
+        JSON
+        records = adapter.parse(json)
+
+        _(records.map { |r| r[:base] }).must_equal(["XDR", "XDR"])
+        _(records.map { |r| r[:rate] }.uniq).must_equal([2044.11])
+      end
+
+      it "skips invalid currency codes" do
+        json = <<~JSON
+          [{"id":1,"Code":"999","Ccy":"XX","CcyNm_EN":"Invalid","Nominal":"1","Rate":"1.5","Diff":"0","Date":"01.04.2026"}]
+        JSON
+        records = adapter.parse(json)
+
+        _(records).must_be_empty
+      end
+
+      it "handles empty response" do
+        records = adapter.parse("[]")
+
+        _(records).must_be_empty
+      end
+    end
+  end
+end
