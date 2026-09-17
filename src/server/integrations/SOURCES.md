@@ -1,0 +1,13 @@
+# Integration Sources
+
+The adapters issue real HTTPS requests. Unit tests use controlled protocol responses; those tests do not verify third-party account access.
+
+- Bocha: [official MCP implementation](https://github.com/BochaAI/bocha-search-mcp/blob/285bf4064a3317ad0f29966da8af5e1fdace14f1/src/bocha_search_mcp/server.py), direct `POST /v1/web-search` adapter. Upstream MCP source has no declared license; it is retained as protocol evidence rather than copied application code.
+- Amap: official `@amap/amap-maps-mcp-server@0.0.8`, [transit REST documentation](https://lbs.amap.com/api/webservice/guide/api/direction), and [bus information documentation](https://lbs.amap.com/api/webservice/guide/api/bus-inquiry). Direct REST preserves departure date/time and service-time fields filtered by the MCP package. Coordinates remain GCJ-02.
+- QWeather: [official OpenAPI](https://github.com/qwd/dev-site/blob/bdbf57c82fa7580b4bea1497ba59e37e66170086/assets/openapi/qweather-apis-zh.yml) and [authentication](https://github.com/qwd/dev-site/blob/bdbf57c82fa7580b4bea1497ba59e37e66170086/content/zh/docs/configuration/authentication.md). Uses v1 weather, latitude-first path parameters, `localTime` with the documented capitalization, and API Key or Ed25519 JWT. Current v1 examples do not include a measurement timestamp; the adapter returns `dataAt: null`.
+- Tencent ima: official skill bundle [1.1.10](https://app-dl.ima.qq.com/skills/ima-skills-1.1.10.zip), specifically `notes/references/api.md` and `knowledge-base/references/api.md`. Direct read-only adapters; authentication requires the user's Client ID and API Key.
+- Calendar: [holiday-cn snapshot](https://github.com/NateScarlet/holiday-cn/blob/159faa58969f6a89ecc671dc04001837c4dca13e/2026.json), MIT, copyright 2019 NateScarlet, with the [official 2026 notice](https://www.gov.cn/zhengce/zhengceku/202511/content_7047091.htm). The copied 2026 exceptions retain their MIT notice in `HOLIDAY-LICENSE`. Other years' workday policy is explicitly unknown. `lunar-typescript@1.8.6` is the separate MIT calendar algorithm dependency.
+- Open-Meteo: [forecast API](https://open-meteo.com/en/docs) and [terms](https://open-meteo.com/en/terms). Optional international source; the free hosted endpoint is for non-commercial use. Responses retain their provider, model time, units, and attribution.
+- Frankfurter: [official project API](https://frankfurter.dev/). Queries ECB reference rates and returns the actual rate date; no claim of a settlement or market price.
+
+No configured connector token is returned to the workbench, injected into the model, or included in source URLs. Provider failure bodies are excluded from error messages. A query failure does not become a successful empty result.
