@@ -1,0 +1,66 @@
+name: personal-agent
+services:
+  app:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+      target: app
+    image: personal-agent-app:0.1.0
+    restart: unless-stopped
+    init: false
+    environment:
+      HOST: 0.0.0.0
+      PORT: 3420
+      DATA_DIR: /app/data
+      APP_WORKSPACE_DIR: /shared/workspaces
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?required}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:?required}
+      COOKIE_SECURE: "true"
+      PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:?required}
+      BROWSER_SERVICE_URL: http://browser:3101
+      BROWSER_SERVICE_TOKEN: ${BROWSER_SERVICE_TOKEN:?required}
+    ports:
+      - "127.0.0.1:3420:3420"
+    volumes:
+      - ../state/app:/app/data
+      - ../state/workspaces:/shared/workspaces
+    mem_limit: 768m
+    pids_limit: 128
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3420/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    depends_on:
+      browser:
+        condition: service_started
+  browser:
+    hostname: personal-agent-browser
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+      target: browser
+    image: personal-agent-browser:0.1.0
+    restart: unless-stopped
+    stop_grace_period: 30s
+    environment:
+      BROWSER_SERVICE_HOST: 0.0.0.0
+      BROWSER_SERVICE_PORT: 3101
+      BROWSER_DATA_DIR: /browser/data
+      BROWSER_WORKSPACE_DIR: /shared/workspaces
+      BROWSER_SERVICE_TOKEN: ${BROWSER_SERVICE_TOKEN:?required}
+    volumes:
+      - ../state/browser:/browser/data
+      - ../state/workspaces:/shared/workspaces
+    shm_size: 256m
+    mem_limit: 1280m
+    pids_limit: 256
+    security_opt:
+      - seccomp=./chromium-seccomp.json
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3101/internal/status',{headers:{authorization:'Bearer '+process.env.BROWSER_SERVICE_TOKEN}}).then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
