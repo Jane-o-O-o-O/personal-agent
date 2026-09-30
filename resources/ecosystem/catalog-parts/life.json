@@ -1,0 +1,170 @@
+[
+  {
+    "id": "luckin-coffee-skill",
+    "name": "My Coffee 瑞幸咖啡官方 Skill",
+    "platform": "瑞幸咖啡",
+    "category": "life",
+    "kind": "skill-bundle",
+    "sourceType": "archive",
+    "format": "zip",
+    "version": "0.8.4",
+    "url": "https://unpkg.luckincoffeecdn.com/@luckin/my-coffee-skill@0.8.4/dist/my-coffee-skill.zip",
+    "homepage": "https://open.lkcoffee.com/skill",
+    "publisher": "Luckin Coffee",
+    "license": "CC-BY-ND-4.0",
+    "evidence": [
+      "https://open.lkcoffee.com/skill",
+      "https://open.lkcoffee.com/mcp",
+      "https://open.lkcoffee.com/docs"
+    ],
+    "access": "瑞幸个人账号登录开放平台创建 Token；运行时配置 LUCKIN_MCP_TOKEN。",
+    "piIntegration": "保留原始指令型 Skill，通过 Pi MCP 接入 https://gwmcp.lkcoffee.com/order/user/mcp 的 Streamable HTTP 服务；订单批准和媒体回传在产品层实现。",
+    "limitations": [
+      "发布包包含 SKILL.md、manifest.json、CHANGELOG.md 和 LICENSE，无独立执行脚本或 MCP 服务端源码。",
+      "仅到店自取，不支持外送；用户自行扫码付款，不能视为自动扣款。",
+      "下单前确认门店与商品，执行价格预览；位置必须来自用户，VPS 出口 IP 不代表用户位置。",
+      "许可证为 CC BY-ND 4.0，保留官方原包和署名，不分发改写版本。",
+      "未登录账号或执行真实订单联调。"
+    ]
+  },
+  {
+    "id": "didi-ride-skill-official",
+    "name": "滴滴出行官方 Ride Skill",
+    "platform": "滴滴出行",
+    "category": "life",
+    "kind": "skill-bundle",
+    "sourceType": "github",
+    "repo": "didi/didi-ride-skill",
+    "ref": "eaaaf96d4e60c073a8e4021e24301afb52c134fb",
+    "version": "1.1.3",
+    "url": "https://github.com/didi/didi-ride-skill",
+    "homepage": "https://mcp.didichuxing.com/skills.md",
+    "publisher": "DiDi MCP Team",
+    "license": "MIT",
+    "evidence": [
+      "https://mcp.didichuxing.com/skills.md",
+      "https://clawhub.ai/didi/didi-ride-skill-official"
+    ],
+    "access": "已注册滴滴个人账号激活 DIDI_MCP_KEY；生产直接叫车另需 Pro 权限生效、实名认证与免密支付。",
+    "piIntegration": "完整保存官方 SKILL.md、references、assets 与许可证；按第一方 API 文档接 Pi Streamable HTTP MCP，首先使用 mcp-servers-sandbox 调试端点。",
+    "limitations": [
+      "官方 Skill 使用 OpenClaw 配置、消息和 cron 命令，需改由 Pi 项目的凭据、渠道和任务调度实现。",
+      "Skill 内 mcp-dev.didichuxing.com 等环境配置须与当前官方 API 文档交叉核对；本项目默认以官网沙箱端点为准。",
+      "Beta 返回唤端链接；生产创建订单会产生真实叫车与费用，必须确认车型、起终点和价格。",
+      "未激活账号或执行沙箱、生产联调。"
+    ]
+  },
+  {
+    "id": "didi-mcp-api",
+    "name": "滴滴 MCP Server 官方 API 文档",
+    "platform": "滴滴出行",
+    "category": "life",
+    "kind": "docs",
+    "sourceType": "document",
+    "filename": "api.md",
+    "url": "https://mcp.didichuxing.com/api.md",
+    "homepage": "https://mcp.didichuxing.com/",
+    "publisher": "滴滴出行",
+    "access": "公开开发文档，无需登录；接口调用需要个人 MCP Key。",
+    "piIntegration": "用于实现 MCP 传输、工具参数、返回结果和订单状态处理；开发端点为 https://mcp.didichuxing.com/mcp-servers-sandbox?key=YOUR_MCP_KEY。",
+    "limitations": [
+      "公开文档不是 MCP 服务端开源代码；保存抓取时的快照与来源。",
+      "生产端点与沙箱端点分开；归档过程不发送业务请求。"
+    ]
+  },
+  {
+    "id": "didi-skills-guide",
+    "name": "滴滴官方 Skills 开发指南",
+    "platform": "滴滴出行",
+    "category": "life",
+    "kind": "docs",
+    "sourceType": "document",
+    "filename": "skills.md",
+    "url": "https://mcp.didichuxing.com/skills.md",
+    "homepage": "https://mcp.didichuxing.com/",
+    "publisher": "滴滴出行",
+    "access": "公开文档，无需登录。",
+    "piIntegration": "保存官方 GitHub 与 ClawHub 发布归属证据及出行流程参考。",
+    "limitations": [
+      "原安装示例依赖 OpenClaw、clawhub，归档不代表已在 Pi 中安装或运行。"
+    ]
+  },
+  {
+    "id": "ctrip-wendao-skill",
+    "name": "携程问道官方 AI Travel Assistant Skill",
+    "platform": "携程问道",
+    "category": "life",
+    "kind": "skill-bundle",
+    "sourceType": "archive",
+    "format": "zip",
+    "version": "1.0.1",
+    "url": "https://api.skillhub.cn/api/v1/download?slug=ctripaitravelassistant&namespace=org-rdj3h8zv&version=1.0.1",
+    "homepage": "https://skillhub.cn/skills/org-rdj3h8zv/ctripaitravelassistant",
+    "publisher": "上海携程商务有限公司（SkillHub 认证）",
+    "evidence": [
+      "https://api.skillhub.cn/api/v1/skills/ctripaitravelassistant?namespace=org-rdj3h8zv",
+      "https://www.ctrip.com/wendao/openclaw"
+    ],
+    "access": "通过携程官方页面申请 WENDAO_API_KEY，确认账号额度和计费。",
+    "piIntegration": "完整保存官方 SKILL.md、scripts/wendao_query.js 和分发元数据；可封装 Node.js 查询脚本为 Pi 工具，凭据通过环境变量注入。",
+    "limitations": [
+      "分发版本为 1.0.1，包内 SKILL.md 仍标记 1.0.0；原样记录两者。",
+      "当前范围为旅行问答、机酒火车票查询、比较与行程规划；未核实自主提交订单或付款接口。",
+      "认证发布包可公开获取，包内未声明通用开源许可证；不得因此假定可任意重新分发修改版本。",
+      "未申请 Key 或执行账号联调。"
+    ]
+  },
+  {
+    "id": "meituan-trip-skill",
+    "name": "美团酒旅官方 Skill",
+    "platform": "美团酒旅",
+    "category": "life",
+    "kind": "skill-bundle",
+    "sourceType": "archive",
+    "format": "zip",
+    "version": "1.0.1",
+    "readiness": "reference-only",
+    "url": "https://api.skillhub.cn/api/v1/download?slug=meituan-trip&namespace=org-tzvk0vz3&version=1.0.1",
+    "homepage": "https://skillhub.cn/skills/org-tzvk0vz3/meituan-trip",
+    "publisher": "北京三快在线科技有限公司（SkillHub 认证）",
+    "evidence": [
+      "https://api.skillhub.cn/api/v1/skills/meituan-trip?namespace=org-tzvk0vz3"
+    ],
+    "access": "主 Skill 要求美团 Passport 用户授权与 MEITUAN_HT_TOKEN；公开包的授权依赖未满足普通 VPS 条件，须取得厂商可用的外网授权路线后启用。",
+    "piIntegration": "归档主 Skill、嵌入的 meituan-passport-user-auth、scripts/auth.sh 与元数据；授权可用后通过官方 @meituan-travel/ht-ai-open CLI 封装查询工具。",
+    "limitations": [
+      "嵌入授权 Skill 明确写明仅支持美团内网，外网无法访问 npm registry 和授权接口；主 Skill 未提供 Developer Key 备用路线。",
+      "授权 install.sh 查找本地 mtuser-pt-passport-*.tgz，但公开 ZIP 不包含该安装包；公共 npm 的 @mtuser/pt-passport 返回 404。",
+      "可获取官方发布资产不等于已验证个人 VPS 可运行；本条仅作为参考资产归档。",
+      "查询仅使用官方业务 CLI；范围限查询、旅行规划与业务跳转，不包括外卖、跑腿或支付。",
+      "包内未声明通用开源许可证，保留发布者与原始内容。",
+      "未执行安装脚本、Passport 授权或业务查询。"
+    ]
+  },
+  {
+    "id": "meituan-trip-cli",
+    "name": "美团酒旅官方 ht-ai-open CLI 发布包",
+    "platform": "美团酒旅",
+    "category": "life",
+    "kind": "cli-package",
+    "sourceType": "archive",
+    "format": "tar.gz",
+    "version": "0.0.4",
+    "readiness": "reference-only",
+    "url": "https://registry.npmjs.org/@meituan-travel/ht-ai-open/-/ht-ai-open-0.0.4.tgz",
+    "homepage": "https://www.npmjs.com/package/@meituan-travel/ht-ai-open",
+    "publisher": "@meituan-travel（由美团官方 Skill 引用）",
+    "license": "MIT (package.json)",
+    "evidence": [
+      "https://api.skillhub.cn/api/v1/skills/meituan-trip/file?path=SKILL.md&namespace=org-tzvk0vz3&version=1.0.1",
+      "https://registry.npmjs.org/@meituan-travel%2fht-ai-open/0.0.4"
+    ],
+    "access": "公开 npm 发布包，无需登录即可下载；业务调用仍需要有效 Passport 用户 Token。",
+    "piIntegration": "保留 package.json 与 dist/index.js 供审查官方 CLI 参数和输出，授权可用后再安装固定版本并封装 Pi 查询工具。",
+    "limitations": [
+      "这是编译后的 CLI 发布代码，不含 src 源码；未确认公开源代码仓库。",
+      "下载该 CLI 不能补齐 meituan-passport-user-auth 缺失的授权安装包或内网条件。",
+      "归档不执行 npm 安装或 CLI 业务请求。"
+    ]
+  }
+]

@@ -1,0 +1,77 @@
+[
+  {
+    "id": "dingtalk-mcp-package",
+    "name": "DingTalk MCP 官方 npm 发布代码",
+    "platform": "钉钉",
+    "category": "organization",
+    "kind": "mcp-package",
+    "sourceType": "archive",
+    "format": "tar.gz",
+    "version": "1.1.21",
+    "url": "https://registry.npmjs.org/dingtalk-mcp/-/dingtalk-mcp-1.1.21.tgz",
+    "homepage": "https://github.com/open-dingtalk/dingtalk-mcp",
+    "publisher": "钉钉（官方 README 引用 dingtalk-mcp）",
+    "license": "MIT (package.json)",
+    "integrity": "sha512-TLBqO4xxC0A4IfoV40+iP3/Jg1BSxvrrCg41JyERiUC2+pXLO1oVf2nXbOAZFv8eeZbTvIJecCKXaASbKPRYZw==",
+    "evidence": [
+      "https://github.com/open-dingtalk/dingtalk-mcp/blob/12a87ec7c999945e734d9bc507ed875f11e0d339/README.md",
+      "https://registry.npmjs.org/dingtalk-mcp/1.1.21",
+      "https://open.dingtalk.com/document/ai-dev/dingtalk-server-api-mcp-overview"
+    ],
+    "access": "组织应用 Client ID/Secret 与对应资源权限；按工具场景配置机器人 Code、Access Token、Agent ID。",
+    "piIntegration": "包内 dist/cli.js 使用 stdio MCP；后续在受控目录安装固定版本与依赖，通过 Pi MCP 启动，按 ACTIVE_PROFILES 限定需要的办公工具。",
+    "limitations": [
+      "公开 GitHub 仓库只有 README，不能视为 MCP 实现源码；此 npm 包包含编译 JavaScript、类型声明、Markdown 资源和工具 YAML，共 36 文件，不含完整 TypeScript src。",
+      "npm 包未包含运行时 node_modules；后续运行仍需安装 package.json 声明的依赖，归档过程不安装。",
+      "DingTalkMCPServer.js 原始实现会在 stderr 打印请求 Headers 与 Body，头部可能含访问 Token；启用前须审查并处理日志脱敏。",
+      "厂商发布代码保持原样；尚未启动 MCP 或完成组织账号联调。"
+    ]
+  },
+  {
+    "id": "wps365-cli-linux-x86-64",
+    "name": "WPS 365 官方 Linux x86_64 CLI 发布包",
+    "platform": "WPS 365",
+    "category": "organization",
+    "kind": "cli-package",
+    "sourceType": "archive",
+    "format": "tar.gz",
+    "version": "v0.3.6",
+    "url": "https://open-docs.wpscdn.cn/cli/releases/download/v0.3.6/wps365-cli-x86_64-unknown-linux-gnu.tar.gz",
+    "homepage": "https://github.com/wps365-open/cli/releases/tag/v0.3.6",
+    "publisher": "WPS 365",
+    "license": "MIT (official README)",
+    "expectedSha256": "68b955a8488edcb82ed5373752a937d9ec3588abfb550223dda3d6f0c1a27588",
+    "evidence": [
+      "https://github.com/wps365-open/cli/blob/945a1d6f8df5f4e54100ff9b3d8ad3eb8f87cb08/install.sh",
+      "https://api.github.com/repos/wps365-open/cli/releases/tags/v0.3.6",
+      "https://open-docs.wpscdn.cn/cli/releases/download/v0.3.6/checksums-sha256.txt"
+    ],
+    "access": "企业账号、自建应用与管理员批准；配置 WPS365_CLIENT_ID/SECRET，并按业务需要进行应用身份或用户设备码授权。",
+    "piIntegration": "供后续 Linux x86_64 VPS 使用；确认校验值后安装到受控工具目录，包装官方 CLI，按场景限制命令和资源权限。",
+    "limitations": [
+      "tar.gz 仅包含已编译 wps365-cli 二进制，不包含 Go 实现源码；公开 GitHub 仓库目前仅有文档、安装器和图片。",
+      "官方下载 CDN 的实际 SHA-256 与 GitHub release digest、官方 checksums-sha256.txt 一致。",
+      "仅适用于 Linux x86_64 目标；不能直接用于当前 macOS 或 Linux ARM64。",
+      "CLI 首次运行会从官方 CDN 获取 spec，业务调用也需要访问 WPS 服务；归档不代表已经配置离线命令定义。",
+      "未执行安装器或二进制，未创建应用、登录或调用业务接口。"
+    ]
+  },
+  {
+    "id": "wps365-cli-checksums",
+    "name": "WPS 365 CLI v0.3.6 官方 SHA-256 清单",
+    "platform": "WPS 365",
+    "category": "organization",
+    "kind": "docs",
+    "sourceType": "document",
+    "filename": "checksums-sha256.txt",
+    "version": "v0.3.6",
+    "url": "https://open-docs.wpscdn.cn/cli/releases/download/v0.3.6/checksums-sha256.txt",
+    "homepage": "https://github.com/wps365-open/cli/releases/tag/v0.3.6",
+    "publisher": "WPS 365",
+    "access": "公开发布校验清单，无需登录。",
+    "piIntegration": "固定记录官方 CLI 发布包校验值，用于后续 VPS 部署前核验。",
+    "limitations": [
+      "公开清单包含多平台文件；本项目当前只归档 Linux x86_64 发布包。"
+    ]
+  }
+]

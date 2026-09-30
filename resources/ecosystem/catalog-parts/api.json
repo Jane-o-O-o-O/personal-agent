@@ -1,0 +1,185 @@
+[
+  {
+    "id": "amap-cli-skill",
+    "name": "高德地图 CLI Skill",
+    "platform": "高德地图",
+    "category": "maps",
+    "kind": "skill-bundle",
+    "sourceType": "archive",
+    "format": "zip",
+    "url": "https://a.amap.com/jsapi/static/openClaw/amap-cli-skill.zip",
+    "homepage": "https://lbs.amap.com/",
+    "publisher": "高德地图开放平台",
+    "access": "使用地图时需高德 Web JS API Key；部分账号还需 JS API 安全密钥。归档不需凭据。",
+    "piIntegration": "可参考 SKILL.md 为 Pi 提供地图 CLI 操作说明；配套 CLI 为 @amap-lbs/amap-gui。须适配其中读取 OpenClaw 配置的步骤。",
+    "limitations": "官方 ZIP 只有 SKILL.md 和 macOS 附属文件，不含 CLI 开发源码；地图容器使用 Electron，普通无图形界面的 VPS 不能直接显示地图。",
+    "evidence": [
+      "https://a.amap.com/jsapi/static/openClaw/amap-cli-skill.zip",
+      "https://registry.npmjs.org/@amap-lbs%2famap-gui/latest"
+    ]
+  },
+  {
+    "id": "amap-maps-mcp-package",
+    "name": "高德地图 MCP 官方发布代码",
+    "platform": "高德地图",
+    "category": "maps",
+    "kind": "mcp-package",
+    "sourceType": "archive",
+    "format": "tar.gz",
+    "url": "https://registry.npmjs.org/@amap/amap-maps-mcp-server/-/amap-maps-mcp-server-0.0.8.tgz",
+    "homepage": "https://lbs.amap.com/api/mcp-server/gettingstarted",
+    "version": "0.0.8",
+    "publisher": "高德地图开放平台",
+    "access": "高德地图 Web 服务 API Key，通过 AMAP_MAPS_API_KEY 配置。归档不需凭据。",
+    "piIntegration": "可通过 Pi MCP 扩展以 stdio 接入；官方同时推荐 https://mcp.amap.com/mcp?key=... 的 Streamable HTTP 服务。",
+    "limitations": "npm 包包含 build/index.js、package.json、README.md，是公开发布的可读 JavaScript 代码，不是完整 TypeScript 开发仓库。调用仍依赖高德服务、Key、账户配额和服务条款。",
+    "evidence": [
+      "https://lbs.amap.com/api/mcp-server/gettingstarted",
+      "https://registry.npmjs.org/@amap%2famap-maps-mcp-server/latest"
+    ]
+  },
+  {
+    "id": "amap-gui-cli-package",
+    "name": "高德地图 GUI CLI 官方发布包",
+    "platform": "高德地图",
+    "category": "maps",
+    "kind": "cli-package",
+    "sourceType": "archive",
+    "format": "tar.gz",
+    "url": "https://registry.npmjs.org/@amap-lbs/amap-gui/-/amap-gui-1.0.3.tgz",
+    "homepage": "https://lbs.amap.com/",
+    "version": "1.0.3",
+    "publisher": "高德地图开放平台",
+    "access": "高德 Web JS API Key（AMAP_KEY），按账号要求提供 AMAP_SECURITY_KEY。归档不需凭据。",
+    "piIntegration": "Pi 工具可在具备图形运行环境的机器调用 amap-gui，输出结构化 JSON；与归档的 amap-cli-skill 配套。",
+    "limitations": "这是含 SKILL.md、README、Electron dist 和地图图片资产的 npm 发布包；dist 使用混淆，不是完整开发源码。须另外安装依赖并具备 Electron 显示环境，尚未运行或验证 VPS 无头部署。",
+    "evidence": [
+      "https://a.amap.com/jsapi/static/openClaw/amap-cli-skill.zip",
+      "https://registry.npmjs.org/@amap-lbs%2famap-gui/latest"
+    ]
+  },
+  {
+    "id": "amap-mcp-getting-started",
+    "name": "高德地图 MCP 官方接入文档",
+    "platform": "高德地图",
+    "category": "maps",
+    "kind": "docs",
+    "sourceType": "document",
+    "filename": "getting-started.html",
+    "url": "https://lbs.amap.com/api/mcp-server/gettingstarted",
+    "homepage": "https://lbs.amap.com/api/mcp-server/summary",
+    "publisher": "高德地图开放平台",
+    "access": "文档公开；调用服务需要高德开放平台 Key。",
+    "piIntegration": "文档包含官方 Streamable HTTP 端点、stdio npm 包、AMAP_MAPS_API_KEY 和接入配置，供 Pi MCP 配置适配使用。",
+    "limitations": "静态 HTML 快照保存接入正文和官方配置；页面样式和图片可能仍引用线上地址，配额及最新政策需查官网。",
+    "evidence": [
+      "https://lbs.amap.com/api/mcp-server/gettingstarted"
+    ]
+  },
+  {
+    "id": "youdao-note-mcp-docs",
+    "name": "有道云笔记 MCP 官方工具文档",
+    "platform": "有道云笔记",
+    "category": "knowledge",
+    "kind": "docs",
+    "sourceType": "document",
+    "filename": "mcp-tools.html",
+    "url": "https://mopen.163.com/doc/",
+    "homepage": "https://mopen.163.com/",
+    "publisher": "网易智能开发者平台",
+    "access": "注册网易智能开发者平台取得 API Key，通过 x-api-key 请求头使用；当前仅授权注册手机号下的有道云笔记内容。",
+    "piIntegration": "官方远程地址 https://open.mail.163.com/api/ynote/mcp/sse 使用 legacy SSE，需兼容的 stdio/Streamable HTTP 桥接器后接入 Pi。文档含创建、目录、内容读取、搜索、剪藏、最近收藏等工具输入输出。",
+    "limitations": "Remote only：未核实公开的有道 MCP 服务端源码或完整官方 Skill 包；本条归档实质工具文档 HTML，不是服务端代码。Pi 当前不原生支持 legacy SSE；授权和写入操作需后续联调。",
+    "evidence": [
+      "https://mopen.163.com/doc/",
+      "https://mopen.163.com/"
+    ]
+  },
+  {
+    "id": "gitee-mcp-source",
+    "name": "Gitee MCP 官方完整源码",
+    "platform": "Gitee",
+    "category": "development",
+    "kind": "mcp-source",
+    "sourceType": "git",
+    "repo": "https://gitee.com/oschina/mcp-gitee.git",
+    "ref": "2c585e26c36840c1cb67e7b6643f64791fa43a5e",
+    "branch": "master",
+    "url": "https://gitee.com/oschina/mcp-gitee.git",
+    "homepage": "https://gitee.com/oschina/mcp-gitee",
+    "version": "2c585e26c36840c1cb67e7b6643f64791fa43a5e",
+    "publisher": "Gitee / OSChina",
+    "access": "Gitee 个人访问令牌；构建本地服务器需 Go 1.23.0 或以上。归档不需令牌。",
+    "piIntegration": "可构建本地 stdio MCP 服务器后接入 Pi；也可配置官方 https://api.gitee.com/mcp，并携带 Authorization: Bearer 个人访问令牌。",
+    "limitations": "源码为固定提交快照，包含 main.go、go.mod、operations、文档和 MIT LICENSE。Gitee ZIP 下载对客户端 User-Agent 返回不同内容，因此通过官方 Git 获取后归档。尚未构建或执行；仓库/Issue/PR 的读写、工具白名单与令牌范围需项目层控制。",
+    "evidence": [
+      "https://gitee.com/oschina/mcp-gitee",
+      "https://gitee.com/api/v5/repos/oschina/mcp-gitee/branches/master"
+    ]
+  },
+  {
+    "id": "gitcode-openapi-docs-source",
+    "name": "GitCode / AtomGit 官方产品说明及反馈仓库",
+    "platform": "GitCode / AtomGit",
+    "category": "development",
+    "kind": "docs",
+    "sourceType": "git",
+    "repo": "https://gitcode.com/GitCode/GitCode-Docs.git",
+    "ref": "91f04108c2f62eb3ead20a4172331b46d13e36d8",
+    "branch": "main",
+    "url": "https://gitcode.com/GitCode/GitCode-Docs.git",
+    "homepage": "https://docs.gitcode.com/docs/apis/",
+    "version": "91f04108c2f62eb3ead20a4172331b46d13e36d8",
+    "publisher": "AtomGit 官方社区 / GitCode",
+    "access": "公开文档归档不需账号；调用 API 需 GitCode 个人访问令牌及相应仓库权限。",
+    "piIntegration": "本仓库仅作为产品说明、许可和官方反馈来源保留；开发 HTTP 工具应使用另行归档的 docs.gitcode.com API 正文，不能依据本仓库实现接口。",
+    "limitations": "此固定提交只有产品使用 README 和用户协议等 9 个文件，不包含 OpenAPI 规范、端点正文或后端服务代码；不是官方 API 文档站源码。官网及仓库名已显示 AtomGit 品牌；接口接入需以实际服务和最新 API 文档验证。",
+    "evidence": [
+      "https://docs.gitcode.com/docs/apis/",
+      "https://gitcode.com/GitCode-official-team/GitCode-Docs",
+      "https://gitcode.com/GitCode/GitCode-Docs"
+    ]
+  },
+  {
+    "id": "gitcode-openapi-docs",
+    "name": "GitCode / AtomGit 官方中文 OpenAPI 全部正文",
+    "platform": "GitCode / AtomGit",
+    "category": "development",
+    "kind": "docs",
+    "sourceType": "document-set",
+    "url": "https://docs.gitcode.com/sitemap.xml",
+    "urlPrefix": "https://docs.gitcode.com/docs/apis/",
+    "homepage": "https://docs.gitcode.com/docs/apis/",
+    "publisher": "AtomGit / GitCode",
+    "access": "API 文档公开，归档不需账号；调用 API 需 GitCode 个人访问令牌及相应资源权限。",
+    "piIntegration": "根据本地认证、参数、响应及全部中文端点文档实现 HTTP 客户端和 Pi 工具。包括仓库、提交、文件、Issue、Pull Request、组织、用户和企业等 API；不是现成 MCP。",
+    "limitations": "Remote only：本条保存 sitemap 当前列出的 368 个中文 API 正文 HTML 快照及 sitemap，不是后端服务代码或原始 OpenAPI JSON。样式、动态示例切换及图片可能仍引用线上资产。入口仓库只有产品说明，不能替代本正文归档。中文正文示例使用 api.gitcode.com，生产接入需验证最新服务地址、权限和配额。",
+    "evidence": [
+      "https://docs.gitcode.com/sitemap.xml",
+      "https://docs.gitcode.com/docs/apis/",
+      "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-commits",
+      "https://docs.gitcode.com/docs/apis/get-api-v-5-repos-owner-repo-contents-path",
+      "https://docs.gitcode.com/docs/apis/post-api-v-5-repos-owner-repo-pulls"
+    ]
+  },
+  {
+    "id": "coding-openapi-spec",
+    "name": "CODING 官方完整 OpenAPI 规范",
+    "platform": "CODING",
+    "category": "development",
+    "kind": "docs",
+    "sourceType": "document",
+    "filename": "openapi.yaml",
+    "url": "https://assets.codehub.cn/document/openapi/353b949e0b605519499f4c684f185b2649231b9f.yaml",
+    "homepage": "https://help.coding.net/openapi",
+    "version": "353b949e0b605519499f4c684f185b2649231b9f",
+    "publisher": "CODING",
+    "access": "公开规范归档不需账号；调用需团队上下文及 OAuth、个人访问令牌或项目令牌，相应 API 权限。",
+    "piIntegration": "OpenAPI 3.0 YAML 包含认证、Scope、请求路径和模型定义，可据此生成客户端或封装为 Pi HTTP 工具。",
+    "limitations": "这是官方公开 API 规范，不是 CODING 后端源码或现成 MCP 实现。文档首页为 JavaScript 页面，归档其声明的完整 YAML，避免仅保存页面壳。团队权限和接口配额仍由服务端控制。",
+    "evidence": [
+      "https://help.coding.net/openapi",
+      "https://assets.codehub.cn/document/openapi/353b949e0b605519499f4c684f185b2649231b9f.yaml"
+    ]
+  }
+]

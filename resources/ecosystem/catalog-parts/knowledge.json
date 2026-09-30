@@ -1,0 +1,64 @@
+[
+  {
+    "id": "tencent-docs",
+    "name": "腾讯文档官方 Skill",
+    "platform": "腾讯文档",
+    "category": "knowledge",
+    "kind": "skill-bundle",
+    "sourceType": "archive",
+    "format": "zip",
+    "version": "1.0.41",
+    "url": "https://cdn.addon.tencentsuite.com/static/tencent-docs.zip",
+    "homepage": "https://docs.qq.com/scenario/open-claw.html?nlc=1",
+    "publisher": {
+      "name": "腾讯文档团队",
+      "verified": true,
+      "certifiedName": "腾讯科技（深圳）有限公司"
+    },
+    "evidence": [
+      "https://docs.qq.com/scenario/open-claw.html?nlc=1",
+      "https://docs.gtimg.com/scenario/js/open-claw-2c496d.js",
+      "https://api.skillhub.cn/api/v1/skills/tencent-docs?namespace=tencent-adm",
+      "https://api.skillhub.cn/api/v1/skills/tencent-docs/files?namespace=tencent-adm&version=1.0.41"
+    ],
+    "access": "从官方接入页经 QQ 或微信扫码取得 TENCENT_DOCS_TOKEN，使用本人获授权的文档资源。",
+    "piIntegration": "归档完整 SKILL.md、references、脚本和模板；在 Pi 中复用 Skill 并配置 Node.js、Bash 和 mcporter，或依据文档开发直接 MCP 工具。",
+    "limitations": [
+      "Token 生命周期和四个 MCP 服务的握手、工具范围仍需用户账号联调。",
+      "部分功能有会员、积分或额度要求。",
+      "公开下载地址没有版本号，归档时记录实际 ZIP 的 SHA256 和 SKILL.md 版本。",
+      "归档不执行 setup.sh、安装依赖或登录。"
+    ]
+  },
+  {
+    "id": "ima-skills",
+    "name": "腾讯 ima 官方 Skills",
+    "platform": "腾讯 ima",
+    "category": "knowledge",
+    "kind": "skill-bundle",
+    "sourceType": "archive",
+    "format": "zip",
+    "version": "1.1.10",
+    "url": "https://app-dl.ima.qq.com/skills/ima-skills-1.1.10.zip",
+    "homepage": "https://ima.qq.com/agent-interface",
+    "publisher": {
+      "name": "tencent-ima",
+      "verified": true,
+      "certifiedName": "腾讯科技（深圳）有限公司"
+    },
+    "evidence": [
+      "https://ima.qq.com/agent-interface",
+      "https://fe-static.ima.myqcloud.com/ima/assets/agent-interface/assets/index-awdokTwc.js",
+      "https://api.skillhub.cn/api/v1/skills/ima-skills?namespace=tencent-adm",
+      "https://skillhub.cn/skills/tencent-adm/ima-skills"
+    ],
+    "access": "从 ima 官方接入页取得 IMA_OPENAPI_CLIENTID 和 IMA_OPENAPI_APIKEY，限定本人授权的笔记与知识库。",
+    "piIntegration": "复用根目录及 notes、knowledge-base 的 SKILL.md 和 Node.js 脚本，或依据 references/api.md 实现 Pi API 工具；最低 Node.js 18。",
+    "limitations": [
+      "本次采用第一方接入页当前发布的 1.1.10；SkillHub 最新版本字段为 1.1.9，认证发布者信息来自其结构化 API。",
+      "API Key 需用户提供；实际资源范围、额度和有效期仍需账号联调。",
+      "ima_api.cjs 首次每日调用会检查版本，遇到更新可能返回 -200 并暂停原请求；未来适配时需处理。",
+      "ZIP 附带 __MACOSX、.DS_Store 和 .history 杂项，归档不执行其中任何文件。"
+    ]
+  }
+]

@@ -1,0 +1,308 @@
+[
+  {
+    "id": "kuaidi100-query-skill",
+    "name": "快递100官方物流查询 Skill",
+    "platform": "快递100",
+    "category": "logistics",
+    "kind": "skill-bundle",
+    "origin": "official",
+    "readiness": "conditional",
+    "sourceType": "github",
+    "repo": "kuaidi100-api/kuaidi100-skill",
+    "ref": "f694d1e9f36468448c6249b3c50ea5ad21e610e2",
+    "url": "https://github.com/kuaidi100-api/kuaidi100-skill",
+    "homepage": "https://api.kuaidi100.com/document/",
+    "publisher": "快递100 API 开放平台",
+    "evidence": [
+      "https://api.kuaidi100.com/document/",
+      "https://github.com/kuaidi100-api/kuaidi100-skill/blob/f694d1e9f36468448c6249b3c50ea5ad21e610e2/SKILL.md"
+    ],
+    "access": "官方查询 Skill 声明无 Key 限额模式；正式额度与 KUAIDI100_API_KEY 需在平台确认，当前企业注册页不能证明所有个人都可取得企业权限。",
+    "piIntegration": "保留 SKILL.md 与 Node.js 标准库 script/kuaidi100.js；后续包装 queryTrace、autoNumber、estimatePrice、estimateTime 等 HTTPS 查询为 Pi 工具。",
+    "limitations": [
+      "此资源提供第一方客户端脚本，不是快递100物流后端源码。",
+      "无 Key 时脚本传字符串 null；免费额度没有明确数值或生产 SLA，未执行实际运单请求。",
+      "顺丰速运、顺丰快运、中通按 Skill 要求传 phone；不得假定所有接口仅需手机后四位。",
+      "查询脚本用 URL 参数带 Key、单号及手机号，本项目包装时需隐藏敏感 URL 并设置超时和错误处理。",
+      "包内未核实通用开源许可证；保存原始公开资产不意味着任意改写分发许可。"
+    ]
+  },
+  {
+    "id": "kuaidi100-mcp-nodejs",
+    "name": "快递100官方 Node.js stdio MCP 源码",
+    "platform": "快递100",
+    "category": "logistics",
+    "kind": "mcp-source",
+    "origin": "official",
+    "readiness": "conditional",
+    "sourceType": "github",
+    "repo": "kuaidi100-api/kuaidi100-MCP-Nodejs",
+    "ref": "18d2d8d5031aa1622af5003f17bf73f4920f8eb2",
+    "version": "1.0.4 (package.json)",
+    "url": "https://github.com/kuaidi100-api/kuaidi100-MCP-Nodejs",
+    "homepage": "https://api.kuaidi100.com/document/",
+    "publisher": "快递100 API 开放平台",
+    "license": "Apache-2.0",
+    "evidence": [
+      "https://api.kuaidi100.com/document/",
+      "https://github.com/kuaidi100-api/kuaidi100-MCP-Nodejs/blob/18d2d8d5031aa1622af5003f17bf73f4920f8eb2/README.md"
+    ],
+    "access": "KUAIDI100_API_KEY 必填；Node.js >=18。注册、试用额度和生产套餐以快递100平台实际开放条件为准。",
+    "piIntegration": "Pi 支持 stdio MCP，可参考 TypeScript query_trace、estimate_time、estimate_time_with_logistic、estimate_price 工具定义；部署前在项目适配层修正协议日志并固定依赖。",
+    "limitations": [
+      "index.ts 连接后写普通 stdout 日志，可能干扰 MCP 帧；package.json 包含同名包自依赖，需要审查后才运行。",
+      "源码调用远程 api.kuaidi100.com/stdio，开源不等于物流数据服务免费。",
+      "phone 描述与官方查询 Skill 不完全一致，以所用 API 文档及业务响应为准。",
+      "只归档源码，未构建、安装或带 Key 运行。"
+    ]
+  },
+  {
+    "id": "kuaidi100-user-skill",
+    "name": "快递100个人用户版官方 Skill 与 API 客户端",
+    "platform": "快递100",
+    "category": "logistics",
+    "kind": "skill-bundle",
+    "origin": "official",
+    "readiness": "conditional",
+    "sourceType": "github",
+    "repo": "kuaidi100-api/kuaidi100-user-skill",
+    "ref": "a1099fb2bbedb0254b45c54e591d3451876be60d",
+    "url": "https://github.com/kuaidi100-api/kuaidi100-user-skill",
+    "homepage": "https://api.kuaidi100.com/document/",
+    "publisher": "快递100 API 开放平台",
+    "evidence": [
+      "https://api.kuaidi100.com/document/",
+      "https://github.com/kuaidi100-api/kuaidi100-user-skill/blob/a1099fb2bbedb0254b45c54e591d3451876be60d/SKILL.md",
+      "https://github.com/kuaidi100-api/kuaidi100-user-skill/blob/a1099fb2bbedb0254b45c54e591d3451876be60d/references/api_docs.md"
+    ],
+    "access": "用户自行在微信快递100小程序『我的 → API KEY → 申请』取 KUAIDI100_USER_API_KEY；Python >=3.7 与 requests。服务端订单和物流查询需此 Key。",
+    "piIntegration": "保存 SKILL.md、Python 客户端和 references；后续仅包装 queryUserOrders、trackShipment 等只读账户查询，凭据通过运行时环境注入。",
+    "limitations": [
+      "个人 USER_API_KEY 与企业/stdio 的 KUAIDI100_API_KEY 不能推定互换；个人 API 主机为 p.kuaidi100.com。",
+      "无 Key 模式不能读取服务器个人物流，只能使用有限接口与本地缓存。",
+      "文档当前写明每分钟10次、每天100次、每用户最多3个有效密钥，不外推至其他产品或将来套餐。",
+      "完整包包含预下单、取消和地址缓存代码；本轮只归档，不执行，不默认启用写操作，也不导入个人地址。",
+      "包内未核实通用开源许可证；OpenClaw 的配置和缓存目录要在 Pi 产品层另行实现。"
+    ]
+  },
+  {
+    "id": "holiday-cn-data",
+    "name": "中国节假日社区 JSON / ICS 数据与抓取源码",
+    "platform": "holiday-cn / 国务院公开通知",
+    "category": "calendar",
+    "kind": "data-source",
+    "origin": "community",
+    "readiness": "ready-local",
+    "sourceType": "github",
+    "repo": "NateScarlet/holiday-cn",
+    "ref": "159faa58969f6a89ecc671dc04001837c4dca13e",
+    "url": "https://github.com/NateScarlet/holiday-cn",
+    "homepage": "https://github.com/NateScarlet/holiday-cn",
+    "publisher": "NateScarlet 与社区维护者",
+    "license": "MIT",
+    "evidence": [
+      "https://github.com/NateScarlet/holiday-cn/blob/159faa58969f6a89ecc671dc04001837c4dca13e/README.md",
+      "https://github.com/NateScarlet/holiday-cn/blob/159faa58969f6a89ecc671dc04001837c4dca13e/2026.json",
+      "https://www.gov.cn/zhengce/zhengceku/202511/content_7047091.htm"
+    ],
+    "access": "本地数据查询无需账户和网络；年度更新需读取国务院公开通知并核对社区转换结果。",
+    "piIntegration": "使用固定版本年度 JSON 与 JSON Schema，开发本地 is_workday、next_holiday、count_workdays 工具；保留 papers 来源，按 Asia/Shanghai 计算。",
+    "limitations": [
+      "社区数据不是中国政府开放 API，也不包含公司的实际排班。",
+      "days 不是全年日历；先应用调休例外，未命中日期仍需使用周末规则，相邻年份通知可能影响跨年日期。",
+      "未发布年份返回未公布，不能自动猜测放假安排；不让每次用户查询依赖 GitHub/CDN。"
+    ]
+  },
+  {
+    "id": "lunar-typescript-calendar",
+    "name": "农历与二十四节气 TypeScript 本地计算库",
+    "platform": "lunar-typescript",
+    "category": "calendar",
+    "kind": "library-source",
+    "origin": "community",
+    "readiness": "ready-local",
+    "sourceType": "github",
+    "repo": "6tail/lunar-typescript",
+    "ref": "f086189a0b159cd5d71d1b23090ccf034444fa04",
+    "version": "1.8.6 (package.json)",
+    "url": "https://github.com/6tail/lunar-typescript",
+    "homepage": "https://6tail.cn/calendar/api.html",
+    "publisher": "6tail 与社区维护者",
+    "license": "MIT",
+    "evidence": [
+      "https://github.com/6tail/lunar-typescript/blob/f086189a0b159cd5d71d1b23090ccf034444fa04/README.md",
+      "https://github.com/6tail/lunar-typescript/blob/f086189a0b159cd5d71d1b23090ccf034444fa04/src/lib/Lunar.ts"
+    ],
+    "access": "本地日期计算无需账户、Key或网络，库没有第三方运行依赖；采用固定版本并记录上游MIT许可。",
+    "piIntegration": "只包装Solar/Lunar公农历转换、闰月与getJieQiTable/getNextJieQi/getPrevJieQi节气日期；输入按Asia/Shanghai定义，不依赖VPS默认时区。",
+    "limitations": [
+      "社区算法库不是官方天文接口，不代表国务院未来调休安排；工作日计算另用已发布通知和holiday-cn。",
+      "完整源码还包含民俗占卜模块，仅保存原始库，不将这些模块开放为个人Agent工具。",
+      "本轮未安装或运行；后续接入需核对闰月、跨年和接近午夜的日期边界。"
+    ]
+  },
+  {
+    "id": "china-holiday-notice-2026",
+    "name": "国务院2026年节假日安排官方通知",
+    "platform": "中国政府网 / 国务院办公厅",
+    "category": "calendar",
+    "kind": "docs",
+    "origin": "official",
+    "readiness": "ready-local",
+    "sourceType": "document",
+    "filename": "holiday-notice-2026.html",
+    "url": "https://www.gov.cn/zhengce/zhengceku/202511/content_7047091.htm",
+    "homepage": "https://www.gov.cn/zhengce/",
+    "publisher": "国务院办公厅 / 中国政府网",
+    "access": "公开政府通知，无需账号；只作全国假期与调休的原始依据。",
+    "piIntegration": "保存官方 HTML 快照，用于核对2026年度 JSON；本地工具记录来源与年度，不把通知网页称为 API。",
+    "limitations": [
+      "不是完整日历或政府 JSON API；其他年份需各自的已发布通知。",
+      "本通知不表示企业、学校或个人一定按此排班。"
+    ]
+  },
+  {
+    "id": "frankfurter-api-source",
+    "name": "Frankfurter参考汇率 API 后端开源代码",
+    "platform": "Frankfurter",
+    "category": "currency",
+    "kind": "api-source",
+    "origin": "community",
+    "readiness": "conditional",
+    "sourceType": "github",
+    "repo": "lineofflight/frankfurter",
+    "ref": "71334f73e9e67d4ceb2d54a03f9f4a66399327f4",
+    "version": "2.6.1 (release commit)",
+    "url": "https://github.com/lineofflight/frankfurter",
+    "homepage": "https://frankfurter.dev/",
+    "publisher": "Line of Flight",
+    "license": "MIT",
+    "evidence": [
+      "https://frankfurter.dev/",
+      "https://frankfurter.dev/license/",
+      "https://www.ecb.europa.eu/stats/eurofxref/eurofxref-daily.xml"
+    ],
+    "access": "公共 API 无需 Key；自托管后端需要 Ruby/容器环境、SQLite持久化与数据回填，部分上游来源的 Key 为各自独立条件。",
+    "piIntegration": "优先包装 https://api.frankfurter.dev/v2 的币种对和历史汇率工具；指定 providers=ECB 或保存 expand=providers，展示返回日期和参考汇率性质。源码可用于后续自托管。",
+    "limitations": [
+      "第三方项目汇集央行数据，不是中国央行或商业银行官方 API；默认汇率混合多个来源。",
+      "工作日参考价不是实时交易、现钞或刷卡结算价，数据许可需遵循各原始提供者。",
+      "公开后端源码不代表独立 mcp.frankfurter.dev 服务的完整源码；未部署自托管实例。",
+      "只读公共 API 查询已得到 CNY/USD 的2026-10-01结果，未验证所有国内 VPS 网络或所有历史区间。"
+    ]
+  },
+  {
+    "id": "frankfurter-openapi",
+    "name": "Frankfurter v2参考汇率公开 OpenAPI",
+    "platform": "Frankfurter",
+    "category": "currency",
+    "kind": "docs",
+    "origin": "community",
+    "readiness": "ready-public",
+    "sourceType": "document",
+    "filename": "openapi-v2.json",
+    "url": "https://api.frankfurter.dev/v2/openapi.json",
+    "homepage": "https://frankfurter.dev/",
+    "publisher": "Line of Flight",
+    "license": "MIT (OpenAPI info)",
+    "access": "公共 HTTPS JSON API，无需注册或 Key；实际网络可达性与运行状态需在目标 VPS 验证。",
+    "piIntegration": "依据 OpenAPI 结构化定义包装 rates、rate、currencies、providers、coverage；只开放参考汇率查询与金额换算。",
+    "limitations": [
+      "文档版本与后端发布版本独立记录；公共服务没有在本项目验证生产 SLA。",
+      "查询结果按原始数据日期展示，不填充虚假的今日实时汇率。"
+    ]
+  },
+  {
+    "id": "frankfurter-mcp-docs",
+    "name": "Frankfurter项目远程 MCP 接入文档",
+    "platform": "Frankfurter",
+    "category": "currency",
+    "kind": "docs",
+    "origin": "community",
+    "readiness": "ready-public",
+    "sourceType": "document",
+    "filename": "mcp.html",
+    "url": "https://frankfurter.dev/mcp/",
+    "homepage": "https://frankfurter.dev/",
+    "publisher": "Line of Flight",
+    "access": "项目提供 https://mcp.frankfurter.dev/ 远程 HTTP MCP，不要求注册或 API Key。",
+    "piIntegration": "按照页面的远程 HTTP 配置接 Pi MCP 扩展；先验证 initialize 与 tools/list 后限定只读汇率工具。",
+    "limitations": [
+      "本条是项目维护方文档，项目归类community；不是央行官方 MCP。",
+      "只归档接入文档，未执行 MCP 连接或验证工具列表，不称为本地服务器源码。"
+    ]
+  },
+  {
+    "id": "zhipu-web-search-api-docs",
+    "name": "智谱官方独立 Web Search API 定义",
+    "platform": "智谱 BigModel",
+    "category": "search",
+    "kind": "docs",
+    "origin": "official",
+    "readiness": "conditional",
+    "sourceType": "document",
+    "filename": "web-search-api.md",
+    "url": "https://docs.bigmodel.cn/api-reference/%E5%B7%A5%E5%85%B7-api/%E7%BD%91%E7%BB%9C%E6%90%9C%E7%B4%A2.md",
+    "homepage": "https://docs.bigmodel.cn/cn/guide/tools/web-search",
+    "publisher": "智谱 BigModel",
+    "evidence": [
+      "https://docs.bigmodel.cn/cn/guide/tools/web-search.md",
+      "https://bigmodel.cn/pricing"
+    ],
+    "access": "智谱平台 API Key、服务权限与额度，按当前搜索引擎价格计费；不等同 Coding Plan 套餐 Key。",
+    "piIntegration": "直接 HTTP 包装 POST https://open.bigmodel.cn/api/paas/v4/web_search；参数和返回结构在 Markdown 内嵌 OpenAPI 中，保留标题、URL、摘要及时间。",
+    "limitations": [
+      "独立搜索 API 不要求使用智谱聊天模型；搜索引擎与过滤参数兼容性各不相同。",
+      "官方文档不是搜索服务端源码；当前 SDK 文档所链 GitHub 仓库返回404，未以其他 SDK 冒充可下载源码。",
+      "搜索所得天气、票价等不等于业务查询实时结果；未取得 Key 或执行付费调用。"
+    ]
+  },
+  {
+    "id": "zhipu-coding-search-mcp-docs",
+    "name": "智谱 Coding Plan官方联网搜索 MCP 文档",
+    "platform": "智谱 BigModel",
+    "category": "search",
+    "kind": "docs",
+    "origin": "official",
+    "readiness": "reference-only",
+    "sourceType": "document",
+    "filename": "coding-plan-search-mcp.md",
+    "url": "https://docs.bigmodel.cn/cn/coding-plan/mcp/search-mcp-server.md",
+    "homepage": "https://docs.bigmodel.cn/cn/coding-plan/mcp/search-mcp-server",
+    "publisher": "智谱 BigModel",
+    "access": "GLM Coding Plan 专属搜索 MCP；个人/团队编程套餐按相应入口获取 API Key。团队套餐 Key 与平台其他 Key 不通用，用途及额度需确认。",
+    "piIntegration": "技术上可用 Streamable HTTP https://open.bigmodel.cn/api/mcp/web_search_prime/mcp 与 Authorization Bearer 接 Pi；工具名 webSearchPrime。普通个人产品优先独立 Web Search API。",
+    "limitations": [
+      "不能把专属编程套餐 MCP 当作人人已有权限的通用免费服务；产品用途、套餐和条款需另行确认。",
+      "旧SSE入口不是本项目Pi默认路线；归档仅为公开接入文档，不含MCP服务端源码。",
+      "未订阅套餐或执行带 Key MCP 联调。"
+    ]
+  },
+  {
+    "id": "kdniao-track-api-docs",
+    "name": "快递鸟官方快递查询 API 文档（准入待核实）",
+    "platform": "快递鸟",
+    "category": "logistics",
+    "kind": "docs",
+    "origin": "official",
+    "readiness": "reference-only",
+    "sourceType": "document",
+    "filename": "track-query-api.html",
+    "url": "https://www.kdniao.com/api-trackexpress",
+    "homepage": "https://www.kdniao.com/",
+    "publisher": "快递鸟",
+    "evidence": [
+      "https://www.kdniao.com/api-trackexpress",
+      "https://www.kdniao.com/help",
+      "https://www.yuque.com/kdnjishuzhichi/dfcrg1"
+    ],
+    "access": "需商户 EBusinessID、AppKey、认证及相应查询产品权限；本轮未确认普通个人可完成开通的当前条件。",
+    "piIntegration": "作为备用物流HTTP连接器参考，归档页给出 RequestType=8002、JSON请求、DataSign签名与HTTPS正式地址；满足准入后再封装只读查询。",
+    "limitations": [
+      "本条仅参考，不作为已可用的个人连接器；公开文档与免费注册不能证明账号开通全部快递和配额。",
+      "顺丰非快递鸟渠道单号按CustomerName字段传寄件人/收件人手机后四位；不同公司的字段语义不同。",
+      "旧1002即时查询资料与8002新查询产品不可混用，也不沿用旧500次描述宣称新账号配额。",
+      "保存可读官方HTML；官网语雀文档入口本轮未获取正文，未下载RAR示例或伪造官方MCP源码。"
+    ]
+  }
+]

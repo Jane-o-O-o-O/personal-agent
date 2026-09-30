@@ -1,0 +1,262 @@
+[
+  {
+    "id": "amap-transit-rest-docs",
+    "name": "高德公交与地铁路径规划 REST 官方文档",
+    "platform": "高德地图",
+    "category": "transport",
+    "kind": "docs",
+    "sourceType": "document",
+    "origin": "official",
+    "filename": "transit-direction.html",
+    "url": "https://lbs.amap.com/api/webservice/guide/api/direction",
+    "homepage": "https://lbs.amap.com/api/webservice/guide/api/direction",
+    "publisher": "高德地图开放平台",
+    "access": "高德开放平台 Web 服务 Key；个人认证与相应调用配额。公开文档归档不需凭据。",
+    "piIntegration": "封装 /v3/direction/transit/integrated 为 Pi HTTP 工具，提供日期、预计出发时刻、换乘策略，并保留线路与上车站首末班等真实返回字段。",
+    "limitations": [
+      "已归档本地高德 MCP 0.0.8 未暴露 date/time，且过滤首末班字段；需要 REST 适配器补充，不能假定远程 MCP 与旧包相同。",
+      "start_time/end_time 为线路首末班；station_start_time/station_end_time 为上车站字段，仅在实际返回时展示；不能推算任意中途站的末班到站时刻。",
+      "路径时长是行程估算，不是实时车辆/列车到站倒计时。尚未注册 Key 或发送业务查询。"
+    ],
+    "evidence": [
+      "https://lbs.amap.com/api/webservice/guide/api/direction",
+      "https://registry.npmjs.org/@amap/amap-maps-mcp-server/-/amap-maps-mcp-server-0.0.8.tgz"
+    ]
+  },
+  {
+    "id": "amap-bus-inquiry-rest-docs",
+    "name": "高德公交站点线路与首末班 REST 官方文档",
+    "platform": "高德地图",
+    "category": "transport",
+    "kind": "docs",
+    "sourceType": "document",
+    "origin": "official",
+    "filename": "bus-inquiry.html",
+    "url": "https://lbs.amap.com/api/webservice/guide/api-advanced/bus-inquiry",
+    "homepage": "https://lbs.amap.com/api/webservice/guide/api-advanced/bus-inquiry",
+    "publisher": "高德地图开放平台",
+    "access": "高级服务接口；官网明确已完成个人或企业认证的用户均有每日体验配额，更多调用需按平台政策购买或申请。使用 Web 服务 Key。",
+    "piIntegration": "为 Pi 实现 bus/stopname、bus/stopid、bus/linename、bus/lineid 查询工具；线路详情使用 extensions=all，解析站点、线路方向、首末班与 timedesc。",
+    "limitations": [
+      "公交及地铁线路查询不等于实时车辆位置或下一班到站数据。",
+      "线路 start_time/end_time 不能当成中途站到站时间；遇缺失时间、临时运营变更应保留未知状态与来源。",
+      "保存真实公开文档，不是完整服务端代码；未调用需要 Key 的业务端点。"
+    ],
+    "evidence": [
+      "https://lbs.amap.com/api/webservice/guide/api-advanced/bus-inquiry"
+    ]
+  },
+  {
+    "id": "variflight-aviation-mcp-source",
+    "name": "飞常准 Aviation MCP 官方源码",
+    "platform": "飞常准 / 飞友 AI 开放平台",
+    "category": "transport",
+    "kind": "mcp-source",
+    "sourceType": "github",
+    "origin": "official",
+    "repo": "variflight/variflight-mcp",
+    "ref": "e1b5f73b78c592cb143d9339bc165dd9fb218624",
+    "version": "1.1.0",
+    "url": "https://github.com/variflight/variflight-mcp",
+    "homepage": "https://ai.variflight.com/docs/aviation",
+    "publisher": "飞常准 / Variflight",
+    "license": "ISC",
+    "access": "公开个人开发者注册路径，公司和手机号可选；登录控制台创建 API Key，官网当前写明新用户 50 元体验额度。运行时按调用计费。",
+    "piIntegration": "Pi 优先接 https://ai.variflight.com/servers/aviation/mcp 的 Streamable HTTP，使用 X-API-Key 头；本地官方包 @variflight-ai/variflight-mcp 支持 stdio，凭据用 VARIFLIGHT_API_KEY 环境变量。",
+    "limitations": [
+      "实际源码覆盖航班动态、直飞/中转、逐舱位机票报价、机场天气、准点率和机尾号实时位置，不含订票、锁价、订单支付、改签或退票。",
+      "package.json 与 server 元数据为 1.1.0，README 仍写 1.0.3；固定提交原样保存。",
+      "仓库与包声明 ISC，但所查目录没有独立 LICENSE 文件；数据服务另受厂商条款约束，不应把插件许可视为数据再分发许可。",
+      "本地包请求内部数据 API 使用 X-VARIFLIGHT-KEY，远程 MCP 使用 X-API-Key，两种接法不得混淆。未创建账号、运行包或发送业务查询。"
+    ],
+    "evidence": [
+      "https://github.com/variflight/variflight-mcp",
+      "https://api.github.com/orgs/variflight",
+      "https://ai.variflight.com/docs/aviation",
+      "https://ai.variflight.com/register",
+      "https://registry.npmjs.org/@variflight-ai%2fvariflight-mcp/latest"
+    ]
+  },
+  {
+    "id": "variflight-tripmatch-mcp-package",
+    "name": "飞常准 Tripmatch MCP 官方 1.1.0 发布代码",
+    "platform": "飞常准 / 飞友 AI 开放平台",
+    "category": "transport",
+    "kind": "mcp-package",
+    "sourceType": "archive",
+    "origin": "official",
+    "format": "tar.gz",
+    "version": "1.1.0",
+    "url": "https://registry.npmjs.org/@variflight-ai/tripmatch-mcp/-/tripmatch-mcp-1.1.0.tgz",
+    "homepage": "https://ai.variflight.com/docs/tripmatch",
+    "publisher": "飞常准 / Variflight",
+    "license": "ISC",
+    "access": "个人开发者注册、邮箱激活、创建平台 API Key；公开注册表单公司名称可选。调用按积分计费，现有新用户体验额度以官网为准。",
+    "piIntegration": "首选 https://ai.variflight.com/servers/tripmatch/mcp 的 Streamable HTTP，X-API-Key 认证；也可将官方 stdio 包封装到 Pi MCP。1.1.0 包已提供明确的 searchTrainTicketsByStation、searchTrainTicketsByCity、searchTrainStations、机票报价及空铁中转工具。",
+    "limitations": [
+      "1.1.0 发布包含 dist 可读 JS、声明文件、README 和 package.json，不含完整 TypeScript 开发源码。",
+      "新包火车查询使用 from/to/date，分别支持具体站与城市；官网旧表仍写 searchTrainTickets(from_city,to_city,date)。远程 schema 以后续实际 tools/list 为准。",
+      "火车余票、票价及机票售价是查询时快照，需附查询时间；以最终售票渠道为准，不包含自动下单、锁票、出票或支付。",
+      "包声明 ISC 但未附独立 LICENSE 正文；厂商数据条款单独适用。未安装、启动或执行业务查询。"
+    ],
+    "evidence": [
+      "https://ai.variflight.com/docs/tripmatch",
+      "https://registry.npmjs.org/@variflight-ai%2ftripmatch-mcp/latest",
+      "https://registry.npmjs.org/@variflight-ai/tripmatch-mcp/-/tripmatch-mcp-1.1.0.tgz"
+    ]
+  },
+  {
+    "id": "variflight-tripmatch-mcp-old-source",
+    "name": "飞常准 Tripmatch MCP 官方旧仓库参考",
+    "platform": "飞常准 / 飞友 AI 开放平台",
+    "category": "transport",
+    "kind": "mcp-source",
+    "sourceType": "github",
+    "origin": "official",
+    "readiness": "reference-only",
+    "repo": "variflight/tripmatch-mcp",
+    "ref": "b10abc8e48d284b5fb955ae3175d66bd13279704",
+    "version": "0.0.2",
+    "url": "https://github.com/variflight/tripmatch-mcp",
+    "homepage": "https://github.com/variflight/tripmatch-mcp",
+    "publisher": "飞常准 / Variflight",
+    "license": "ISC",
+    "access": "公开仓库参考无需凭据；调用业务需要飞常准平台 API Key。",
+    "piIntegration": "仅用于追溯官方旧版工具与内部 HTTP 调用，不用于首版直接安装；实际集成优先使用当前远程 MCP 或另行归档的 1.1.0 官方发布包。",
+    "limitations": [
+      "GitHub master 自 2025-05-29 的固定提交只含旧发布 dist 和 README，无完整 TypeScript 源码；npm 当前已为 1.1.0。",
+      "package 版本 0.0.2，内部 config/server 仍标 0.0.1；旧版火车站/城市语义和参数不应套用当前版本。",
+      "README 和 package 声明 ISC，但没有独立 LICENSE 文件。原样保留作为 reference-only。"
+    ],
+    "evidence": [
+      "https://github.com/variflight/tripmatch-mcp/tree/b10abc8e48d284b5fb955ae3175d66bd13279704",
+      "https://registry.npmjs.org/@variflight-ai%2ftripmatch-mcp/latest"
+    ]
+  },
+  {
+    "id": "variflight-mcp-official-docs-component",
+    "name": "飞常准 MCP 官方工具表与协议配置文档资产",
+    "platform": "飞常准 / 飞友 AI 开放平台",
+    "category": "transport",
+    "kind": "docs",
+    "sourceType": "document",
+    "origin": "official",
+    "filename": "Docs-DMvjYvAm.js",
+    "url": "https://mcp.variflight.com/assets/Docs-DMvjYvAm.js",
+    "homepage": "https://ai.variflight.com/docs/tripmatch",
+    "publisher": "飞常准 / Variflight",
+    "access": "公开文档无需账号；实际 MCP 需要个人开发者平台 Key 和可用额度。",
+    "piIntegration": "保存实际工具列表、参数、积分单价、远程 URL、X-API-Key 头和 stdio 配置，配合官网文案资产理解接入。",
+    "limitations": [
+      "官网为 JavaScript 应用，HTML 页面壳不含正文；这是网页实际发布的只读 JS 文档组件，不是 MCP 服务端代码或可离线运行的整站。",
+      "文档旧工具参数与最新 Tripmatch npm 包存在差异，服务接入以实际 tools/list schema 为准；单价与开放政策以后续官网公示为准。",
+      "只归档公开文件，不执行前端应用或发需要凭据的业务请求。"
+    ],
+    "evidence": [
+      "https://ai.variflight.com/docs/aviation",
+      "https://ai.variflight.com/docs/tripmatch",
+      "https://mcp.variflight.com/assets/Docs-DMvjYvAm.js"
+    ]
+  },
+  {
+    "id": "variflight-mcp-official-site-text",
+    "name": "飞常准开放平台官方接入与个人注册文案资产",
+    "platform": "飞常准 / 飞友 AI 开放平台",
+    "category": "transport",
+    "kind": "docs",
+    "sourceType": "document",
+    "origin": "official",
+    "filename": "index-DyRg45M-.js",
+    "url": "https://mcp.variflight.com/assets/index-DyRg45M-.js",
+    "homepage": "https://ai.variflight.com/",
+    "publisher": "飞常准 / Variflight",
+    "access": "公开网页资产；文案显示公司和电话可选、邮箱激活后自助创建 API Key，新用户现有 50 元体验额度。",
+    "piIntegration": "保留中文开发者文档正文、产品范围、注册资格、计费说明、数据安全与隐私文案，作为选择官方 MCP 的准入证据。",
+    "limitations": [
+      "网页入口 JS 含运行库和页面文案，不是纯 Markdown 文档，也不是厂商后端源码；只读归档，不执行。",
+      "实际账号开通、体验余额、限流及工具权限未登录验证。"
+    ],
+    "evidence": [
+      "https://ai.variflight.com/",
+      "https://ai.variflight.com/register",
+      "https://mcp.variflight.com/assets/index-DyRg45M-.js"
+    ]
+  },
+  {
+    "id": "variflight-mcp-official-register-evidence",
+    "name": "飞常准个人开发者注册表单官方证据",
+    "platform": "飞常准 / 飞友 AI 开放平台",
+    "category": "transport",
+    "kind": "docs",
+    "sourceType": "document",
+    "origin": "official",
+    "filename": "Register-DhtWzTUW.js",
+    "url": "https://mcp.variflight.com/assets/Register-DhtWzTUW.js",
+    "homepage": "https://ai.variflight.com/register",
+    "publisher": "飞常准 / Variflight",
+    "access": "公开注册表单证据无需账号。用户名、邮箱和密码必填，公司名称与手机号没有必填要求。",
+    "piIntegration": "用来区分普通个人开发者自助 Key 路线和企业商务 API，后续取得凭据必须由用户自行注册并保管。",
+    "limitations": [
+      "保存官方公开页面组件，不创建账号、不提交表单、不接受条款、不生成或导出 Key。",
+      "公开自助流程存在不等于已验证用户账号能开通所有工具；实际权限以后续登录验证为准。"
+    ],
+    "evidence": [
+      "https://ai.variflight.com/register",
+      "https://mcp.variflight.com/assets/Register-DhtWzTUW.js"
+    ]
+  },
+  {
+    "id": "variflight-mcp-official-terms",
+    "name": "飞常准开放平台官方数据服务条款资产",
+    "platform": "飞常准 / 飞友 AI 开放平台",
+    "category": "transport",
+    "kind": "docs",
+    "sourceType": "document",
+    "origin": "official",
+    "filename": "TermsOfService-mjC3uiA2.js",
+    "url": "https://mcp.variflight.com/assets/TermsOfService-mjC3uiA2.js",
+    "homepage": "https://ai.variflight.com/terms",
+    "publisher": "飞常准 / 飞友科技",
+    "access": "公开条款无需账号，实际注册和调用受当时条款约束。",
+    "piIntegration": "保存服务能力、按量计费、数据准确性及自身产品展示授权说明，区分开源插件许可与服务数据使用权。",
+    "limitations": [
+      "平台允许自身产品/业务调用并展示结果；未经书面许可不能转售、再分发或公开发布查询数据，不允许超出正常使用频率抓取。",
+      "如果后续向其他用户开放 Agent，需核对数据分发权限；当前个人自用方向与自主订票是不同能力。",
+      "归档不表示已接受条款或发生外部账号变更。"
+    ],
+    "evidence": [
+      "https://ai.variflight.com/terms",
+      "https://mcp.variflight.com/assets/TermsOfService-mjC3uiA2.js"
+    ]
+  },
+  {
+    "id": "train-12306-mcp-community-reference",
+    "name": "12306 MCP 社区查询源码参考（非官方开放 API）",
+    "platform": "铁路 12306（社区适配）",
+    "category": "transport",
+    "kind": "mcp-source",
+    "sourceType": "github",
+    "origin": "community",
+    "readiness": "reference-only",
+    "repo": "Joooook/12306-mcp",
+    "ref": "ff6439da6f63d7d72181abea4568abd69878c600",
+    "version": "0.3.10",
+    "url": "https://github.com/Joooook/12306-mcp",
+    "homepage": "https://github.com/Joooook/12306-mcp",
+    "publisher": "Joooook / Jok（社区作者，非铁路官方）",
+    "license": "MIT",
+    "access": "公开源码可归档；上游为 12306 网页业务接口，不是个人开发者可申请的官方 API 服务契约。默认不启用。",
+    "piIntegration": "仅研究 stdio/HTTP MCP 查询包装、站点索引、余票票价与经停站解析；个人 Agent 主路径使用有公开 Key 准入的查询服务。",
+    "limitations": [
+      "初始化抓取 12306 网页、站名 JS 和 Cookie，解析网站查询路径，并调用 kyfw.12306.cn/search.12306.cn 的网页端点；不能标成官方开放 MCP。",
+      "MIT 授权社区代码，不授予铁路数据自动化访问权或上游 SLA；字段、Cookie、反自动化规则可能变化。",
+      "未见应用级全局限频或显式请求超时；不作为高频监票默认实现，不绕过验证码或限流。",
+      "工具只有查询，没有已核实的购票、锁票、订单支付；只保存原样代码和 LICENSE，不安装、不启动、不发生产查询。"
+    ],
+    "evidence": [
+      "https://github.com/Joooook/12306-mcp/blob/ff6439da6f63d7d72181abea4568abd69878c600/src/index.ts",
+      "https://github.com/Joooook/12306-mcp/blob/ff6439da6f63d7d72181abea4568abd69878c600/LICENSE",
+      "https://github.com/Joooook/12306-mcp/blob/ff6439da6f63d7d72181abea4568abd69878c600/README.md"
+    ]
+  }
+]
