@@ -27,6 +27,8 @@ export type BrowserServiceClient = Pick<BrowserService, keyof BrowserService>;
 
 type ActiveCell = { controller: AbortController; done: Promise<CellResult>; taskId: string };
 type PendingNavigation = { targetId: string; generation: number; cancelledBeforeUnload?: Promise<boolean> };
+type PointerButton = 'left' | 'middle' | 'right';
+const buttonBits: Record<PointerButton, number> = { left: 1, right: 2, middle: 4 };
 const viewport = { width: 1440, height: 900 };
 const defaultHomeUrl = 'https://www.baidu.com/';
 const bareDomain = /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}(?::\d{1,5})?(?:[/?#][^\s]*)?$/i;
@@ -50,6 +52,7 @@ const keys: Record<string, { code: string; keyCode: number; text?: string }> = {
   Shift: { code: 'ShiftLeft', keyCode: 16 },
   Alt: { code: 'AltLeft', keyCode: 18 },
   Meta: { code: 'MetaLeft', keyCode: 91 },
+  ' ': { code: 'Space', keyCode: 32, text: ' ' },
 };
 
 export function normalizeBrowserNavigationUrl(value: string): string {
@@ -113,6 +116,8 @@ export class BrowserService {
   private lastFrameAt = 0;
   private lastFrame: BrowserFrame | undefined;
   private tabRefreshVersion = 0;
+  private readonly pressedPointers = new Map<PointerButton, { page: Page; modifiers: number }>();
+  private pointerCleanup: Promise<void> = Promise.resolve();
 
   constructor(private readonly options: BrowserServiceOptions) {}
 
@@ -144,6 +149,25 @@ export class BrowserService {
     if (this.disposed) throw new BrowserServiceError('BROWSER_CLOSED', 'Browser service has stopped.');
   }
 
+  private resetPointers(): Promise<void> {
+    const pressed = [...this.pressedPointers];
+    this.pressedPointers.clear();
+    if (pressed.length) this.pointerCleanup = this.pointerCleanup.then(async () => {
+      for (const [button, { page, modifiers }] of pressed) {
+        await page.cdp('Input.cancelDragging').catch(() => {});
+        // Releasing outside the viewport clears Chromium's button state without
+        // clicking an element in a newly selected or navigated document.
+        await page.cdp('Input.dispatchMouseEvent', { type: 'mouseReleased', x: -1, y: -1, button, buttons: 0, clickCount: 1, modifiers }).catch(() => {});
+      }
+    });
+    return this.pointerCleanup;
+  }
+
+  private advanceGeneration() {
+    void this.resetPointers();
+    this.state.generation++;
+  }
+
   private checkGeneration(generation?: number) {
     if (generation !== undefined && (!Number.isSafeInteger(generation) || generation < 0))
       throw new BrowserServiceError('INVALID_BROWSER_GENERATION', 'Browser control generation must be a nonnegative integer.', 400);
@@ -168,7 +192,7 @@ export class BrowserService {
         if (/CDP connection (?:is )?(?:closed|failed)|Chrome (?:exited|closed)|Chromium (?:exited|closed)|not open/i.test(message)) {
           this.state.status = 'error';
           this.state.owner = 'none';
-          this.state.generation++;
+          this.advanceGeneration();
           this.state.error = 'Browser connection was lost. Start the browser to restore control.';
           this.active?.controller.abort();
           this.notify();
@@ -257,6 +281,7 @@ export class BrowserService {
     try {
       await this.compileWorker();
       if (this.browser) {
+        await this.resetPointers();
         const active = this.active;
         active?.controller.abort();
         await active?.done.catch(() => {});
@@ -299,6 +324,7 @@ export class BrowserService {
   }
 
   private clearConnectionState(keepActiveTab: boolean) {
+    void this.resetPointers();
     this.connection?.close();
     this.connection = undefined;
     this.pages.clear();
@@ -357,7 +383,7 @@ export class BrowserService {
     }
     this.state.status = 'ready';
     this.state.owner = 'agent';
-    this.state.generation++;
+    this.advanceGeneration();
     this.notify();
     this.queueStream();
     return this.snapshot();
@@ -408,7 +434,7 @@ export class BrowserService {
     if (this.state.activeTabId === targetId) return;
     this.state.activeTabId = targetId;
     this.state.dialog = targetId ? this.dialogs.get(targetId) : undefined;
-    this.state.generation++;
+    this.advanceGeneration();
     this.notify();
     this.queueStream();
   }
@@ -460,7 +486,7 @@ export class BrowserService {
       if (loaderId && previousDocument !== loaderId) {
         this.documents.set(targetId, loaderId);
         if (this.state.activeTabId === targetId) {
-          this.state.generation++;
+          this.advanceGeneration();
           this.notify();
         }
       }
@@ -498,7 +524,7 @@ export class BrowserService {
       await this.startLocked();
       if (this.state.owner === 'user') return this.snapshot();
       this.state.owner = 'none';
-      this.state.generation++;
+      this.advanceGeneration();
       this.notify();
       this.active?.controller.abort();
       try {
@@ -506,13 +532,13 @@ export class BrowserService {
         await this.active?.done.catch(() => {});
       } catch (error) {
         this.state.owner = 'agent';
-        this.state.generation++;
+        this.advanceGeneration();
         this.notify();
         throw error;
       }
       this.state.owner = 'user';
       delete this.state.taskId;
-      this.state.generation++;
+      this.advanceGeneration();
       this.notify();
       this.queueStream();
       return this.snapshot();
@@ -528,12 +554,13 @@ export class BrowserService {
       if (this.state.dialog)
         throw new BrowserServiceError('BROWSER_DIALOG_PENDING', 'Resolve the browser dialog before releasing control.');
       await this.refreshTabs();
+      await this.resetPointers();
       if (this.state.activeTabId) await (await this.attach(this.state.activeTabId)).snapshot();
       await this.runtime?.close({ keepTabs: true });
       this.runtime = undefined;
       this.runtimeTaskId = undefined;
       this.state.owner = 'agent';
-      this.state.generation++;
+      this.advanceGeneration();
       this.notify();
       this.queueStream();
       return this.snapshot();
@@ -545,6 +572,7 @@ export class BrowserService {
       this.checkHuman(generation);
       const href = this.navigationUrl(url);
       const page = await this.activePage();
+      await this.resetPointers();
       const navigation: PendingNavigation = { targetId: page.targetId, generation: this.state.generation };
       this.pendingNavigation = navigation;
       try {
@@ -692,7 +720,14 @@ export class BrowserService {
       operationTimeoutMs: 15_000, maxOutputChars: 12_000,
       browserSwitching: false, dedicatedBrowser: true,
     }, await workerExecutable(), await this.compileWorker());
-    runtime.onAction = (event) => this.setActive(event.targetId);
+    const follow = (targetId: string) => {
+      if (this.runtime === runtime && this.state.owner === 'agent' && this.active?.taskId === taskId) {
+        this.setActive(targetId);
+        void this.connection?.send('Target.activateTarget', { targetId }).catch(() => {});
+      }
+    };
+    runtime.onAction = event => follow(event.targetId);
+    runtime.onFocus = follow;
     this.runtime = runtime;
     this.runtimeTaskId = taskId;
     return runtime;
@@ -723,9 +758,10 @@ export class BrowserService {
     });
     try {
       const result = await cell.active.done;
-      if (cell.runtime.currentTarget) this.setActive(cell.runtime.currentTarget);
+      if (this.runtime === cell.runtime && this.state.owner === 'agent' && cell.runtime.currentTarget) this.setActive(cell.runtime.currentTarget);
       return result;
     } finally {
+      if (this.runtime === cell.runtime && this.state.owner === 'agent' && cell.runtime.currentTarget) this.setActive(cell.runtime.currentTarget);
       if (this.active === cell.active) {
         this.active = undefined;
         delete this.state.taskId;
@@ -779,74 +815,133 @@ export class BrowserService {
 
   async input(input: BrowserInput): Promise<void> {
     return this.control(async () => {
-      if (!input || !Number.isSafeInteger(input.generation) || input.generation < 0)
-        throw new BrowserServiceError('INVALID_BROWSER_GENERATION', 'Browser input needs the current control generation.', 400);
-      this.checkHuman(input.generation);
-      if (input.tabId) {
-        await this.refreshTabs();
-        if (!this.state.tabs.some((tab) => tab.id === input.tabId))
-          throw new BrowserServiceError('BROWSER_UNKNOWN_TAB', 'The selected browser tab no longer exists.');
-        this.checkHuman(input.generation);
-        if (input.tabId !== this.state.activeTabId)
-          throw new BrowserServiceError('BROWSER_TAB_NOT_ACTIVE', 'Select the browser tab before sending input.', 409);
-      }
-      const targetId = this.state.activeTabId;
-      const page = await this.activePage();
-      this.checkHuman(input.generation);
-      if (targetId !== this.state.activeTabId || page.targetId !== targetId)
-        throw new BrowserServiceError('STALE_BROWSER_GENERATION', 'Browser tab changed before input could be sent.', 409);
-      const modifiers = input.modifiers ?? 0;
-      if (!Number.isSafeInteger(modifiers) || modifiers < 0 || modifiers > 15)
-        throw new BrowserServiceError('INVALID_BROWSER_INPUT', 'Invalid keyboard modifiers.', 400);
-      const point = (required = false) => {
-        if (required && (input.x === undefined || input.y === undefined))
-          throw new BrowserServiceError('INVALID_BROWSER_INPUT', 'Pointer input needs both x and y coordinates.', 400);
-        const x = input.x ?? viewport.width / 2;
-        const y = input.y ?? viewport.height / 2;
-        if (![x, y].every(Number.isFinite) || x < 0 || y < 0 || x > viewport.width || y > viewport.height)
-          throw new BrowserServiceError('INVALID_BROWSER_INPUT', 'Pointer coordinates are outside the browser viewport.', 400);
-        return { x, y };
-      };
-      switch (input.type) {
-        case 'click': {
-          const { x, y } = point(true);
-          await page.cdp('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y, modifiers });
-          await page.cdp('Input.dispatchMouseEvent', { type: 'mousePressed', x, y, modifiers, button: 'left', clickCount: 1 });
-          await page.cdp('Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, modifiers, button: 'left', clickCount: 1 });
-          break;
-        }
-        case 'move': await page.cdp('Input.dispatchMouseEvent', { type: 'mouseMoved', ...point(true), modifiers }); break;
-        case 'scroll': {
-          const deltaX = input.deltaX ?? 0;
-          const deltaY = input.deltaY ?? 0;
-          if (![deltaX, deltaY].every(Number.isFinite) || Math.abs(deltaX) + Math.abs(deltaY) > 100_000)
-            throw new BrowserServiceError('INVALID_BROWSER_INPUT', 'Invalid scroll distance.', 400);
-          await page.cdp('Input.dispatchMouseEvent', { type: 'mouseWheel', ...point(), modifiers, deltaX, deltaY });
-          break;
-        }
-        case 'text':
-          if (typeof input.text !== 'string' || input.text.length > 64_000)
-            throw new BrowserServiceError('INVALID_BROWSER_INPUT', 'Text input must be a string shorter than 64000 characters.', 400);
-          await page.cdp('Input.insertText', { text: input.text });
-          break;
-        case 'key': {
-          const key = input.key;
-          if (typeof key !== 'string' || !key || [...key].length > 32)
-            throw new BrowserServiceError('INVALID_BROWSER_INPUT', 'Invalid browser key.', 400);
-          const named = keys[key];
-          if (!named && [...key].length !== 1)
-            throw new BrowserServiceError('INVALID_BROWSER_INPUT', 'Unsupported browser key.', 400);
-          const value = named ?? { code: /^[a-z]$/i.test(key) ? `Key${key.toUpperCase()}` : '', keyCode: key.toUpperCase().charCodeAt(0), text: key };
-          const event = { key, code: value.code, windowsVirtualKeyCode: value.keyCode, modifiers };
-          await page.cdp('Input.dispatchKeyEvent', { type: 'rawKeyDown', ...event });
-          if (value.text && !(modifiers & (1 | 2 | 4)))
-            await page.cdp('Input.dispatchKeyEvent', { type: 'char', ...event, text: value.text, unmodifiedText: value.text });
-          await page.cdp('Input.dispatchKeyEvent', { type: 'keyUp', ...event });
-          break;
-        }
-        default: throw new BrowserServiceError('INVALID_BROWSER_INPUT', 'Unsupported browser input type.', 400);
+      try {
+        await this.inputLocked(input);
+      } catch (error) {
+        if (input?.generation === this.state.generation && ['click', 'mouse_down', 'mouse_up', 'move'].includes(input.type)) await this.resetPointers();
+        throw error;
       }
     });
+  }
+
+  private async inputLocked(input: BrowserInput): Promise<void> {
+    if (!input || !Number.isSafeInteger(input.generation) || input.generation < 0)
+      throw new BrowserServiceError('INVALID_BROWSER_GENERATION', 'Browser input needs the current control generation.', 400);
+    this.checkHuman(input.generation);
+    if (input.tabId) {
+      await this.refreshTabs();
+      if (!this.state.tabs.some((tab) => tab.id === input.tabId))
+        throw new BrowserServiceError('BROWSER_UNKNOWN_TAB', 'The selected browser tab no longer exists.');
+      this.checkHuman(input.generation);
+      if (input.tabId !== this.state.activeTabId)
+        throw new BrowserServiceError('BROWSER_TAB_NOT_ACTIVE', 'Select the browser tab before sending input.', 409);
+    }
+    const targetId = this.state.activeTabId;
+    const page = await this.activePage();
+    await this.pointerCleanup;
+    this.checkHuman(input.generation);
+    if (targetId !== this.state.activeTabId || page.targetId !== targetId)
+      throw new BrowserServiceError('STALE_BROWSER_GENERATION', 'Browser tab changed before input could be sent.', 409);
+    const originalModifiers = input.modifiers ?? 0;
+    if (!Number.isSafeInteger(originalModifiers) || originalModifiers < 0 || originalModifiers > 15)
+      throw new BrowserServiceError('INVALID_BROWSER_INPUT', 'Invalid keyboard modifiers.', 400);
+    // macOS clients use Command for editing shortcuts; the VPS Chromium uses Control.
+    const modifiers = process.platform !== 'darwin' && (originalModifiers & 4) ? (originalModifiers & ~4) | 2 : originalModifiers;
+    const point = (required = false) => {
+      if (required && (input.x === undefined || input.y === undefined))
+        throw new BrowserServiceError('INVALID_BROWSER_INPUT', 'Pointer input needs both x and y coordinates.', 400);
+      const x = input.x ?? viewport.width / 2;
+      const y = input.y ?? viewport.height / 2;
+      if (![x, y].every(Number.isFinite) || x < 0 || y < 0 || x > viewport.width || y > viewport.height)
+        throw new BrowserServiceError('INVALID_BROWSER_INPUT', 'Pointer coordinates are outside the browser viewport.', 400);
+      return { x, y };
+    };
+    const button = input.button ?? 'left';
+    const buttons = input.buttons ?? [...this.pressedPointers.keys()].reduce((mask, item) => mask | buttonBits[item], 0);
+    const clickCount = input.clickCount ?? 1;
+    if (!Object.hasOwn(buttonBits, button) || !Number.isSafeInteger(buttons) || buttons < 0 || buttons > 7 ||
+        !Number.isSafeInteger(clickCount) || clickCount < 1 || clickCount > 3)
+      throw new BrowserServiceError('INVALID_BROWSER_INPUT', 'Invalid mouse button or click count.', 400);
+    switch (input.type) {
+      case 'click': {
+        await this.resetPointers();
+        const { x, y } = point(true);
+        await page.cdp('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y, modifiers, buttons: 0 });
+        this.pressedPointers.set(button, { page, modifiers });
+        await page.cdp('Input.dispatchMouseEvent', { type: 'mousePressed', x, y, modifiers, button, buttons: buttonBits[button], clickCount });
+        await page.cdp('Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, modifiers, button, buttons: 0, clickCount });
+        this.pressedPointers.delete(button);
+        break;
+      }
+      case 'mouse_down': {
+        const position = point(true);
+        if (this.pressedPointers.has(button)) throw new BrowserServiceError('INVALID_BROWSER_INPUT', 'This mouse button is already pressed.', 400);
+        this.pressedPointers.set(button, { page, modifiers });
+        await page.cdp('Input.dispatchMouseEvent', { type: 'mousePressed', ...position, modifiers, button, buttons: buttons | buttonBits[button], clickCount });
+        break;
+      }
+      case 'mouse_up': {
+        const position = point(true);
+        if (!this.pressedPointers.has(button)) break;
+        await page.cdp('Input.dispatchMouseEvent', { type: 'mouseReleased', ...position, modifiers, button, buttons: buttons & ~buttonBits[button], clickCount });
+        this.pressedPointers.delete(button);
+        break;
+      }
+      case 'move':
+        if (!buttons && this.pressedPointers.size) await this.resetPointers();
+        // Chromium's PointerEvent capture uses the moving event's button as well
+        // as its buttons mask. Omitting it can cancel a captured drag on Linux.
+        const heldButton = (['left', 'right', 'middle'] as const).find(item => buttons & buttonBits[item]);
+        await page.cdp('Input.dispatchMouseEvent', { type: 'mouseMoved', ...point(true), modifiers, buttons, button: heldButton ?? 'none' });
+        break;
+      case 'scroll': {
+        const deltaX = input.deltaX ?? 0;
+        const deltaY = input.deltaY ?? 0;
+        if (![deltaX, deltaY].every(Number.isFinite) || Math.abs(deltaX) + Math.abs(deltaY) > 100_000)
+          throw new BrowserServiceError('INVALID_BROWSER_INPUT', 'Invalid scroll distance.', 400);
+        await page.cdp('Input.dispatchMouseEvent', { type: 'mouseWheel', ...point(), modifiers, deltaX, deltaY });
+        break;
+      }
+      case 'text': {
+        if (typeof input.text !== 'string' || input.text.length > 64_000)
+          throw new BrowserServiceError('INVALID_BROWSER_INPUT', 'Text input must be a string shorter than 64000 characters.', 400);
+        // Keep batched Chinese/paste input efficient, then send its last
+        // character through a key event so keyup-driven autocomplete reacts.
+        const chars = [...input.text];
+        const last = chars.pop();
+        if (chars.length) await page.cdp('Input.insertText', { text: chars.join('') });
+        if (last) {
+          await page.cdp('Input.dispatchKeyEvent', { type: 'keyDown', key: last, text: last });
+          await page.cdp('Input.dispatchKeyEvent', { type: 'keyUp', key: last });
+        }
+        break;
+      }
+      case 'key': {
+        const key = input.key === 'Space' || input.key === 'Spacebar' ? ' ' : input.key;
+        if (typeof key !== 'string' || !key || [...key].length > 32)
+          throw new BrowserServiceError('INVALID_BROWSER_INPUT', 'Invalid browser key.', 400);
+        const named = keys[key];
+        if (!named && [...key].length !== 1)
+          throw new BrowserServiceError('INVALID_BROWSER_INPUT', 'Unsupported browser key.', 400);
+        const value = named ?? { code: /^[a-z]$/i.test(key) ? `Key${key.toUpperCase()}` : '', keyCode: key.toUpperCase().charCodeAt(0), text: key };
+        if (input.code !== undefined && (typeof input.code !== 'string' || !/^(?:[A-Za-z][A-Za-z0-9]{0,31})?$/.test(input.code)))
+          throw new BrowserServiceError('INVALID_BROWSER_INPUT', 'Invalid physical browser key.', 400);
+        if (input.text !== undefined && (typeof input.text !== 'string' || [...input.text].length > 32))
+          throw new BrowserServiceError('INVALID_BROWSER_INPUT', 'Invalid browser key text.', 400);
+        const code = input.code ?? value.code;
+        const punctuation: Record<string, number> = { Semicolon: 186, Equal: 187, Comma: 188, Minus: 189, Period: 190, Slash: 191, Backquote: 192, BracketLeft: 219, Backslash: 220, BracketRight: 221, Quote: 222 };
+        const keyCode = /^Key[A-Z]$/.test(code) ? code.charCodeAt(3) : /^Digit[0-9]$/.test(code) ? code.charCodeAt(5) : punctuation[code] ?? value.keyCode;
+        const event = { key, code, windowsVirtualKeyCode: keyCode, modifiers };
+        const selectAll = code === 'KeyA' && !!(modifiers & (2 | 4)) && !(modifiers & (1 | 8));
+        await page.cdp('Input.dispatchKeyEvent', { type: 'rawKeyDown', ...event, ...(selectAll ? { commands: ['selectAll'] } : {}) });
+        const text = input.text ?? value.text;
+        if (text && !(modifiers & (1 | 2 | 4)))
+          await page.cdp('Input.dispatchKeyEvent', { type: 'char', ...event, text, unmodifiedText: text });
+        await page.cdp('Input.dispatchKeyEvent', { type: 'keyUp', ...event });
+        break;
+      }
+      default: throw new BrowserServiceError('INVALID_BROWSER_INPUT', 'Unsupported browser input type.', 400);
+    }
   }
 
   async handleDialog(options: { accept: boolean; promptText?: string; generation: number }): Promise<void> {
@@ -968,6 +1063,7 @@ export class BrowserService {
     this.disposed = true;
     this.active?.controller.abort();
     this.disposing = this.control(async () => {
+      await this.resetPointers();
       await this.active?.done.catch(() => {});
       this.frameListeners.clear();
       clearInterval(this.fallbackTimer);

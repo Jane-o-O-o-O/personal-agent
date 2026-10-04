@@ -46,6 +46,9 @@ let runId: string | undefined;
 let output = '';
 let images: Image[] = [];
 let captureResponse: CDP['observeResponse'];
+let lastFocus: string | undefined;
+let cellFocus: string | undefined;
+let reportingFocus = true;
 let overflow = false;
 // Bound memory even when generated code writes an unbounded amount of output.
 const hardLimit = 1_000_000;
@@ -232,12 +235,23 @@ Object.assign(realm, {
   },
 });
 function observe() {
-  if (config.recording)
-    browser.observeCommand = (method, raw, sessionId) => {
+  const focus = (targetId: string | undefined) => {
+    if (reportingFocus && targetId) cellFocus = targetId;
+    if (reportingFocus && targetId && targetId !== lastFocus) {
+      lastFocus = targetId;
+      send({ type: 'focus', targetId });
+    }
+  };
+  browser.observeFocus = focus;
+  browser.observeCommand = (method, raw, sessionId) => {
       const params = raw as { type?: string; x?: number; y?: number };
       const protocolTarget = sessionId ? browser.targetForSession(sessionId) : undefined;
       const targetId = protocolTarget ? browser.observationTargetId : undefined;
       if (!targetId) return;
+      // Follow actual actions immediately. Passive snapshots must not switch back
+      // to the primary page after code has acted in a different tab.
+      if (method.startsWith('Input.') || method === 'Page.navigate' || method === 'Runtime.evaluate') focus(targetId);
+      if (!config.recording) return;
       if (
         method === 'Input.dispatchMouseEvent' &&
         ['mouseReleased', 'mouseWheel'].includes(params.type ?? '')
@@ -349,12 +363,16 @@ process.on('message', async (message: WorkerRequest) => {
   let failure: string | undefined;
   let activeTargetId: string | undefined;
   try {
+    reportingFocus = true;
+    lastFocus = undefined;
+    cellFocus = undefined;
     valueJson = await evaluate(message.code, message.captureJson);
   } catch (error) {
     failure = error instanceof Error ? error.message : String(error);
   } finally {
     // Before bu.state(), which reads the primary page, not necessarily the tab the code used.
-    activeTargetId = browser.observationTargetId;
+    activeTargetId = cellFocus ?? browser.observationTargetId;
+    reportingFocus = false;
     // After a cell whose bu actions reached the page, show the resulting state without another model turn.
     if (bu?.acted)
       await bu

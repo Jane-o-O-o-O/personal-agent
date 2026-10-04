@@ -60,8 +60,9 @@ export interface BrowserState {
 }
 export interface BrowserFrame { type: 'frame'; data: string; mimeType: string; width: number; height: number; generation: number }
 export interface BrowserInput {
-  generation: number; tabId?: string; type: 'click' | 'move' | 'scroll' | 'text' | 'key';
-  x?: number; y?: number; deltaX?: number; deltaY?: number; text?: string; key?: string; modifiers?: number;
+  generation: number; tabId?: string; type: 'click' | 'move' | 'mouse_down' | 'mouse_up' | 'scroll' | 'text' | 'key';
+  x?: number; y?: number; deltaX?: number; deltaY?: number; text?: string; key?: string; code?: string; modifiers?: number;
+  button?: 'left' | 'middle' | 'right'; buttons?: number; clickCount?: number;
 }
 export interface AppEvent { id: number; type: string; entityId: string; taskId?: string; createdAt: string; payload: unknown }
 export interface Bootstrap {

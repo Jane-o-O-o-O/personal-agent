@@ -3,11 +3,14 @@ import { AlertCircle, ArrowLeft, ArrowRight, ArrowRightToLine, Check, CornerDown
 import type { BrowserFrame, BrowserInput, BrowserState } from '../shared/contracts';
 import { api, ApiError, errorMessage } from './api';
 import { IconButton } from './ui';
+import { BrowserInputQueue } from './browser-input-queue';
 
 const homeUrl = 'https://www.baidu.com';
 type Action = { path: string; body?: Record<string, unknown>; label: string; control?: boolean };
 type ViewFrame = BrowserFrame & { tabId?: string; sequence?: number };
-type DecodedFrame = { generation: number; data: string };
+type PointerGesture = { pointerId: number; generation: number; tabId?: string; button: 'left' | 'middle' | 'right'; clickCount: number; x: number; y: number };
+const modifiersFor = (event: { altKey: boolean; ctrlKey: boolean; metaKey: boolean; shiftKey: boolean }) =>
+  (event.altKey ? 1 : 0) | (event.ctrlKey ? 2 : 0) | (event.metaKey ? 4 : 0) | (event.shiftKey ? 8 : 0);
 
 function readableError(error: unknown) {
   if (error instanceof ApiError) {
@@ -27,7 +30,7 @@ function readableError(error: unknown) {
 export function BrowserPanel({ browser, onChanged, onBack }: { browser: BrowserState; onChanged: () => Promise<void>; onBack?: () => void }) {
   const [state, setState] = useState(browser);
   const [frame, setFrame] = useState<ViewFrame | null>(null);
-  const [decodedFrame, setDecodedFrame] = useState<DecodedFrame | null>(null);
+  const [decodedFrame, setDecodedFrame] = useState<ViewFrame | null>(null);
   const [connected, setConnected] = useState(false);
   const [reconnecting, setReconnecting] = useState(false);
   const [streamRevision, setStreamRevision] = useState(0);
@@ -54,19 +57,25 @@ export function BrowserPanel({ browser, onChanged, onBack }: { browser: BrowserS
   const addressDraft = useRef('');
   const textLock = useRef(false);
   const syncedTab = useRef<string | undefined>(undefined);
-  const inputChain = useRef<Promise<void>>(Promise.resolve());
+  const inputQueue = useRef<BrowserInputQueue | null>(null);
+  const mounted = useRef(true);
   const image = useRef<HTMLImageElement>(null);
   const viewport = useRef<HTMLDivElement>(null);
   const lastMove = useRef(0);
-  const pendingInputs = useRef(0);
   const frameArrivedAt = useRef(0);
+  const observedGeneration = useRef(browser.generation);
+  const frameDecoder = useRef({ running: false, pending: null as ViewFrame | null, epoch: 0 });
   const live = useRef({ connected, frame, staleFrame, decodedFrame });
   const touchStart = useRef<{ clientX: number; clientY: number; x: number; y: number } | null>(null);
+  const pointerGesture = useRef<PointerGesture | null>(null);
+  const pointerType = useRef('mouse');
+  const previousPress = useRef<{ at: number; x: number; y: number; button: string; count: number } | null>(null);
   const suppressClick = useRef(false);
   live.current = { connected, frame, staleFrame, decodedFrame };
   const activeTab = state.tabs.find(tab => tab.id === state.activeTabId);
-  const currentFrame = frame?.generation === state.generation && (!frame.tabId || frame.tabId === state.activeTabId) ? frame : null;
-  const frameReady = Boolean(currentFrame && decodedFrame?.generation === currentFrame.generation && decodedFrame?.data === currentFrame.data);
+  const currentFrame = decodedFrame?.generation === state.generation && decodedFrame.generation >= observedGeneration.current
+    && (!decodedFrame.tabId || decodedFrame.tabId === state.activeTabId) ? decodedFrame : null;
+  const frameReady = Boolean(currentFrame);
   const controllable = !busy && connected && !staleFrame && !state.transportError && state.status === 'ready' && state.owner === 'user' && frameReady;
 
   const applyState = (value: BrowserState) => {
@@ -98,6 +107,7 @@ export function BrowserPanel({ browser, onChanged, onBack }: { browser: BrowserS
   };
   const reconnect = () => {
     setConnected(false); setReconnecting(true); setStaleFrame(false);
+    frameDecoder.current.epoch++; frameDecoder.current.pending = null;
     setFrame(null); setDecodedFrame(null);
     setStreamRevision(value => value + 1);
   };
@@ -110,6 +120,45 @@ export function BrowserPanel({ browser, onChanged, onBack }: { browser: BrowserS
     return () => observer.disconnect();
   }, []);
   useEffect(() => { applyState(browser); }, [browser]);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      frameDecoder.current.epoch++; frameDecoder.current.pending = null;
+      inputQueue.current?.cancelPending({ preserveMouseUp: true });
+      const gesture = pointerGesture.current; pointerGesture.current = null;
+      if (gesture && gesture.generation === stateRef.current.generation && gesture.tabId === stateRef.current.activeTabId)
+        void inputQueue.current?.enqueue({ type: 'mouse_up', generation: gesture.generation, tabId: gesture.tabId,
+          x: gesture.x, y: gesture.y, button: gesture.button, buttons: 0, clickCount: gesture.clickCount });
+    };
+  }, []);
+  useEffect(() => {
+    if (!frame) return;
+    const decoder = frameDecoder.current;
+    decoder.pending = frame;
+    if (decoder.running) return;
+    decoder.running = true;
+    void (async () => {
+      try {
+        while (decoder.pending && mounted.current) {
+          const next = decoder.pending; decoder.pending = null;
+          const epoch = decoder.epoch;
+          const pending = new Image();
+          pending.src = next.data.startsWith('data:') ? next.data : `data:${next.mimeType};base64,${next.data}`;
+          try {
+            await pending.decode();
+            const current = stateRef.current;
+            if (mounted.current && live.current.connected && epoch === decoder.epoch
+                && next.generation >= current.generation && (!next.tabId || next.generation > current.generation || next.tabId === current.activeTabId)) setDecodedFrame(next);
+          } catch {
+            if (!mounted.current || epoch !== decoder.epoch || next.generation < stateRef.current.generation) continue;
+            setError('这张浏览器画面未能解码，请重新连接画面。'); setStaleFrame(true);
+          }
+        }
+      } finally { decoder.running = false; }
+    })();
+  }, [frame]);
+  useEffect(() => { pointerGesture.current = null; touchStart.current = null; previousPress.current = null; }, [state.generation, state.activeTabId]);
   useEffect(() => {
     const changedTab = syncedTab.current !== state.activeTabId;
     if (changedTab || !urlDirty.current) {
@@ -134,6 +183,7 @@ export function BrowserPanel({ browser, onChanged, onBack }: { browser: BrowserS
         if (!active) return;
         openedAt = Date.now(); attempts = 0;
         setConnected(true); setReconnecting(false); setStaleFrame(false);
+        frameDecoder.current.epoch++; frameDecoder.current.pending = null;
         setFrame(null); setDecodedFrame(null);
         void syncState().catch(() => {});
       };
@@ -142,7 +192,8 @@ export function BrowserPanel({ browser, onChanged, onBack }: { browser: BrowserS
         let value: ViewFrame | { type: 'state'; state: BrowserState } | { type: 'error'; message: string };
         try { value = JSON.parse(String(event.data)) as typeof value; } catch { return; }
         if (value.type === 'frame') {
-          if (value.generation >= stateRef.current.generation && (!value.tabId || value.generation > stateRef.current.generation || value.tabId === stateRef.current.activeTabId)) {
+          if (value.generation >= Math.max(stateRef.current.generation, observedGeneration.current) && (!value.tabId || value.generation > stateRef.current.generation || value.tabId === stateRef.current.activeTabId)) {
+            observedGeneration.current = Math.max(observedGeneration.current, value.generation);
             frameArrivedAt.current = Date.now(); setStaleFrame(false); setFrame(value);
             // State events travel separately from pixels. Recover a missing SSE
             // update by reading status; never guess ownership or replay a control action.
@@ -159,6 +210,7 @@ export function BrowserPanel({ browser, onChanged, onBack }: { browser: BrowserS
       currentSocket.onclose = () => {
         if (!active || socket !== currentSocket) return;
         setConnected(false); setReconnecting(true);
+        frameDecoder.current.epoch++; frameDecoder.current.pending = null;
         setFrame(null); setDecodedFrame(null);
         retry = setTimeout(connect, Math.min(8000, 1000 * 2 ** attempts++));
       };
@@ -212,7 +264,7 @@ export function BrowserPanel({ browser, onChanged, onBack }: { browser: BrowserS
     setBusy(action.label); setError(null);
     try {
       // Drain inputs before switching documents or owners. Queued input never borrows a new generation.
-      await inputChain.current.catch(() => {});
+      await inputQueue.current?.idle();
       let latest = await syncState();
       if (action.path === 'start' || (action.control && latest.status !== 'ready')) latest = applyState(await api<BrowserState>('/browser/start', { method: 'POST', body: {} }));
       if (action.path === 'takeover' || action.path === 'release') {
@@ -255,28 +307,48 @@ export function BrowserPanel({ browser, onChanged, onBack }: { browser: BrowserS
   const sendInput = (input: Omit<BrowserInput, 'generation' | 'tabId'>): Promise<boolean> => {
     const current = stateRef.current;
     const shown = live.current;
-    if (actionLock.current || current.owner !== 'user' || !shown.connected || shown.staleFrame || current.transportError || shown.frame?.generation !== current.generation || shown.decodedFrame?.generation !== current.generation || shown.decodedFrame?.data !== shown.frame.data) return Promise.resolve(false);
-    const generation = current.generation;
-    let sent = false;
-    pendingInputs.current++;
-    const result = inputChain.current.catch(() => {}).then(async () => {
-      if (stateRef.current.owner !== 'user' || stateRef.current.generation !== generation || stateRef.current.activeTabId !== current.activeTabId) return;
-      await api('/browser/input', { method: 'POST', body: { ...input, generation, tabId: current.activeTabId } });
-      sent = true;
-    }).catch(problem => {
-      setError(readableError(problem));
-      if (problem instanceof ApiError && ['STALE_BROWSER_GENERATION', 'BROWSER_NOT_OWNED'].includes(problem.code)) void syncState().catch(() => {});
-    }).finally(() => { pendingInputs.current--; });
-    inputChain.current = result;
-    return result.then(() => sent);
+    const cleanupRelease = input.type === 'mouse_up';
+    if (current.owner !== 'user' || (!cleanupRelease && (actionLock.current || !shown.connected || shown.staleFrame || current.transportError
+        || shown.decodedFrame?.generation !== current.generation || shown.decodedFrame.generation < observedGeneration.current
+        || (shown.decodedFrame.tabId && shown.decodedFrame.tabId !== current.activeTabId)))) return Promise.resolve(false);
+    inputQueue.current ??= new BrowserInputQueue(async queued => {
+      if ((!mounted.current && queued.type !== 'mouse_up') || stateRef.current.owner !== 'user'
+          || (queued.type !== 'mouse_up' && queued.generation < observedGeneration.current)
+          || stateRef.current.generation !== queued.generation || stateRef.current.activeTabId !== queued.tabId) return false;
+      try {
+        await api('/browser/input', { method: 'POST', body: queued });
+        return true;
+      } catch (problem) {
+        if (!mounted.current) return false;
+        setError(readableError(problem));
+        if (problem instanceof ApiError && ['STALE_BROWSER_GENERATION', 'BROWSER_NOT_OWNED'].includes(problem.code)) void syncState().catch(() => {});
+        return false;
+      }
+    }, () => setError('操作发送队列已满，请等待上一项操作完成后重试。'));
+    return inputQueue.current.enqueue({ ...input, generation: current.generation, tabId: current.activeTabId });
   };
-  const coordinates = (clientX: number, clientY: number) => {
+  const releasePointer = (modifiers = 0) => {
+    const gesture = pointerGesture.current; pointerGesture.current = null;
+    touchStart.current = null;
+    if (gesture && gesture.generation === stateRef.current.generation && gesture.tabId === stateRef.current.activeTabId)
+      void sendInput({ type: 'mouse_up', x: gesture.x, y: gesture.y, button: gesture.button, buttons: 0, clickCount: gesture.clickCount, modifiers });
+  };
+  useEffect(() => {
+    if (!connected || staleFrame || state.transportError) releasePointer();
+  }, [connected, staleFrame, state.transportError]);
+  useEffect(() => {
+    const blur = () => releasePointer();
+    const visibility = () => { if (document.hidden) releasePointer(); };
+    window.addEventListener('blur', blur); document.addEventListener('visibilitychange', visibility);
+    return () => { window.removeEventListener('blur', blur); document.removeEventListener('visibilitychange', visibility); };
+  }, []);
+  const coordinates = (clientX: number, clientY: number, clamp = false) => {
     const rect = image.current?.getBoundingClientRect();
     if (!rect || !currentFrame || !rect.width || !rect.height) return null;
     const x = (clientX - rect.left) / rect.width * state.viewport.width;
     const y = (clientY - rect.top) / rect.height * state.viewport.height;
-    if (x < 0 || y < 0 || x > state.viewport.width || y > state.viewport.height) return null;
-    return { x, y };
+    if (!clamp && (x < 0 || y < 0 || x > state.viewport.width || y > state.viewport.height)) return null;
+    return { x: Math.max(0, Math.min(state.viewport.width, x)), y: Math.max(0, Math.min(state.viewport.height, y)) };
   };
   const keyInput = (key: string, modifiers = 0) => void sendInput({ type: 'key', key, modifiers });
   const fittedWidth = currentFrame && viewSize.width && viewSize.height ? Math.min(viewSize.width, viewSize.height * currentFrame.width / currentFrame.height) : viewSize.width;
@@ -285,14 +357,18 @@ export function BrowserPanel({ browser, onChanged, onBack }: { browser: BrowserS
     const wheel = (event: WheelEvent) => {
       const current = stateRef.current;
       const shown = live.current;
-      if (actionLock.current || !shown.connected || shown.staleFrame || current.transportError || current.owner !== 'user' || shown.frame?.generation !== current.generation || shown.decodedFrame?.generation !== current.generation || shown.decodedFrame?.data !== shown.frame.data) return;
+      if (actionLock.current || !shown.connected || shown.staleFrame || current.transportError || current.owner !== 'user'
+          || shown.decodedFrame?.generation !== current.generation || shown.decodedFrame.generation < observedGeneration.current
+          || (shown.decodedFrame.tabId && shown.decodedFrame.tabId !== current.activeTabId)) return;
       const rect = image.current?.getBoundingClientRect();
       if (!rect) return;
       const x = (event.clientX - rect.left) / rect.width * current.viewport.width;
       const y = (event.clientY - rect.top) / rect.height * current.viewport.height;
       if (x < 0 || y < 0 || x > current.viewport.width || y > current.viewport.height) return;
       event.preventDefault();
-      void sendInput({ type: 'scroll', x, y, deltaX: event.deltaX, deltaY: event.deltaY });
+      const unitX = event.deltaMode === WheelEvent.DOM_DELTA_LINE ? 16 : event.deltaMode === WheelEvent.DOM_DELTA_PAGE ? current.viewport.width : 1;
+      const unitY = event.deltaMode === WheelEvent.DOM_DELTA_LINE ? 16 : event.deltaMode === WheelEvent.DOM_DELTA_PAGE ? current.viewport.height : 1;
+      void sendInput({ type: 'scroll', x, y, deltaX: event.deltaX * unitX, deltaY: event.deltaY * unitY, modifiers: modifiersFor(event) });
     };
     element?.addEventListener('wheel', wheel, { passive: false });
     return () => element?.removeEventListener('wheel', wheel);
@@ -330,19 +406,61 @@ export function BrowserPanel({ browser, onChanged, onBack }: { browser: BrowserS
       </div>
       <div className="browser-tabbar"><div className="browser-tabs" aria-label="浏览器标签页">{state.tabs.length ? state.tabs.map(tab => <div key={tab.id} className={`browser-tab ${tab.id === state.activeTabId ? 'selected' : ''}`}><button className={tab.id === state.activeTabId ? 'selected' : ''} title={tab.url} aria-current={tab.id === state.activeTabId ? 'page' : undefined} disabled={Boolean(busy)} onClick={() => { if (tab.id !== stateRef.current.activeTabId) void mutate({ path: 'tab', body: { tabId: tab.id }, label: '正在切换标签页', control: true }); }}><Globe size={12} /><span>{tab.title || (tab.url === 'about:blank' ? '新标签页' : tab.url) || '新标签页'}</span></button><IconButton icon={X} label={`关闭标签页 ${tab.title || tab.url || '新标签页'}`} disabled={Boolean(busy)} onClick={() => void mutate({ path: 'tab/close', body: { tabId: tab.id }, label: '正在关闭标签页', control: true })} /></div>) : <span className="browser-no-tabs">启动后将打开百度首页</span>}</div><IconButton icon={Plus} label="新建标签页" disabled={Boolean(busy)} onClick={() => void mutate({ path: 'tab/new', body: { url: homeUrl }, label: '正在新建标签页', control: true })} /></div>
       <div className={`browser-viewport ${controllable ? 'user-controlled' : ''} ${overlay ? 'browser-paused' : ''}`} ref={viewport} tabIndex={controllable ? 0 : -1} aria-label="远程浏览器画面" aria-busy={Boolean(busy) || !frameReady}
+        onPaste={event => {
+          if (!controllable) return;
+          const pasted = event.clipboardData.getData('text/plain');
+          if (!pasted) return;
+          event.preventDefault();
+          void sendInput({ type: 'text', text: pasted });
+        }}
         onKeyDown={event => {
           if (!controllable || event.nativeEvent.isComposing || ['Control', 'Shift', 'Alt', 'Meta'].includes(event.key)) return;
-          const modifiers = (event.altKey ? 1 : 0) | (event.ctrlKey ? 2 : 0) | (event.metaKey ? 4 : 0) | (event.shiftKey ? 8 : 0);
-          if (event.key === 'Tab' && !modifiers) return;
+          // Let the user's explicit shortcut deliver a local paste event. The
+          // server's clipboard is a different machine and cannot supply it.
+          if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === 'v') return;
+          const modifiers = modifiersFor(event);
           event.preventDefault();
-          if (event.key.length === 1 && !event.altKey && !event.ctrlKey && !event.metaKey) void sendInput({ type: 'text', text: event.key }); else keyInput(event.key, modifiers);
+          void sendInput({ type: 'key', key: event.key, code: event.code, modifiers,
+            ...([...event.key].length === 1 && !event.altKey && !event.ctrlKey && !event.metaKey ? { text: event.key } : {}) });
         }}>
         {currentFrame ? <img key={currentFrame.generation} ref={image} className="browser-frame" style={{ width: fittedWidth ? `${fittedWidth * zoom}px` : '100%', aspectRatio: `${currentFrame.width}/${currentFrame.height}`, touchAction: controllable && zoom === 1 ? 'none' : 'pan-x pan-y' }} src={currentFrame.data.startsWith('data:') ? currentFrame.data : `data:${currentFrame.mimeType};base64,${currentFrame.data}`} alt="当前远程浏览器页面" draggable={false}
-          onLoad={() => setDecodedFrame({ generation: currentFrame.generation, data: currentFrame.data })} onError={() => { setError('这张浏览器画面未能解码，请重新连接画面。'); setStaleFrame(true); }}
-          onClick={event => { if (!controllable || suppressClick.current) { suppressClick.current = false; return; } const point = coordinates(event.clientX, event.clientY); if (point) { viewport.current?.focus({ preventScroll: true }); void sendInput({ type: 'click', ...point }); } }}
-          onPointerDown={event => { if (controllable && zoom === 1 && event.pointerType === 'touch') { const point = coordinates(event.clientX, event.clientY); if (point) { touchStart.current = { ...point, clientX: event.clientX, clientY: event.clientY }; event.currentTarget.setPointerCapture(event.pointerId); } } }}
-          onPointerCancel={() => { touchStart.current = null; }}
+          onError={() => { setError('这张浏览器画面未能解码，请重新连接画面。'); setStaleFrame(true); }}
+          onContextMenu={event => event.preventDefault()}
+          onClick={event => {
+            if (pointerType.current !== 'touch') return;
+            if (!controllable || suppressClick.current) { suppressClick.current = false; return; }
+            const point = coordinates(event.clientX, event.clientY);
+            if (point) { viewport.current?.focus({ preventScroll: true }); void sendInput({ type: 'click', ...point, modifiers: modifiersFor(event) }); }
+          }}
+          onPointerDown={event => {
+            pointerType.current = event.pointerType;
+            if (!controllable) return;
+            const point = coordinates(event.clientX, event.clientY);
+            if (!point) return;
+            if (event.pointerType === 'touch') {
+              if (zoom === 1) { touchStart.current = { ...point, clientX: event.clientX, clientY: event.clientY }; event.currentTarget.setPointerCapture(event.pointerId); }
+              return;
+            }
+            const button = event.button === 2 ? 'right' : event.button === 1 ? 'middle' : 'left';
+            const previous = previousPress.current;
+            const count = previous && Date.now() - previous.at < 500 && previous.button === button
+              && Math.abs(previous.x - point.x) + Math.abs(previous.y - point.y) < 8 ? Math.min(3, previous.count + 1) : 1;
+            previousPress.current = { at: Date.now(), ...point, button, count };
+            pointerGesture.current = { pointerId: event.pointerId, generation: state.generation, tabId: state.activeTabId, button, clickCount: count, ...point };
+            event.currentTarget.setPointerCapture(event.pointerId);
+            viewport.current?.focus({ preventScroll: true });
+            void sendInput({ type: 'mouse_down', ...point, button, buttons: event.buttons, clickCount: count, modifiers: modifiersFor(event) });
+          }}
+          onPointerCancel={event => releasePointer(modifiersFor(event))}
+          onLostPointerCapture={event => { if (pointerGesture.current?.pointerId === event.pointerId) releasePointer(modifiersFor(event)); }}
           onPointerUp={event => {
+            if (event.pointerType !== 'touch') {
+              const gesture = pointerGesture.current; pointerGesture.current = null;
+              if (!gesture || gesture.pointerId !== event.pointerId || gesture.generation !== stateRef.current.generation || gesture.tabId !== stateRef.current.activeTabId) return;
+              const point = coordinates(event.clientX, event.clientY, true) ?? { x: gesture.x, y: gesture.y };
+              void sendInput({ type: 'mouse_up', ...point, button: gesture.button, buttons: event.buttons, clickCount: gesture.clickCount, modifiers: modifiersFor(event) });
+              return;
+            }
             const start = touchStart.current; touchStart.current = null;
             if (!start || !controllable || event.pointerType !== 'touch') return;
             const rect = image.current?.getBoundingClientRect();
@@ -350,7 +468,17 @@ export function BrowserPanel({ browser, onChanged, onBack }: { browser: BrowserS
             suppressClick.current = true; setTimeout(() => { suppressClick.current = false; }, 200);
             void sendInput({ type: 'scroll', x: start.x, y: start.y, deltaX: (start.clientX - event.clientX) / rect.width * state.viewport.width, deltaY: (start.clientY - event.clientY) / rect.height * state.viewport.height });
           }}
-          onPointerMove={event => { if (!controllable || pendingInputs.current > 0 || Date.now() - lastMove.current < 120 || event.pointerType === 'touch') return; lastMove.current = Date.now(); const point = coordinates(event.clientX, event.clientY); if (point) void sendInput({ type: 'move', ...point }); }} />
+          onPointerMove={event => {
+            if (!controllable || event.pointerType === 'touch') return;
+            const gesture = pointerGesture.current;
+            if (!gesture && (inputQueue.current?.busy || Date.now() - lastMove.current < 120)) return;
+            lastMove.current = Date.now();
+            const point = coordinates(event.clientX, event.clientY, Boolean(gesture));
+            if (point) {
+              if (gesture) { gesture.x = point.x; gesture.y = point.y; }
+              void sendInput({ type: 'move', ...point, buttons: event.buttons, modifiers: modifiersFor(event) });
+            }
+          }} />
           : <div className="browser-empty">{state.status === 'starting' || state.status === 'ready' ? <LoaderCircle size={28} className="spin" /> : <Globe size={34} strokeWidth={1.3} />}<strong>{busy ?? (state.status === 'ready' ? '正在获取当前页面画面' : state.status === 'starting' ? '浏览器正在启动' : '从百度开始浏览')}</strong><span>{state.status === 'ready' ? '页面更新期间，旧画面不会接收点击' : '在上方直接搜索，或启动浏览器打开百度首页'}</span>{state.status === 'error' && <button className="button secondary compact" disabled={Boolean(busy)} onClick={() => void mutate({ path: 'start', label: '正在恢复浏览器' })}><RefreshCw size={14} />恢复浏览器</button>}</div>}
         {overlay && <div className="browser-stream-overlay" role="status"><WifiOff size={24} /><strong>{overlay}</strong><span>{reconnecting ? '正在自动恢复连接，恢复前暂停网页操作' : '当前画面已暂停，重新连接后继续操作'}</span><button className="button secondary compact" onClick={reconnect}><RefreshCw size={14} />重新连接画面</button></div>}
         {busy && currentFrame && !overlay && <div className="browser-progress" role="status"><LoaderCircle size={14} className="spin" />{busy}</div>}

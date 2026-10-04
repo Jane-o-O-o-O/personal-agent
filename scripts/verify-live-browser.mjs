@@ -194,7 +194,7 @@ async function clickRemote(x, y, target = page, opensDialog = false) {
   assert(rect);
   const response = target.waitForResponse(value => {
     if (!value.url().endsWith('/api/browser/input')) return false;
-    try { return value.request().postDataJSON().type === 'click'; } catch { return false; }
+    try { return ['click', 'mouse_up'].includes(value.request().postDataJSON().type); } catch { return false; }
   });
   await image.click({ position: { x: rect.width * x / 1440, y: rect.height * y / 900 } });
   if (opensDialog) return { completion: response };
@@ -437,7 +437,7 @@ try {
     assert(rect);
     const clickResponse = mobilePage.waitForResponse(value => {
       if (!value.url().endsWith('/api/browser/input')) return false;
-      try { return value.request().postDataJSON().type === 'click'; } catch { return false; }
+      try { return ['click', 'mouse_up'].includes(value.request().postDataJSON().type); } catch { return false; }
     });
     await mobilePage.touchscreen.tap(rect.x + rect.width * 80 / 1440, rect.y + rect.height * 100 / 900);
     assert((await clickResponse).ok());

@@ -47,6 +47,7 @@ export type WorkerRequest =
   | { type: 'execute'; code: string; captureJson?: boolean; outputFile?: string; runId?: string }
   | { type: 'close' };
 export type WorkerResponse =
+  | { type: 'focus'; targetId: string }
   | { type: 'action'; action: BrowserAction }
   | { type: 'owned'; targetId: string }
   | { type: 'endpoint'; endpoint: string }
@@ -62,4 +63,3 @@ export function positiveInteger(name: string, value: number): number {
   }
   return value;
 }
-

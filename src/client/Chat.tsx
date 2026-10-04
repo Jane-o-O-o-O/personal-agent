@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { ArrowDown, ArrowUpRight, Check, ChevronDown, CircleHelp, Copy, Download, FileText, Globe, LoaderCircle, MessageSquare, Pause, Play, Send, Square, Terminal, X } from 'lucide-react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import type { Approval, Task, TaskDetail } from '../shared/contracts';
+import type { Approval, BrowserState, Task, TaskDetail } from '../shared/contracts';
 import { api, requestId } from './api';
 import { Empty, formatTime, IconButton, jsonText, Status } from './ui';
 
@@ -56,6 +56,7 @@ export function Chat({ detail, selectedTask, loading, configured, run, busy, onC
   const outbound = useRef<{ key: string; id: string } | null>(null);
   const task = detail?.task ?? selectedTask;
   const active = task && ['queued', 'running', 'waiting_approval', 'waiting_external'].includes(task.status);
+  const waitingForBrowserControl = task?.status === 'waiting_user' && task.waitingReason === 'browser_control';
   const pending = detail?.approvals.filter(approval => approval.status === 'pending') ?? [];
   const submitting = busy.has('message');
 
@@ -94,6 +95,20 @@ export function Chat({ detail, selectedTask, loading, configured, run, busy, onC
       await refresh();
     });
   };
+  const returnBrowserAndContinue = () => {
+    if (!task || !waitingForBrowserControl) return;
+    void run(`task:${task.id}`, async () => {
+      const browser = await api<BrowserState>('/browser');
+      const latest = (await api<TaskDetail>(`/tasks/${encodeURIComponent(task.id)}`)).task;
+      if (latest.status !== 'waiting_user' || latest.waitingReason !== 'browser_control')
+        throw new Error('任务状态已变化，请刷新后再操作。');
+      if (browser.transportError) throw new Error(browser.transportError);
+      if (browser.owner === 'user')
+        await api('/browser/release', { method: 'POST', body: { generation: browser.generation } });
+      await api(`/tasks/${encodeURIComponent(task.id)}/resume`, { method: 'POST', body: { version: latest.version } });
+      await refresh();
+    });
+  };
 
   return <section className="chat-layout">
     <header className="page-heading task-heading"><div className="heading-copy"><h1>{task?.title ?? '新任务'}</h1>
@@ -102,7 +117,7 @@ export function Chat({ detail, selectedTask, loading, configured, run, busy, onC
       <div className="button-row">
         <IconButton icon={Globe} label="打开浏览器" onClick={onBrowser} />
         {task && active && <IconButton icon={Pause} label="暂停任务" busy={busy.has(`task:${task.id}`)} disabled={busy.has(`task:${task.id}`)} onClick={() => control('pause')} />}
-        {task && ['paused', 'waiting_user', 'failed', 'waiting_external'].includes(task.status) && <IconButton icon={Play} label="恢复任务" busy={busy.has(`task:${task.id}`)} disabled={busy.has(`task:${task.id}`)} onClick={() => control('resume')} />}
+        {task && !waitingForBrowserControl && ['paused', 'waiting_user', 'failed', 'waiting_external'].includes(task.status) && <IconButton icon={Play} label="恢复任务" busy={busy.has(`task:${task.id}`)} disabled={busy.has(`task:${task.id}`)} onClick={() => control('resume')} />}
         {task && !['succeeded', 'cancelled', 'failed'].includes(task.status) && <IconButton icon={Square} label="取消任务" className="danger-icon" disabled={busy.has(`task:${task.id}`)} onClick={() => control('cancel')} />}
       </div>
     </header>
@@ -111,7 +126,7 @@ export function Chat({ detail, selectedTask, loading, configured, run, busy, onC
       <button role="tab" aria-selected={tab === 'activity'} onClick={() => setTab('activity')}><Terminal size={15} />操作<span>{detail?.operations.length ?? 0}</span></button>
       <button role="tab" aria-selected={tab === 'artifacts'} onClick={() => setTab('artifacts')}><FileText size={15} />成果<span>{detail?.artifacts.length ?? 0}</span></button>
     </div>}
-    {task?.waitingReason && <div className="notice warning"><CircleHelp size={16} /><span>{task.waitingReason}</span></div>}
+    {task?.waitingReason && <div className="notice warning"><CircleHelp size={16} />{waitingForBrowserControl ? <div><span>任务正在等待你交回浏览器控制权。完成操作后，可以交回并继续任务。</span><div className="button-row" style={{ flexWrap: 'wrap', marginTop: 8 }}><button className="button compact" disabled={busy.has(`task:${task.id}`)} onClick={returnBrowserAndContinue}><Play size={15} />交回浏览器并继续任务</button><button className="button secondary compact" onClick={onBrowser}>打开浏览器</button></div></div> : <span>{task.waitingReason}</span>}</div>}
     {task?.error && <div className="notice error"><span>{task.error}</span></div>}
     <div className="chat-scroll" ref={scroller} onScroll={() => {
       const element = scroller.current;

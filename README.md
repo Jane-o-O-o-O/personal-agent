@@ -192,11 +192,11 @@ Docker 浏览器镜像安装 Chromium。公网 HTTPS、证书与 `PUBLIC_ORIGIN`
 
 | 验证层级 | 已通过 | 范围 |
 | :--- | :--- | :--- |
-| 单元与服务集成 | **138 项** | Pi、任务、审批、认证、记忆、调度、连接器及真实 Chromium 回归 |
-| 网页端到端 | **18 项** | 工作台、生态管理、浏览器协议和桌面/手机布局 |
-| 公网浏览器与 Pi 交接 | **30 项** | 8 项工作区、17 项原生交互、2 项真实 Pi 交接、3 项补充边界 |
+| 单元与服务集成 | **166 项** | Pi、任务、审批、认证、记忆、调度、连接器及真实 Chromium 回归 |
+| 网页端到端 | **27 项** | 工作台、生态管理、键鼠队列、画面版本和桌面/手机布局 |
+| 本轮公网浏览器与 Pi 交接 | **31 项** | 7 项原问题复测、17 项常规交互、2 项真实等待恢复、2 项运行中接管、3 项边界 |
 
-这些数值对应报告中列出的场景，不能扩展为任意任务成功率、所有国内账号已接通或支付流程已验收。真实 iOS、长期压力、跨进程 iframe 全面适配、人工拖拽与完整验证码处理尚未验收或实现。
+这些数值对应报告中列出的场景，不能扩展为任意任务成功率、所有国内账号已接通或支付流程已验收。物理键盘、Tab、Mac 全选、双击、人工拖动及接管后同会话继续已验证；真实 iOS、完整 IME、长期压力、跨进程 iframe 全面适配和完整验证码处理仍未验收。
 
 ```sh
 npm run typecheck
@@ -209,7 +209,7 @@ npm run test:e2e
 
 E2E 可通过 `AGENT_E2E_URL`、`AGENT_E2E_PASSWORD` 或 `AGENT_E2E_PASSWORD_FILE` 指定测试目标；请使用独立 `DATA_DIR`，让测试数据与个人实例分开。
 
-详细证据：[全量功能测试报告](docs/full-functional-test-report.md) · [浏览器验收与已知限制](docs/browser-workspace-optimization.md) · [首版验收记录](docs/verification-report.md)。
+详细证据：[全量功能测试报告](docs/full-functional-test-report.md) · [最新浏览器复查](docs/browser-interaction-recheck.md) · [浏览器架构与历史验收](docs/browser-workspace-optimization.md) · [首版验收记录](docs/verification-report.md)。
 
 ## 常见问题
 

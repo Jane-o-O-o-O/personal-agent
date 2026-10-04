@@ -36,6 +36,12 @@ export class CDP {
   }
   /** Optional metadata observer; errors cannot change command delivery. Never receives responses. */
   observeCommand: ((method: string, params: unknown, sessionId?: string) => void) | undefined;
+  /** An explicit tab handle selection, independent of recording and passive page observation. */
+  observeFocus: ((targetId: string) => void) | undefined;
+  focus(targetId: string) {
+    this.activity.targetId = targetId;
+    this.observeFocus?.(targetId);
+  }
   /** Passive result tap. Exceptions cannot change command delivery. May contain page data. */
   observeResponse:
     ((method: string, params: unknown, result: unknown, sessionId?: string) => void) | undefined;

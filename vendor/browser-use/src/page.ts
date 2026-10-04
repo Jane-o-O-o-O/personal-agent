@@ -213,10 +213,13 @@ export class Tabs {
     const { targetId } = await this.cdp.send('Target.createTarget', { url: 'about:blank' });
     this.own(targetId);
     const page = await Page.attach(this.cdp, targetId);
+    this.cdp.focus(targetId);
     if (url !== 'about:blank') await page.goto(url);
     return page;
   }
   async get(id: string) {
-    return Page.attach(this.cdp, id);
+    const page = await Page.attach(this.cdp, id);
+    this.cdp.focus(id);
+    return page;
   }
 }

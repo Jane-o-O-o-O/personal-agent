@@ -29,6 +29,9 @@ Local changes:
   Runtime.enable with code 1006; the identical ws sequence retained the page
   and completed navigation, screenshots and 128 streamed frames. This is an
   observed transport difference, not a claim about the underlying TCP cause.
+- Worker tab selections and actions report focus through a separate IPC message,
+  independent of recording. The host follows the current task while its cell is
+  running and filters messages from replaced workers or human-owned sessions.
 
 The host provides persistent profiles, ownership, input, streaming and recovery.
 Host captures are isolated by target, control generation and document loader.

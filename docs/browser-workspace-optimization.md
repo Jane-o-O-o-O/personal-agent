@@ -1,5 +1,7 @@
 # 浏览器工作台优化方案与验收记录
 
+后续用户反馈发现早期验收没有覆盖的物理键盘、Tab/Cmd+A、双击、拖动、连续滚动、长单元标签跟随及 Pi 等待人工交回问题。2026-10-04 的扩大复查与修复记录见 [浏览器操作复查](browser-interaction-recheck.md)。**扩大复测已完成并部署：166 项单元/服务集成、27 项网页测试和 31 项公网检查通过。下文数字保留当时的历史版本，不重复累计。**
+
 调研与基线日期：2026-10-04（Asia/Shanghai）。范围：人工接管失败、默认百度页面、直接搜索、实时画面、浏览器导航与现有 Pi/CDP/VPS 适配。本文记录选型、已确认的问题机制，以及按运行阶段区分的测试与部署结果。
 
 ## 1. 本轮决策
@@ -100,7 +102,23 @@ CDP 连接失效后，后端先中断并等待旧 worker 结束，再关闭旧�
 
 最终修复只将有明确 `beforeunload` 拒绝记录的导航取消转换为 **HTTP 409 `BROWSER_NAVIGATION_CANCELLED`**。前端同步实际页面与控制状态，保留画面及 owner，不将用户的取消显示为红色故障；没有明确拒绝记录的异常和实际 503 等故障继续显示。真实 Chromium 回归确认取消保留 human 控制、无关 abort 错误不被改写、失败的 dialog 决策正确回滚；第六项协议 E2E 确认取消不报错而真正 503 仍提示并可再次导航。
 
-最终公网重跑已确认：接受导航 HTTP 200，回答后 **554 ms** 完成；取消返回 **409 `BROWSER_NAVIGATION_CANCELLED`**，回答后 **151 ms** 完成，页面及 owner 保留且无红色故障提示。最新证据：[`public-extra.json`](../.runtime/browser-optimization/public-extra.json)。稳定手机截图已目视核对，无侧栏遮挡或错误红条；早期 500 和过渡截图只保留为发现历史。
+当时的最终公网重跑已确认：接受导航 HTTP 200，回答后 **554 ms** 完成；取消返回 **409 `BROWSER_NAVIGATION_CANCELLED`**，回答后 **151 ms** 完成，页面及 owner 保留且无红色故障提示。历史证据：[`public-extra-20261003185002075.json`](../.runtime/browser-optimization/public-extra-20261003185002075.json)。稳定手机截图已目视核对，无侧栏遮挡或错误红条；早期 500 和过渡截图只保留为发现历史。
+
+### 3.7 后续扩大复查：输入事件、手势和任务等待
+
+更广的公网场景复现了：文字已写入但没有网页 keydown/keyup；物理 Tab 离开本地画面；双击及 pointer capture 拖动没有实际效果；连续滚轮积压；长 cell 未结束前标签画面不跟随。此外，受控浏览器因人工 owner 拒绝后，模型正常请求交回的回复曾被任务宿主误记为完成。
+
+扩大复查的修复版已实现以下机制，并完成最终复测：
+
+- 物理键盘传递 key/code/修饰键并发送按下、字符、释放；Tab 交给远程页面，Mac Cmd+A 映射 VPS 的 Control 全选及 CDP `selectAll`。中文批量输入的最后字符触发按键事件，不冒充完整 IME。
+- `mouse_down`/`move`/`mouse_up` 与点击次数支持持续鼠标手势；移动时同时携带 held button 和 buttons 掩码以保持网页 pointer capture。异常、取消、换文档和交接清理按住状态。
+- 相邻同上下文滚轮合并、连续指针移动取最新位置，键盘与手势边界按序；交接等待队列排空，同文档后台解码新帧期间保留有效已解码画面。
+- 独立 focus IPC 让长 cell 运行期间即时跟随操作标签；只接受当前 worker/运行时/任务且 Agent 持有控制权的通知，收尾的被动观察不拉回旧标签。
+- 明确的 `BROWSER_NOT_OWNED` 进入 `waiting_user / browser_control` 并保留 Pi 会话；只读截图不清除等待，不由模型文字判断完成。用户点击“交回浏览器并继续任务”后，核对权威版本、释放控制并明确恢复任务。
+
+最后审查又补充了三处边界：卸载只取消普通排队输入，保留 queued `mouse_up` 并按原 owner/标签/版本清理；更高 raw-frame generation 一到达就阻断旧代输入，不等待解码或状态通知；较早的 Pi 等待由随后真实受控浏览器故障覆盖，避免把执行或连接故障误记成等待人工交回。这些边界已通过对应队列、网页协议及真实 Pi SDK 回归，并纳入最终全项目复测。
+
+失败历史、held button 独立诊断和最终 166/27/31 项验收结果见 [浏览器操作复查](browser-interaction-recheck.md)。中间运行曾六项通过而拖动失败，原失败保留；最终工作台拖动已核对实际元素位置。
 
 ## 4. 界面与协议的目标行为
 
@@ -167,7 +185,7 @@ stateDiagram-v2
 
 本次不以真实外卖、打车、支付或供应商账号操作验证浏览器可靠性。那些业务在生态管理中有独立的凭据与授权条件，本轮主要使用公开搜索页和受控网页夹具。
 
-## 6. 已取得的验收结果与剩余项
+## 6. 前一轮验收结果与能力范围（历史版本）
 
 ### 已取得的验收证据
 
@@ -180,9 +198,9 @@ stateDiagram-v2
 | 早期公网停止/启动协议复验 | **通过；9 帧，清理前 0 次 close** | 单独验证侧车重建后现有画面连接重新绑定新实例；冷启动接管 HTTP 200，1987 ms。证据：[`restart-stream.json`](../.runtime/browser-optimization/restart-stream.json) |
 | 最终冻结源码与线上部署核对 | **app/browser 各 52/52 文件匹配，差异 0；诊断关闭** | `sourceUnchanged=true`，两个容器 `diagnostics=false`；核对时间 `2026-10-03T18:47:35.783Z`。证据：[`deployment.json`](../.runtime/browser-optimization/deployment.json)，SHA-256 清单：[`source-hashes.json`](../.runtime/browser-optimization/source-hashes.json) |
 | 最终修复后公网浏览器工作区 | **8/8 通过** | 真实百度首页、10 轮交回/接管、接管成功后 bootstrap 刷新失败不影响控制、中文搜索获控、历史导航/主页、标签管理、WebSocket 断开恢复与 390/360 布局。证据：[`workspace-live.json`](../.runtime/browser-optimization/workspace-live.json)，北京时间 02:47:34—02:48:48 |
-| 最终公网真实 Chromium 操作 | **17/17 通过，43 帧，页面错误 0** | 公网工作台操作 VPS 受控网页：缩放坐标、中文文本、confirm/prompt、键盘、标签切换、390/360 模拟触控、交回后新 DOM 和沙箱；清理恢复标签、owner 为 agent、退出登录。证据：[`browser.json`](../.runtime/full-verification/browser.json)，北京时间 02:48:49—02:49:41 |
+| 最终公网真实 Chromium 操作 | **17/17 通过，43 帧，页面错误 0** | 公网工作台操作 VPS 受控网页：缩放坐标、中文文本、confirm/prompt、键盘、标签切换、390/360 模拟触控、交回后新 DOM 和沙箱；清理恢复标签、owner 为 agent、退出登录。证据：[`browser-attempt-20261003184849709.json`](../.runtime/full-verification/browser-attempt-20261003184849709.json)，北京时间 02:48:49—02:49:41 |
 | 最终最新模型真实 Pi 接管与恢复 | **2/2 通过；接管 243 ms，cell 执行 1 次** | 先 paused 并取消 active cell 再授予 user，同一 session 恢复后观察人工作业输入且未重放；结束停止测试任务并退出登录。证据：[`agent-handoff.json`](../.runtime/browser-optimization/agent-handoff.json)，北京时间 02:49:42—02:50:01 |
-| 最终公网补充边界 | **3/3 通过，页面错误 0，稳定手机截图目检通过** | 原生 beforeunload 接受 200/取消 409；两个登录客户端共享控制状态、旧输入 409 且原 URL/输入保留；390/360 稳定布局 `scrollWidth=width`、`sidebarRight=0`、`mainLeft=0`。测试标签恢复、ownedTabsRemaining 为 0，两端退出登录。证据：[`public-extra.json`](../.runtime/browser-optimization/public-extra.json)，北京时间 02:50:02—02:50:32 |
+| 最终公网补充边界 | **3/3 通过，页面错误 0，稳定手机截图目检通过** | 原生 beforeunload 接受 200/取消 409；两个登录客户端共享控制状态、旧输入 409 且原 URL/输入保留；390/360 稳定布局 `scrollWidth=width`、`sidebarRight=0`、`mainLeft=0`。测试标签恢复、ownedTabsRemaining 为 0，两端退出登录。证据：[`public-extra-20261003185002075.json`](../.runtime/browser-optimization/public-extra-20261003185002075.json)，北京时间 02:50:02—02:50:32 |
 | 最终本地正式服务更新 | **重启与健康通过** | 当前进程 PID `66794`，`ok=true`、`agent=pi`、`modelConfigured=true`；北京时间 02:48:03 核对。证据：[`local-service.json`](../.runtime/browser-optimization/local-service.json) |
 
 最新隔离 E2E 运行记录确认 `sourceChangedDuringRun=false`，夹具目录已删除且端口已释放；历史尝试保留在 [`regression.json`](../.runtime/full-verification/regression.json) 的 `postFix.attempts`。较早 132/132、136/136、16/16、17/17 均为历史版本，不重复累计。
@@ -195,8 +213,8 @@ stateDiagram-v2
 
 ### 验收范围与未实现能力
 
-本轮既定的自动化、部署和四阶段公网场景均已通过。最终 [390px 截图](../.runtime/browser-optimization/mobile-baidu-390.png) 与 [360px 截图](../.runtime/browser-optimization/mobile-baidu-360.png) 等待动画稳定后拍摄并目视核对；模拟触控不等同于真实 iPhone/iOS 或实体手机验收。
+前一轮既定的自动化、部署和四阶段公网场景已通过。该版本 [390px 截图](../.runtime/browser-optimization/mobile-baidu-390.png) 与 [360px 截图](../.runtime/browser-optimization/mobile-baidu-360.png) 等待动画稳定后拍摄并目视核对；这些结果没有覆盖后续扩大复查发现的问题。模拟触控不等同于真实 iPhone/iOS 或实体手机验收。
 
-人工拖拽当前未实现：输入类型只有 `click`、`move`、`scroll`、`text`、`key`，没有可供工作台连续发送的指针按下/移动/释放协议。因此本轮不能宣称已完成百度人工滑块或完整验证码处理。真实 iOS 软键盘、系统文件选择和下载窗口、长期压力、物理网络断网均未验收；第三方下单与支付也不在本轮范围。
+前一轮人工拖拽未实现，协议当时只有 `click`、`move`、`scroll`、`text`、`key`。扩大复查新增 `mouse_down`/`mouse_up`、held button 移动和手势清理，并通过受控网页真实拖动验收；不能据此宣称已完成百度人工滑块或完整验证码处理。真实 iOS 软键盘、完整 IME、系统文件选择和下载窗口、长期压力、物理网络断网仍未验收；第三方下单与支付也不在浏览器复查范围。
 
 基线证据已存在，最终结果必须与修复后的当前运行状态关联，不能将基线 ready 状态的成功视作本轮完整验收。

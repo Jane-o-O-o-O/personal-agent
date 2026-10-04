@@ -2,6 +2,8 @@
 
 日期：2026-10-03。对象：本地项目与 [VPS 工作台](https://39.107.111.115:8443)。
 
+最新扩展：2026-10-04 16:16—16:21 的浏览器扩大复查已完成并部署，166 项单元/服务集成、27 项网页测试、31 项公网检查通过，见文末和 [浏览器操作复查](browser-interaction-recheck.md)。以下各节保留各自阶段与能力范围，历史通过不代替后续新增场景。
+
 当前状态：本轮现有可执行功能的验收场景全部通过，修复已部署到 VPS，本地正式服务也已更新。真实模型阶段于 2026-10-03 22:27（Asia/Shanghai）完成；未授权账号和未实现功能单独列在下文，不能据此宣称全部国内生态已接通。
 
 ## 模型与测试方法
@@ -129,9 +131,9 @@ VPS 只重建并替换应用容器，浏览器容器和持久化数据未改；�
 | 冻结源码上线 | app/browser 各 **52/52 文件 SHA-256 一致**，差异 0，诊断均关闭。证据：[`deployment.json`](../.runtime/browser-optimization/deployment.json)、[`source-hashes.json`](../.runtime/browser-optimization/source-hashes.json) |
 | 早期公网停止/启动协议复验 | 同一 WebSocket 累计 **9 帧，清理前 0 次 close**；冷启动接管 HTTP 200、1987 ms，单独记录此协议场景。证据：[`restart-stream.json`](../.runtime/browser-optimization/restart-stream.json) |
 | 最终修复后公网浏览器工作区 | **8/8 通过**：真实百度首页、10 轮交回/接管、bootstrap 故障不影响已获控制、中文搜索获控、历史导航/主页、标签管理、WebSocket 断开恢复与 390/360 布局。北京时间 02:47:34—02:48:48。证据：[`workspace-live.json`](../.runtime/browser-optimization/workspace-live.json) |
-| 最终公网真实 Chromium 交互 | **17/17 通过，43 帧，页面错误 0**：中文输入、缩放坐标、confirm/prompt、键盘/滚动、标签、模拟手机触控、新 DOM 和沙箱；清理恢复标签、owner 为 agent、退出登录。北京时间 02:48:49—02:49:41。证据：[`browser.json`](../.runtime/full-verification/browser.json) |
+| 最终公网真实 Chromium 交互 | **17/17 通过，43 帧，页面错误 0**：中文输入、缩放坐标、confirm/prompt、键盘/滚动、标签、模拟手机触控、新 DOM 和沙箱；清理恢复标签、owner 为 agent、退出登录。北京时间 02:48:49—02:49:41。证据：[`browser-attempt-20261003184849709.json`](../.runtime/full-verification/browser-attempt-20261003184849709.json) |
 | 最终当前模型真实 Pi 交接 | **2/2 通过，接管 243 ms**；active cell 取消及任务 paused 后获 user 控制，同一 session 恢复并保留人工作业输入，cell 执行计数 1、无重放；清理停止任务并退出登录。北京时间 02:49:42—02:50:01。证据：[`agent-handoff.json`](../.runtime/browser-optimization/agent-handoff.json) |
-| 最终公网补充边界 | **3/3 通过**：beforeunload 接受 200/取消 409、两个客户端共享 owner 且旧输入 409、390/360 稳定截图和目检；URL/输入保留、页面错误 0，测试标签恢复、两端退出登录。北京时间 02:50:02—02:50:32。证据：[`public-extra.json`](../.runtime/browser-optimization/public-extra.json) |
+| 最终公网补充边界 | **3/3 通过**：beforeunload 接受 200/取消 409、两个客户端共享 owner 且旧输入 409、390/360 稳定截图和目检；URL/输入保留、页面错误 0，测试标签恢复、两端退出登录。北京时间 02:50:02—02:50:32。证据：[`public-extra-20261003185002075.json`](../.runtime/browser-optimization/public-extra-20261003185002075.json) |
 | 最终本地正式服务 | 已重启为 PID `66794`，健康 `ok=true`、`agent=pi`、`modelConfigured=true`；北京时间 02:48:03 核对。证据：[`local-service.json`](../.runtime/browser-optimization/local-service.json) |
 
 真实百度首页标题与搜索框均已核对。中文直接搜索“杭州天气”取得控制并进入百度，但被跳转至“百度安全验证”；此时仍为 ready/user、画面可见，`backurl` 确认原查询编码正确，记录 `requiresHumanVerification=true`。**验证码没有解答，正常搜索结果没有读取**；该场景的通过范围是搜索交互、获控和到达实际目标站点。
@@ -140,4 +142,16 @@ VPS 只重建并替换应用容器，浏览器容器和持久化数据未改；�
 
 最终收尾于北京时间 **02:51—02:55** 完成：专属 4107 夹具关闭、端口释放，测试任务停止，夹具文件与本轮临时部署压缩包删除，浏览器恢复真实百度首页 `ready/user`，回滚备份保留，见 [`cleanup.json`](../.runtime/browser-optimization/cleanup.json)。本地和 VPS 均用指定新密码登录成功，健康及模型配置正常、生态目录均为 94 条，退出后旧 cookie 返回 401；最终两个运行镜像健康且与部署记录一致，见 [`final-health.json`](../.runtime/browser-optimization/final-health.json)。模型与 Resend 最终定向扫描通过，两端密钥及加密设置一致、设置未变、明文命中和读取错误均为 0、报告权限均为 `0600`，见 [`security.json`](../.runtime/full-verification/security.json) 的 `final` 和 [`resend-security.json`](../.runtime/full-verification/resend-security.json)。扫描未覆盖已删除日志、压缩归档或未知密钥；未发送邮件。
 
-本轮既定场景均通过，能力范围仍有限：人工拖拽未实现，输入只有 `click/move/scroll/text/key`、未提供指针按下/移动/释放协议，不能宣称人工滑块或完整验证码处理可用。布局与触控使用浏览器模拟；真实 iOS 软键盘、系统文件选择和下载窗口、长期压力、物理网络断网未验收，也没有实际下单、打车或支付。选型来源、具体机制和完整验收清单见 [浏览器工作台优化说明](browser-workspace-optimization.md)。
+当时的既定场景均通过，但尚未实现人工拖拽，输入只有 `click/move/scroll/text/key`。下午扩大复查新增指针协议及真实拖动验收，见下节。完整验证码处理、真实 iOS 软键盘、系统文件选择和下载窗口、长期压力、物理网络断网仍未验收，也没有实际下单、打车或支付。选型来源、具体机制和历史清单见 [浏览器工作台优化说明](browser-workspace-optimization.md)。
+
+## 浏览器扩大复查（2026-10-04 下午）
+
+用户再次反馈后，新增场景实际复现了物理按键事件缺失、Tab 留在本地、双击/拖动失效、40 个滚轮串行积压、长 cell 结束前不跟随新标签，以及人工控制错误被标为任务成功。修复包括键码/修饰键、pointer down/up/held button、输入队列合并与卸载释放、同代画面双缓冲与新代立即禁用输入、独立 worker focus IPC，以及 Pi `waiting_user / browser_control` 与明确交回后同会话恢复。
+
+最终冻结源码重新执行 **166/166 单元与服务集成（22 文件）**、**27/27 隔离网页 E2E**，失败/跳过/重试 0，类型检查和构建通过，E2E 期间源码未改变。VPS app/browser 各 **62/62 文件 SHA-256 一致**，差异 0、诊断关闭、容器健康；本地正式服务也已重启并验证健康、模型配置、登录退出与 94 条生态目录。
+
+2026-10-04 北京时间 **16:16:47—16:20:59** 串行公网检查 **31/31** 通过：7 项原问题复测、2 项真实模型等待和 UI 恢复、17 项原生常规交互、2 项真实 active cell 接管与恢复、3 项 beforeunload/多客户端/手机布局边界。18 字符物理输入取得 18 次 keydown/keyup，拖动真实位置为 `left=340px`；40 次滚轮合并成 1 个请求、scrollY=800、交回 819 ms；运行中接管 489 ms。这些是本轮样本，不是性能上限。
+
+模型等待和接管均保留同一 Pi 会话，原用户输入和 active cell 没有重放。测试 task 保留审计并停止，专属标签和临时登录清理完成；重建后按保存地址恢复原三张标签、选择和 owner，标签 ID 新建，不能据此宣称重启恢复完整页面历史。两个夹具端口及专属文件已清理，回滚镜像保留。模型与 Resend 定向扫描两端均为 0 明文命中、0 扫描错误，配置一致且未变；未发送邮件。
+
+证据位于 `.runtime/browser-recheck`，失败和中间诊断未覆盖为成功。完整阶段、测试探针修正、清理与能力边界见 [浏览器操作复查](browser-interaction-recheck.md)。人工拖动可用于已验收的受控网页；第三方验证码、真实手机 IME、系统窗口、跨进程 iframe 和长期压力不在本次通过范围。

@@ -5,6 +5,13 @@ import { AppError, cleanError, textInput } from './errors.js';
 import { parametersHash } from './approvals.js';
 
 export interface AgentInput { id:string; text:string }
+export class TaskWaitingError extends Error {
+  readonly reason = 'browser_control';
+  constructor() {
+    super('浏览器当前由你控制。完成浏览器操作后，请交回浏览器并继续任务；Agent 会重新观察页面再继续。');
+    this.name = 'TaskWaitingError';
+  }
+}
 interface StoredTask extends Task { pendingInputs: AgentInput[] }
 export interface RunCallbacks {
   session(file: string): void;
@@ -224,8 +231,15 @@ export class TaskService {
       }
     } catch (error) {
       if (!signal.aborted) {
-        const updated = this.update(id,{status:'failed',error:cleanError(error),finishedAt:new Date().toISOString()});
-        this.onCompleted?.(updated);
+        if (error instanceof TaskWaitingError) {
+          this.store.transaction(() => {
+            this.update(id,{status:'waiting_user',waitingReason:error.reason,error:undefined,result:undefined,finishedAt:undefined});
+            this.addMessage(id,'system',error.message);
+          });
+        } else {
+          const updated = this.update(id,{status:'failed',error:cleanError(error),finishedAt:new Date().toISOString()});
+          this.onCompleted?.(updated);
+        }
       }
     } finally {
       for (const message of messageMap.values()) if (message.status === 'streaming') callbacks.messageEnd(message.id,message.text,true);

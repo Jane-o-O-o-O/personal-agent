@@ -45,6 +45,7 @@ export class CellError extends Error {
 /** One worker, one active cell. Termination is the cancellation boundary. */
 export class BrowserRuntime {
   onAction: ((event: BrowserAction) => void) | undefined;
+  onFocus: ((targetId: string) => void) | undefined;
   private runId: string | undefined;
   partial: { path: string; value: unknown } | undefined;
   beginRun() {
@@ -138,9 +139,14 @@ export class BrowserRuntime {
     });
     this.worker = worker;
     worker.on('message', (message: WorkerResponse) => {
+      if (this.worker !== worker) return;
       if (message.type === 'partial' && this.runId && message.runId === this.runId)
         this.partial = { path: message.path, value: JSON.parse(message.valueJson) };
       if (message.type === 'action') this.onAction?.(message.action);
+      if (message.type === 'focus') {
+        this.activeTarget = message.targetId;
+        this.onFocus?.(message.targetId);
+      }
       if (message.type === 'owned') this.owned.add(message.targetId);
       // A switched browser survives a worker restart.
       if (message.type === 'endpoint') this.config.endpoint = message.endpoint;
@@ -158,7 +164,7 @@ export class BrowserRuntime {
     try {
       const response = this.receive(worker, 20_000, signal);
       worker.send(
-        { ...this.config, ...(this.targetId ? { targetId: this.targetId } : {}) },
+        { ...this.config, ...(this.currentTarget ? { targetId: this.currentTarget } : {}) },
         (error) => {
           if (error) this.pending?.(error);
         },
@@ -189,7 +195,7 @@ export class BrowserRuntime {
       };
       const message = (value: WorkerResponse) => {
         // Side messages a cell sends while running; only its result or error ends it.
-        if (!['owned', 'action', 'partial', 'endpoint'].includes(value.type)) finish(value);
+        if (!['owned', 'action', 'focus', 'partial', 'endpoint'].includes(value.type)) finish(value);
       };
       const abort = () =>
         finish(

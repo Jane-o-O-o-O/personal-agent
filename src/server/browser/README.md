@@ -39,6 +39,16 @@ callback. Releasing rereads the page and discards JavaScript bindings; the host
 decides when to resume the task. JavaScript dialogs are never accepted
 automatically and require an explicit authenticated decision.
 
+The workbench coalesces adjacent scroll and pointer samples while preserving
+discrete input order. Physical keyboard input includes key codes and modifiers;
+manual mouse down/up, drag and double-click events reach Chromium through CDP.
+Pointer moves carry both the held button and the buttons bitmask so Chromium
+retains webpage pointer capture throughout a drag.
+Pressed pointers are cleared when control or the document changes. An explicit
+worker focus message follows tab selection during a running cell, independently
+of recording. A task blocked by human ownership waits for browser control rather
+than completing; the user explicitly returns control and continues its Pi session.
+
 Cancellation and deadlines kill the worker. Browser actions may already have
 happened, so callers must inspect results before retrying. Downloads go to
 the current task workspace. Normal restart preserves profile storage. A live
