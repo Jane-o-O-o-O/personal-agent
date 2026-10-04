@@ -1,0 +1,79 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="540" viewBox="0 0 1440 540" role="img" aria-labelledby="title description">
+  <title id="title">Personal Agent architecture and isolation boundaries</title>
+  <desc id="description">A web workbench and optional authorized Weixin adapter connect to the App container, which hosts the Pi runtime, tasks and approvals, memory and goals, and SQLite. The App connects to an isolated Chromium browser container and to credentialed MCP or API tools. Only the task workspace is shared with the browser; App keys, database and Pi sessions remain in the App.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto" markerUnits="userSpaceOnUse">
+      <path d="m1 1 6 3-6 3" fill="none" stroke="#698f70" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+    </marker>
+  </defs>
+  <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif">
+    <rect width="1440" height="540" rx="24" fill="#f5f6ef"/>
+    <rect x="0.5" y="0.5" width="1439" height="539" rx="23.5" fill="none" stroke="#dbe4db"/>
+    <text x="64" y="61" font-size="28" letter-spacing="-0.6" font-weight="600" fill="#1d432e">One workspace. Clear boundaries.</text>
+    <text x="64" y="90" font-size="14" fill="#7b8e79">A self-hosted app, an isolated browser and tools you choose to connect.</text>
+    <rect x="360" y="122" width="1016" height="351" rx="18" fill="#edf2e9" stroke="#c2d1bc" stroke-dasharray="5 5"/>
+    <rect x="386" y="110" width="157" height="25" rx="12.5" fill="#f5f6ef"/>
+    <text x="400" y="127" font-size="11" letter-spacing="1.6" font-weight="600" fill="#789170">YOUR VPS</text>
+    <text x="1348" y="128" text-anchor="end" font-size="10" letter-spacing="0.9" fill="#8ea182">SELF-HOSTED RUNTIME</text>
+
+    <rect x="64" y="175" width="257" height="236" rx="14" fill="#ffffff" stroke="#ccd9c6"/>
+    <rect x="86" y="198" width="30" height="27" rx="5" fill="#e9f0e5"/>
+    <path d="M92 204h18v15H92zM92 209h18" fill="none" stroke="#638664" stroke-width="1.4" stroke-linejoin="round"/>
+    <text x="130" y="218" font-size="18" letter-spacing="-0.4" font-weight="600" fill="#2b5137">Web workbench</text>
+    <text x="86" y="254" font-size="13" fill="#6d866b">Tasks, approvals and live control</text>
+    <text x="86" y="279" font-size="13" fill="#6d866b">Desktop and mobile access</text>
+    <path d="M86 302H299" stroke="#e3eadf"/>
+    <rect x="86" y="319" width="213" height="65" rx="8" fill="#f3f6ef"/>
+    <circle cx="102" cy="339" r="3" fill="#789a6c"/>
+    <text x="113" y="343" font-size="12" font-weight="550" fill="#53744f">Weixin adapter</text>
+    <text x="99" y="366" font-size="11" fill="#8a9a80">Requires account authorization</text>
+    <path d="M321 293H386" fill="none" stroke="#698f70" stroke-width="1.6" marker-end="url(#arrow)"/>
+
+    <rect x="390" y="154" width="401" height="294" rx="14" fill="#163e2b" stroke="#315740"/>
+    <text x="415" y="187" font-size="11" letter-spacing="1.5" font-weight="600" fill="#b3ce9f">APP CONTAINER</text>
+    <text x="415" y="225" font-size="25" letter-spacing="-0.4" font-weight="550" fill="#f2f4e7">Pi runtime</text>
+    <text x="415" y="251" font-size="12" fill="#a1be9b">Owns the task and permission lifecycle</text>
+    <g fill="#254e36" stroke="#46674a">
+      <rect x="415" y="272" width="351" height="38" rx="7"/>
+      <rect x="415" y="321" width="351" height="38" rx="7"/>
+      <rect x="415" y="370" width="351" height="51" rx="7"/>
+    </g>
+    <g font-size="13" font-weight="500" fill="#d6e5c9">
+      <text x="432" y="296">Tasks &amp; approvals</text>
+      <text x="432" y="345">Memory &amp; goals</text>
+      <text x="432" y="392">SQLite</text>
+    </g>
+    <text x="432" y="410" font-size="10.5" fill="#98b293">App keys, database and Pi sessions stay here</text>
+    <g fill="none" stroke="#9bb68e" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+      <path d="m739 288 4 4 6-7"/>
+      <path d="M738 337h12m-6-5v10"/>
+      <ellipse cx="744" cy="386" rx="6" ry="2.5"/>
+      <path d="M738 386v7c0 3 12 3 12 0v-7"/>
+    </g>
+
+    <path d="M791 293H829V231H879" fill="none" stroke="#698f70" stroke-width="1.6" marker-end="url(#arrow)"/>
+    <path d="M829 293V379H879" fill="none" stroke="#698f70" stroke-width="1.6" marker-end="url(#arrow)"/>
+    <circle cx="829" cy="293" r="3" fill="#698f70"/>
+
+    <rect x="883" y="154" width="464" height="158" rx="14" fill="#ffffff" stroke="#ccd9c6"/>
+    <rect x="907" y="176" width="30" height="27" rx="5" fill="#e9f0e5"/>
+    <path d="M913 182h18v14h-18zM913 186h18M918 198h8" fill="none" stroke="#638664" stroke-width="1.4" stroke-linejoin="round"/>
+    <text x="951" y="195" font-size="18" letter-spacing="-0.3" font-weight="600" fill="#2b5137">Browser container</text>
+    <text x="907" y="231" font-size="13" fill="#627d60">Chromium / CDP</text>
+    <text x="1120" y="231" font-size="13" fill="#627d60">Human control / Profile</text>
+    <path d="M907 247H1323" stroke="#e3eadf"/>
+    <text x="907" y="269" font-size="11" font-weight="550" fill="#54714d">Shares the task workspace only</text>
+    <text x="907" y="291" font-size="11" fill="#8b9b81">No App keys, database or Pi sessions mounted</text>
+
+    <rect x="883" y="331" width="464" height="117" rx="14" fill="#ffffff" stroke="#ccd9c6"/>
+    <rect x="907" y="352" width="30" height="27" rx="5" fill="#e9f0e5"/>
+    <path d="m916 360-4 5 4 5m11-10 4 5-4 5m-5-12-2 14" fill="none" stroke="#638664" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+    <text x="951" y="371" font-size="18" letter-spacing="-0.3" font-weight="600" fill="#2b5137">MCP / API tools</text>
+    <text x="907" y="406" font-size="13" fill="#627d60">Configured clients connect to tool providers</text>
+    <text x="907" y="428" font-size="11" fill="#8b9b81">Approval, credentials and provider permissions required</text>
+
+    <circle cx="72" cy="500" r="3" fill="#719667"/>
+    <text x="85" y="504" font-size="11" fill="#7c8f74">The App remains the authority for task state and approvals.</text>
+    <text x="1376" y="504" text-anchor="end" font-size="11" fill="#91a088">Conceptual deployment view · No vendor credentials included</text>
+  </g>
+</svg>
